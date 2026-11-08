@@ -14,9 +14,10 @@
 //   Skill —— 打开技能页（选技能 / 导入新技能）
 // =====================================================================
 
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import AppIcon from './AppIcon.vue'
-import { store, selectProject } from '../stores/app'
+import { api } from '../api'
+import { store, selectProject, loadProviders, loadChatPref, loadModelStatus, notify } from '../stores/app'
 
 const text = defineModel('text', { type: String, default: '' })
 
@@ -38,6 +39,61 @@ const props = defineProps({
 const emit = defineEmits([
   'send', 'pick-menu', 'open-settings', 'open-skills', 'asset-picked', 'new-project',
 ])
+
+// ---- 模型胶囊 + 下拉：当前供应商在「模型设置」里配好的模型清单 ----
+const modelOpen = ref(false)
+
+const modelLabel = computed(() => store.modelInfo?.name || store.modelInfo?.provider || '模型')
+
+/** 当前供应商：优先用对话偏好指定的那家，否则第一个配好的。 */
+const currentProvider = computed(() => {
+  const list = store.providers || []
+  const prefId = store.chatPref?.provider_id
+  return list.find((p) => p.id === prefId) || list.find((p) => p.configured) || null
+})
+
+/** 该供应商名下的模型（模型设置里配的清单；老配置只有单个 model 时视作一条）。 */
+const providerModels = computed(() => {
+  const p = currentProvider.value
+  if (!p) return []
+  const list = p.config?.models
+  if (Array.isArray(list) && list.length) {
+    return list.filter((m) => m && m.model).map((m) => ({
+      name: m.name || m.model, model: m.model, enabled: m.enabled !== false,
+    }))
+  }
+  const one = p.config?.model
+  return one ? [{ name: one, model: one, enabled: true }] : []
+})
+
+/** 当前生效的模型名（对话偏好里的 model_name，或清单里第一个启用的）。 */
+const activeModelName = computed(() => {
+  const pref = store.chatPref?.model_name
+  if (pref) return pref
+  const on = providerModels.value.find((m) => m.enabled)
+  return on?.model || ''
+})
+
+async function chooseModel(m) {
+  const p = currentProvider.value
+  if (!p) return
+  modelOpen.value = false
+  try {
+    await api('/models/preferences', 'PUT', {
+      task_type: 'chat', provider_id: p.id, model_name: m.model, is_default: true,
+    })
+    await Promise.all([loadModelStatus(), loadChatPref()])
+    notify(`对话模型已切到 ${m.name}`, 'ok')
+  } catch (e) {
+    notify('切换失败：' + (e.detail || e.message))
+  }
+}
+
+onMounted(() => {
+  loadProviders()
+  loadChatPref()
+  loadModelStatus()
+})
 
 const menuOpen = ref(false)
 
@@ -136,10 +192,14 @@ function closeMenu(e) {
   if (projectOpen.value && e.target.closest && !e.target.closest('.cc-project-wrap')) {
     projectOpen.value = false
   }
+  if (modelOpen.value && e.target.closest && !e.target.closest('.cc-model-wrap')) {
+    modelOpen.value = false
+  }
 }
 
 function onKeydown(e) {
   if (e.key === 'Escape') {
+    if (modelOpen.value) { modelOpen.value = false; return }
     if (projectOpen.value) { projectOpen.value = false; return }
     if (menuOpen.value) { menuOpen.value = false; return }
   }
@@ -273,7 +333,45 @@ function onInput(e) {
           <span v-if="statusText" class="cc-status">
             <span class="cc-pulse" aria-hidden="true"></span>{{ statusText }}
           </span>
-          <!-- 模型不在这里切换：模型设置归「设置」管，输入框只留作品与技能 -->
+          <!-- 模型：下拉内容 = 当前供应商在「模型设置」里配好的模型清单 -->
+          <div class="cc-model-wrap">
+            <button
+              class="chip cc-model"
+              type="button"
+              title="选择对话模型"
+              @click.stop="modelOpen = !modelOpen"
+            >
+              <AppIcon name="sparkle" />
+              <span>{{ modelLabel }}</span>
+              <AppIcon name="chevron-down" class="cc-chev" />
+            </button>
+            <Transition name="ccpop">
+              <div v-if="modelOpen" class="cc-model-pop" role="menu">
+                <div class="mp-head">
+                  <span class="mp-provider">{{ currentProvider?.label || currentProvider?.name || '未配置供应商' }}</span>
+                  <span class="mp-hint">模型设置里配的模型</span>
+                </div>
+                <div class="mp-label">模型</div>
+                <button
+                  v-for="m in providerModels"
+                  :key="m.model"
+                  class="mp-item"
+                  type="button"
+                  role="menuitemradio"
+                  :aria-checked="m.model === activeModelName"
+                  @click.stop="chooseModel(m)"
+                >
+                  <span class="mi-name">{{ m.name }}</span>
+                  <span class="mi-model">{{ m.model }}</span>
+                  <span v-if="m.model === activeModelName" class="mi-check">✓</span>
+                </button>
+                <div v-if="!providerModels.length" class="mp-empty">
+                  这个供应商还没配模型，去「设置 → 模型」里加。
+                </div>
+              </div>
+            </Transition>
+          </div>
+
           <button class="chip" type="button" @click.stop="emit('open-skills')">
             <AppIcon name="folder" />
             <span>Skill</span>
@@ -474,6 +572,43 @@ function onInput(e) {
 
 /* 作品选择胶囊 + 下拉 */
 .cc-project-wrap { position: relative; }
+.cc-model-wrap { position: relative; }
+.cc-model { max-width: 190px; }
+.cc-model span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 模型下拉：标记与样式同在 ComposerCard（别再放插槽——插槽内容带父组件的
+   scope id，scoped 样式匹配不上，弹层会变成内联的一行）。 */
+.cc-model-pop {
+  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 40;
+  min-width: 260px; max-width: 340px;
+  background: var(--panel-solid); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-2);
+  padding: 4px;
+}
+.mp-head {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 7px 9px; border-bottom: 1px solid var(--line); margin-bottom: 3px;
+}
+.mp-provider { font-size: var(--fs-sm); color: var(--ink); font-weight: 600; }
+.mp-hint { margin-left: auto; font-size: 10px; color: var(--dim); }
+.mp-label {
+  padding: 5px 9px 4px; font-size: 10px; color: var(--dim); letter-spacing: .04em;
+}
+.mp-item {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  padding: 7px 9px; border-radius: var(--radius-md);
+  background: transparent; border: none; color: var(--muted);
+  font-size: var(--fs-sm); font-family: inherit; text-align: left; cursor: pointer;
+}
+.mp-item:hover { background: rgba(255, 255, 255, .08); color: var(--ink); }
+.mp-item[aria-checked="true"] { color: var(--ink); }
+.mp-item .mi-name { color: var(--ink); font-weight: 500; flex: none; }
+.mp-item .mi-model {
+  font-family: var(--mono); font-size: 10px; color: var(--dim);
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mp-item .mi-check { color: var(--accent); flex: none; font-size: 12px; }
+.mp-empty { padding: 9px; font-size: var(--fs-xs); color: var(--dim); line-height: 1.6; }
 .cc-project { max-width: 170px; }
 .cc-project span {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

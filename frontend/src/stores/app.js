@@ -57,6 +57,7 @@ export const store = reactive({
   sideView: 'assets',  // 侧边栏视图：outline（大纲）| shots（镜头）| assets（资产）
   assets: [],          // 当前项目的资产（角色/场景/素材/成片）——最终归宿
   providers: [],       // 可用模型列表（输入区「模型」胶囊下拉用）
+  chatPref: null,       // 对话模型偏好 {provider_id, model_name} —— 下拉里标出当前选中
   modelInfo: null,                  // {available, provider, name, source} —— 顶栏徽标用
   hint: '',                     // 输入区下方提示文字
   workspace: null,              // 当前工作目录信息 { root, configured, exists }
@@ -485,6 +486,17 @@ export async function loadProviders() {
     store.providers = []
   }
   return store.providers
+}
+
+/** 加载「对话模型」的偏好（当前用哪个供应商 / 哪个模型）。 */
+export async function loadChatPref() {
+  try {
+    const prefs = await api('/models/preferences')
+    store.chatPref = prefs.find((x) => x.task_type === 'chat' && x.provider_id) || null
+  } catch {
+    store.chatPref = null
+  }
+  return store.chatPref
 }
 
 /** 加载项目资产（侧边栏「资产」视图 / 资产库页共用）。 */

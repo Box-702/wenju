@@ -304,9 +304,10 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 .md a { color: var(--gold); text-decoration: underline; text-underline-offset: 3px; }
 .md a:hover { color: var(--ink); }
 
-/* ---------- 分类页签：文字 + 底部亮线 ----------
+/* ---------- 分类页签：编号 + 文字 + 底部亮线（全站复用这套） ----------
    原来是「圆角容器 + 胶囊高亮」（分段控件），用户不喜欢胶囊感；
-   现在是最安静的下划线式：选中项亮起来 + 底部一道亮线。 */
+   现在是最安静的下划线式：金色编号 + 文字，选中项亮起来 + 底部一道亮线。
+   产出页（剧本/场景/视频）最先用这套，后来上下文侧栏、设置页都换成它。 */
 .seg-tabs {
   display: flex; align-items: stretch; gap: 2px;
   border-bottom: 1px solid var(--line);
@@ -329,6 +330,11 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
   color: var(--ink); font-weight: 500;
   border-bottom-color: var(--accent);
   background: transparent;
+}
+/* 分类编号：金色等宽小字（01 / 02 / 03） */
+.seg-num {
+  color: var(--gold); font: 700 9px/1 var(--mono);
+  letter-spacing: .08em; margin-right: 6px;
 }
 
 /* ---------- 字体：全局无衬线（楷书已移除） ---------- */

@@ -14,11 +14,11 @@
 
         <div class="seg-tabs settings-tabs">
           <button
-            v-for="t in tabs"
+            v-for="(t, i) in tabs"
             :key="t.key"
             :class="['seg-tab', { active: tab === t.key }]"
             @click="tab = t.key"
-          >{{ t.label }}</button>
+          ><span class="seg-num">{{ String(i + 1).padStart(2, '0') }}</span>{{ t.label }}</button>
         </div>
 
         <div class="modal-body">

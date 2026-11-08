@@ -170,8 +170,7 @@ function onSceneDragEnd() {
           :class="['v-tab', 'seg-tab', { active: store.view === t.key }]"
           @click="showView(t.key)"
         >
-          <span class="v-tab-icon">{{ t.icon }}</span>
-          {{ t.label }}
+          <span class="seg-num">{{ t.icon }}</span>{{ t.label }}
         </button>
       </div>
       <div class="vt">{{ currentTitle }}</div>
@@ -332,7 +331,6 @@ function onSceneDragEnd() {
   margin-left: 10px;
 }
 .v-tabs::-webkit-scrollbar { display: none; }
-.v-tab-icon { color: var(--gold); font: 700 9px/1 var(--mono); letter-spacing: .08em; margin-right: 5px; }
 .v-acts { display: flex; gap: 4px; align-items: center; position: relative; }
 .export-wrap { position: relative; }
 .export-menu {

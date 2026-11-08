@@ -81,7 +81,7 @@
           </div>
         </div>
 
-        <div class="lib-label">角色 · 定妆照与音色</div>
+        <div class="lib-label"><span class="seg-num">01</span>角色 · 定妆照与音色</div>
         <div class="asset-grid">
           <div v-for="c in lib.characters" :key="c.char_id" class="asset-card">
             <div class="asset-pic">
@@ -108,7 +108,7 @@
           </div>
         </div>
 
-        <div class="lib-label">场景 · 场景图</div>
+        <div class="lib-label"><span class="seg-num">02</span>场景 · 场景图</div>
         <div class="asset-grid">
           <div v-for="l in lib.locations" :key="l.loc_id" class="asset-card">
             <div class="asset-pic scene">
@@ -130,7 +130,7 @@
         </div>
 
         <!-- 成片与导入的素材：资产库是所有产出的最终归宿 -->
-        <div class="lib-label">成片与素材</div>
+        <div class="lib-label"><span class="seg-num">03</span>成片与素材</div>
         <div v-if="assets.length" class="asset-grid">
           <div v-for="a in assets" :key="a.id" class="asset-card">
             <div class="asset-pic scene">

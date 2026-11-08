@@ -48,6 +48,9 @@ watch(views, (list) => {
 }, { immediate: true })
 
 const script = computed(() => store.viewerScript || { scenes: [] })
+
+/** 分类编号：01 / 02 / 03 */
+const pad2 = (n) => String(n).padStart(2, '0')
 const charNames = computed(() => {
   const m = {}
   for (const c of script.value.characters || []) m[c.id] = c.name
@@ -131,15 +134,16 @@ watch(() => store.videoBatch?.status, (st) => {
 
 <template>
   <aside class="cp">
-    <!-- 视图切换：只显示当前上下文中可用的那些 -->
-    <nav class="cp-tabs" role="tablist">
+    <!-- 视图切换：只显示当前上下文中可用的那些。
+         用产出页那套「编号 + 下划线」分类样式（全站共用 .seg-tabs/.seg-tab）。 -->
+    <nav class="cp-tabs seg-tabs" role="tablist">
       <button
-        v-for="v in views" :key="v.key"
-        :class="['cp-tab', { active: store.sideView === v.key }]"
+        v-for="(v, i) in views" :key="v.key"
+        :class="['seg-tab', { active: store.sideView === v.key }]"
         type="button"
         role="tab"
         @click="store.sideView = v.key"
-      >{{ v.label }}</button>
+      ><span class="seg-num">{{ pad2(i + 1) }}</span>{{ v.label }}</button>
       <span class="cp-spacer"></span>
       <button class="cp-icon" type="button" title="刷新" aria-label="刷新" @click="refresh">
         <AppIcon name="refresh" />
@@ -236,32 +240,14 @@ watch(() => store.videoBatch?.status, (st) => {
   border-left: 1px solid var(--line);
 }
 
+/* 页签外观走全站共用的 .seg-tabs/.seg-tab（编号 + 底部亮线），
+   这里只补这个面板自己的布局：左右留白与右端的刷新按钮。 */
 .cp-tabs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--line);
+  padding: 0 10px 0 4px;
+  align-items: stretch;
 }
-
-.cp-tab {
-  height: 26px;
-  padding: 0 11px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12.5px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 130ms var(--ease), color 130ms var(--ease);
-}
-.cp-tab:hover { color: var(--ink); background: rgba(255, 255, 255, .07); }
-.cp-tab.active {
-  color: var(--ink);
-  background: rgba(255, 255, 255, .1);
-  border-color: var(--line);
-}
+.cp-tabs .seg-tab { padding: 7px 10px; min-height: 32px; }
+.cp-icon { align-self: center; }
 
 .cp-spacer { flex: 1; }
 

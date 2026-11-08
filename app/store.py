@@ -661,6 +661,40 @@ class Store:
                     latest_runs[r.project_id] = r
                     seen.add(r.project_id)
 
+            # ---- 「最近使用」信号 ----
+            # 首页的作品栏按最近使用排序。不用单独的 last_opened 字段：
+            # 最近一次**对话 / 运行 / 出版本**三者里最新的那次，就是这部作品
+            # 最近被用过的时间——既反映真实使用，又不用改表结构。
+            last_used: dict[str, Any] = {}
+            for r in all_runs:
+                ts = r.created_at
+                if r.project_id not in last_used or ts > last_used[r.project_id]:
+                    last_used[r.project_id] = ts
+            ver_rows = (
+                s.query(ScriptVersion.project_id, func.max(ScriptVersion.created_at))
+                .filter(ScriptVersion.project_id.in_(pids))
+                .group_by(ScriptVersion.project_id)
+                .all()
+            )
+            for pid, ts in ver_rows:
+                if pid not in last_used or ts > last_used[pid]:
+                    last_used[pid] = ts
+            conv_owner = {
+                c.id: c.project_id
+                for c in s.query(Conversation).filter(Conversation.project_id.in_(pids)).all()
+            }
+            if conv_owner:
+                msg_rows = (
+                    s.query(ChatMessage.thread_id, func.max(ChatMessage.created_at))
+                    .filter(ChatMessage.thread_id.in_(list(conv_owner)))
+                    .group_by(ChatMessage.thread_id)
+                    .all()
+                )
+                for thread_id, ts in msg_rows:
+                    pid = conv_owner.get(thread_id)
+                    if pid and (pid not in last_used or ts > last_used[pid]):
+                        last_used[pid] = ts
+
             return [
                 {
                     "id": p.id,
@@ -672,6 +706,10 @@ class Store:
                     "created_at": p.created_at.isoformat(),
                     "version_count": ver_counts.get(p.id, 0),
                     "run_count": run_counts.get(p.id, 0),
+                    # 最近使用时间（对话/运行/出版本里最新的一次）
+                    "last_used_at": (
+                        last_used[p.id].isoformat() if p.id in last_used else p.created_at.isoformat()
+                    ),
                     "latest_run": {
                         "status": latest_runs[p.id].status,
                         "updated_at": latest_runs[p.id].updated_at.isoformat(),

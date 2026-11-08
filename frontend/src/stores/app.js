@@ -638,6 +638,21 @@ export function focusComposer() {
 }
 
 /** 发送一条用户消息（可带图片 id 列表），流式接收回复并实时更新最后一条 assistant 消息。 */
+/** 用生图模型给资产库补定妆照 / 场景图（后台跑，完成后刷新清单）。
+    输入框「＋」里的「生成资产图」走这里。 */
+export async function generateAssetImages() {
+  if (!store.pid) { notify('先选一部作品', 'ok'); return null }
+  try {
+    const r = await api(`/projects/${store.pid}/reference-assets`, 'POST')
+    notify('正在生成定妆照与场景图…', 'ok')
+    await loadAssetIndex()
+    return r
+  } catch (e) {
+    notify('生成失败：' + (e.detail || e.message))
+    return null
+  }
+}
+
 /** 拉一份「可 @ 引用的资产清单」：角色 / 场景 / 成片素材。
     输入框里打 @ 会用它做候选列表。 */
 export async function loadAssetIndex(pid = store.pid) {

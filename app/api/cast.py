@@ -93,6 +93,43 @@ def get_library(project_id: str, version_id: str | None = None) -> dict[str, Any
     return build_library(script, style, visual_style=style.get("visual_style"))
 
 
+@router.get("/library/all")
+def get_library_all() -> dict[str, Any]:
+    """全部作品的资产（资产库「全部作品」范围）。
+
+    为什么按作品分组返回：资产的身份边界就是作品——定妆照锚的是「这个剧本里的
+    这个角色」，音色同理；混成一个平表就分不清哪个林然属于哪部戏。
+    """
+    store = deps.store()
+    projects: list[dict[str, Any]] = []
+    assets: list[dict[str, Any]] = []
+    for p in store.list_projects():
+        version = store.latest_version(p)
+        if version is not None:
+            style = store.get_video_style(p.id) or {}
+            lib = build_library(version.script, style, visual_style=style.get("visual_style"))
+            projects.append({
+                "project_id": p.id,
+                "title": lib.get("project_title") or p.title,
+                "visual_style": lib.get("visual_style", ""),
+                "characters": lib.get("characters", []),
+                "locations": lib.get("locations", []),
+                "warnings": lib.get("warnings", []),
+            })
+        for a in store.list_assets(p.id):
+            assets.append({
+                "id": a.id,
+                "project_id": p.id,
+                "project_title": p.title,
+                "kind": a.kind,
+                "name": a.name,
+                "source": a.source,
+                "url": a.url,
+                "created_at": a.created_at.isoformat() if a.created_at else "",
+            })
+    return {"projects": projects, "assets": assets}
+
+
 @router.patch("/projects/{project_id}/library")
 def patch_library(project_id: str, payload: LibraryPatch) -> dict[str, Any]:
     """人工修正资产：指定性别/音色/外貌/图。返回修正后的整张资产库。"""

@@ -74,6 +74,14 @@ async function submitImport() {
 
 <template>
   <div class="page">
+    <!-- 极光背景：与首页 / 其他整页浮层同一套 -->
+    <div class="ps-aurora" aria-hidden="true">
+      <span class="blob blob-blue"></span>
+      <span class="blob blob-violet"></span>
+      <span class="blob blob-red"></span>
+      <span class="blob blob-teal"></span>
+      <span class="grain"></span>
+    </div>
     <header class="page-head">
       <button class="back" type="button" @click="emit('close')">
         <AppIcon name="arrow-left" /> 返回对话
@@ -129,16 +137,16 @@ async function submitImport() {
 </template>
 
 <style scoped>
+/* 整页浮层：底色与首页一致（极光 + 深底），不再是「死黑一块」 */
 .page {
   position: fixed;
   inset: 0;
   z-index: 40;
   display: flex;
   flex-direction: column;
-  background: rgba(8, 8, 12, .93);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
+  background: var(--bg);
 }
+.page-head, .page-body { position: relative; z-index: 1; }
 
 .page-head {
   display: flex;

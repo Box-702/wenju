@@ -414,9 +414,9 @@ function onInput(e) {
 .cc-gear .app-ic { width: 15px; height: 15px; }
 
 /* 发送：圆形箭头钮。
-   可用状态用**亮色**（亮绿渐变 + 外发光）—— 之前那版 #22c55e 收尾的深绿
-   在深色极光背景上偏暗，用户还是一眼看不出「现在可以点了」。
-   现在从亮薄荷绿到亮绿，并在钮外加一圈同色辉光，暗底上一眼就跳出来。 */
+   可用状态用**全站主行动绿**（--accent-grad，与首页 CTA 同一套渐变）——
+   自创的柠檬绿 (#d9f99d→#4ade80) 颜色难看，与首页也不像一家人；
+   回到设计系统的绿后既醒目又和首页一致。 */
 .cc-send {
   width: 34px;
   height: 34px;
@@ -432,17 +432,17 @@ function onInput(e) {
               border-color 150ms var(--ease), box-shadow 150ms var(--ease), filter 150ms var(--ease);
 }
 .cc-send:not(:disabled) {
-  background: linear-gradient(135deg, #d9f99d 0%, #a3e635 40%, #4ade80 100%);
-  border-color: rgba(217, 249, 157, .55);
-  color: #052e16;
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: var(--on-accent);
   cursor: pointer;
-  box-shadow: 0 0 0 4px rgba(163, 230, 53, .16),
-              0 8px 22px rgba(74, 222, 128, .5);
+  box-shadow: 0 0 0 4px rgba(74, 222, 128, .14),
+              0 8px 22px rgba(74, 222, 128, .42);
 }
 .cc-send:not(:disabled):hover {
   filter: brightness(1.06);
-  box-shadow: 0 0 0 5px rgba(163, 230, 53, .22),
-              0 10px 26px rgba(74, 222, 128, .62);
+  box-shadow: 0 0 0 5px rgba(74, 222, 128, .2),
+              0 10px 26px rgba(74, 222, 128, .55);
 }
 .cc-send:not(:disabled):active { filter: brightness(.97); }
 .cc-send .app-ic { width: 16px; height: 16px; transform: translateY(-0.5px); }

@@ -7,7 +7,7 @@
 // =====================================================================
 
 import { ref, computed, onMounted } from 'vue'
-import { store, sendMessage, loadModelStatus, notify, setHint } from '../stores/app'
+import { store, sendMessage, loadModelStatus, notify, setHint, generateAssetImages } from '../stores/app'
 import { uploadChatImage } from '../api'
 import ComposerCard from './ComposerCard.vue'
 
@@ -35,6 +35,7 @@ const MENU = [
   { id: 'new', label: '新建作品' },
   { id: 'upload', label: '上传图片' },
   { id: 'assets', label: '资产库' },
+  { id: 'gen-assets', label: '生成资产图' },
 ]
 
 const SPEC_RESOLUTIONS = ['768P', '1080P']
@@ -64,6 +65,10 @@ function pick(item) {
   }
   if (item.id === 'upload') {
     fileInput.value?.click()
+    return
+  }
+  if (item.id === 'gen-assets') {
+    generateAssetImages()
     return
   }
   // 资产要落到具体作品上，没有作品就先去建一个

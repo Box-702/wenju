@@ -389,6 +389,46 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 .aurora.soft .blob { opacity: .55; filter: blur(130px); }
 .aurora.soft .grain { opacity: .05; }
 
+/* ---------- 极光背景（全局：首页 / 整页浮层 / 工作区共用一套） ---------- */
+.aurora {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+.blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(110px);
+  opacity: 0.92;
+}
+.blob-blue {
+  width: 900px; height: 700px; top: -320px; left: -220px;
+  background: radial-gradient(circle at 50% 50%, rgba(37, 99, 235, 0.95), rgba(23, 44, 122, 0) 68%);
+}
+.blob-violet {
+  width: 820px; height: 620px; top: -300px; right: -60px;
+  background: radial-gradient(circle at 50% 50%, rgba(168, 85, 247, 0.9), rgba(76, 29, 149, 0) 68%);
+}
+.blob-red {
+  width: 900px; height: 640px; right: -220px; bottom: -360px;
+  background: radial-gradient(circle at 50% 50%, rgba(239, 68, 68, 0.85), rgba(127, 29, 29, 0) 68%);
+}
+.blob-teal {
+  width: 700px; height: 540px; left: 2%; bottom: -360px;
+  background: radial-gradient(circle at 50% 50%, rgba(13, 148, 136, 0.6), rgba(12, 74, 110, 0) 68%);
+}
+/* 细颗粒：压住大面积渐变的塑料感 */
+.grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.07;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.2) 1px, transparent 1px);
+  background-size: 3px 3px;
+  mix-blend-mode: overlay;
+}
+
 /* ---------- 玻璃面板 ---------- */
 .glass {
   background: var(--panel);

@@ -19,6 +19,14 @@ const emit = defineEmits(['close'])
 
 <template>
   <div class="ps">
+    <!-- 极光背景：和首页同一套（HomePage 的 .aurora），整页浮层才不像另一个软件 -->
+    <div class="ps-aurora" aria-hidden="true">
+      <span class="blob blob-blue"></span>
+      <span class="blob blob-violet"></span>
+      <span class="blob blob-red"></span>
+      <span class="blob blob-teal"></span>
+      <span class="grain"></span>
+    </div>
     <header class="ps-head">
       <button class="ps-back" type="button" @click="emit('close')">
         <AppIcon name="arrow-left" /> {{ backText }}
@@ -38,16 +46,21 @@ const emit = defineEmits(['close'])
 </template>
 
 <style scoped>
+/* 整页浮层：底色要和首页一致——同一套极光背景 + 深色底，
+   否则从首页点进资产库/技能/产出，像换了一个软件。 */
 .ps {
   position: fixed;
   inset: 0;
   z-index: 40;
   display: flex;
   flex-direction: column;
-  background: rgba(8, 8, 12, .94);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  background: var(--bg);
 }
+.ps-aurora {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  overflow: hidden;
+}
+.ps-head, .ps-body { position: relative; z-index: 1; }
 
 .ps-head {
   display: flex;

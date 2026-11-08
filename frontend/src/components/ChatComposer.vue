@@ -10,7 +10,7 @@
 // =====================================================================
 
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { store, sendMessage, clearHint, loadModelStatus, loadProviders, notify } from '../stores/app'
+import { store, sendMessage, clearHint, loadModelStatus, loadProviders, notify, generateAssetImages } from '../stores/app'
 import { api, uploadChatImage } from '../api'
 import ComposerCard from './ComposerCard.vue'
 
@@ -120,6 +120,18 @@ function onPaste(e) {
   }
 }
 
+// ---- 用生图模型给资产库补定妆照 / 场景图 ----
+const generatingAssets = ref(false)
+async function generateAssets() {
+  if (generatingAssets.value) return
+  generatingAssets.value = true
+  try {
+    await generateAssetImages()
+  } finally {
+    generatingAssets.value = false
+  }
+}
+
 // ---- @ 引用的资产：随本轮消息一起发给 Agent ----
 const refs = ref([])
 function onAssetPicked(item) {
@@ -208,6 +220,13 @@ watch(() => store.draftSeq, () => {
         <button class="cc-menu-item" type="button" role="menuitem" @click.stop="close(); store.leftOpen = true">
           资产库
         </button>
+        <button
+          class="cc-menu-item"
+          type="button"
+          role="menuitem"
+          :disabled="generatingAssets"
+          @click.stop="close(); generateAssets()"
+        >{{ generatingAssets ? '生成中…' : '生成资产图' }}</button>
       </template>
 
       <template #attachments>

@@ -44,6 +44,41 @@ def start_production(project_id: str) -> dict[str, object]:
     }
 
 
+@router.post("/projects/{project_id}/reference-assets")
+def start_reference_assets(project_id: str) -> dict[str, object]:
+    """用生图模型给资产库生成定妆照 / 场景图（后台任务）。
+
+    输入框「＋」里的「生成资产图」走这里：用户要的是「点一下就把资产补齐」，
+    不是在对话里描述一遍再让 Agent 决定。
+    """
+    store = deps.store()
+    p = store.get_project(project_id)
+    if p is None:
+        raise HTTPException(404, "作品不存在")
+    version = store.latest_version(p)
+    if version is None:
+        raise HTTPException(400, "还没有剧本版本，先在对话里生成初稿")
+
+    from ..agent.tasks import SubAgentRunner
+    from ..domain import StyleGuide
+    from ..media.refs import build_reference_assets
+
+    runner = deps.subagent_runner()
+    style_raw = store.get_video_style(p.id)
+    guide = StyleGuide.model_validate(style_raw) if style_raw else None
+
+    def _run(task: object) -> str:
+        def _progress(msg: str) -> None:
+            runner.update_step(task.id, msg, "running")
+
+        refs = build_reference_assets(version.script, guide, on_progress=_progress)
+        store.merge_video_style(p.id, {"reference_images": refs})
+        return f"已生成 {len(refs)} 张资产图：{'、'.join(refs)}"
+
+    task_id = runner.start("生成资产图", _run)
+    return {"task_id": task_id, "started": True}
+
+
 @router.get("/projects/{project_id}/production")
 def production_status(project_id: str) -> dict[str, object]:
     """最近一次生产任务的状态。

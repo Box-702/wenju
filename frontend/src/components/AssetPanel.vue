@@ -44,7 +44,7 @@
       </div>
     </div>
 
-    <!-- 资产库：当前作品的角色白模与场景图（提示词里的映射编号来自这里的 id） -->
+    <!-- 资产库：两级导航 —— 范围（哪部作品 / 全部作品）+ 类型（角色 / 场景 / 成片 / 素材） -->
     <div v-if="store.pid && (section === 'all' || section === 'assets')" class="panel-section library-section">
       <div class="section-head">
         <span class="section-title">资产库</span>
@@ -64,100 +64,180 @@
         </span>
       </div>
 
+      <!-- 第一级：范围 -->
+      <div class="lib-scope">
+        <button
+          v-for="sc in SCOPES"
+          :key="sc.key"
+          :class="['scope-btn', { on: scope === sc.key }]"
+          type="button"
+          @click="scope = sc.key"
+        >{{ sc.label }}</button>
+      </div>
+
+      <!-- 第二级：类型（带数量角标） -->
+      <div class="seg-tabs lib-types">
+        <button
+          v-for="t in TYPE_TABS"
+          :key="t.key"
+          :class="['seg-tab', { active: typeTab === t.key }]"
+          type="button"
+          @click="typeTab = t.key"
+        >{{ t.label }}<span class="tab-count">{{ counts[t.key] }}</span></button>
+      </div>
+
       <div v-if="lib.loading" class="lib-empty">加载中…</div>
       <template v-else>
-        <!-- 概览：一眼看清这部作品攒了多少资产、还缺什么 -->
-        <div class="lib-stats">
-          <span class="stat"><b>{{ lib.characters.length }}</b> 角色</span>
-          <span class="stat"><b>{{ lib.locations.length }}</b> 场景</span>
-          <span class="stat" :class="{ warn: missingCount > 0 }"><b>{{ missingCount }}</b> 缺图</span>
-          <span v-if="lib.visual_style" class="stat">画风 · {{ visualStyleLabel }}</span>
-        </div>
-
-        <!-- 缺什么：后端已经算好了（没定妆照会断人物一致性），直接摊开说 -->
-        <div v-if="lib.warnings.length" class="lib-warn">
-          <div v-for="(w, i) in lib.warnings" :key="i" class="warn-row">
-            <AppIcon name="warning" /> <span>{{ w }}</span>
+        <!-- 当前作品范围 -->
+        <template v-if="scope === 'current'">
+          <div class="lib-meta">
+            <span class="lm-title">{{ lib.project_title || '当前作品' }}</span>
+            <span v-if="visualStyleLabel" class="lm-sub">画风 · {{ visualStyleLabel }}</span>
+            <span v-if="missingCount > 0" class="lm-sub warn">{{ missingCount }} 项缺图</span>
           </div>
-        </div>
 
-        <div class="lib-label"><span class="seg-num">01</span>角色 · 定妆照与音色</div>
-        <div class="asset-grid">
-          <div v-for="c in lib.characters" :key="c.char_id" class="asset-card">
-            <div class="asset-pic">
-              <img v-if="c.image" :src="c.image" :alt="c.name" loading="lazy" />
-              <div v-else class="asset-placeholder">缺定妆照</div>
-            </div>
-            <div class="asset-meta">
-              <div class="asset-line">
-                <span class="asset-name">{{ c.name }}</span>
-                <span class="asset-id">{{ c.char_id }}</span>
+          <div v-if="typeTab === 'character'" class="asset-grid">
+            <div v-for="c in lib.characters" :key="c.char_id" class="asset-card">
+              <div class="asset-pic">
+                <img v-if="c.image" :src="c.image" :alt="c.name" loading="lazy" />
+                <div v-else class="asset-placeholder">缺定妆照</div>
               </div>
-              <div class="asset-line">
-                <span class="asset-badge" :class="{ miss: !c.image }">{{ c.image ? '定妆照' : '缺定妆照' }}</span>
+              <div class="asset-meta">
+                <div class="asset-line">
+                  <span class="asset-name">{{ c.name }}</span>
+                  <span class="asset-id">{{ c.char_id }}</span>
+                </div>
+                <div class="asset-line">
+                  <span class="asset-badge" :class="{ miss: !c.image }">{{ c.image ? '定妆照' : '缺定妆照' }}</span>
+                </div>
+                <div class="asset-voice" :class="{ none: !c.voice_label }">
+                  <AppIcon name="sound" />
+                  <span>{{ c.voice_label || '未指定音色' }}</span>
+                  <span v-if="c.gender" class="asset-gender">{{ genderZh(c.gender) }}</span>
+                  <span v-if="c.confirmed" class="asset-ok" title="音色已人工确认">已确认</span>
+                </div>
+                <p v-if="c.appearance" class="asset-desc" :title="c.appearance">{{ c.appearance }}</p>
+                <div class="asset-nums">台词 {{ c.speech_chars }} 字 · {{ c.scenes }} 场</div>
               </div>
-              <div class="asset-voice" :class="{ none: !c.voice_label }">
-                <AppIcon name="sound" />
-                <span>{{ c.voice_label || '未指定音色' }}</span>
-                <span v-if="c.gender" class="asset-gender">{{ genderZh(c.gender) }}</span>
-                <span v-if="c.confirmed" class="asset-ok" title="音色已人工确认">已确认</span>
-              </div>
-              <p v-if="c.appearance" class="asset-desc" :title="c.appearance">{{ c.appearance }}</p>
-              <div class="asset-nums">台词 {{ c.speech_chars }} 字 · {{ c.scenes }} 场</div>
             </div>
           </div>
-        </div>
 
-        <div class="lib-label"><span class="seg-num">02</span>场景 · 场景图</div>
-        <div class="asset-grid">
-          <div v-for="l in lib.locations" :key="l.loc_id" class="asset-card">
-            <div class="asset-pic scene">
-              <img v-if="l.image" :src="l.image" :alt="l.name" loading="lazy" />
-              <div v-else class="asset-placeholder">缺场景图</div>
-            </div>
-            <div class="asset-meta">
-              <div class="asset-line">
-                <span class="asset-name">{{ l.name }}</span>
-                <span class="asset-id">{{ l.loc_id }}</span>
+          <div v-else-if="typeTab === 'location'" class="asset-grid">
+            <div v-for="l in lib.locations" :key="l.loc_id" class="asset-card">
+              <div class="asset-pic scene">
+                <img v-if="l.image" :src="l.image" :alt="l.name" loading="lazy" />
+                <div v-else class="asset-placeholder">缺场景图</div>
               </div>
-              <div class="asset-line">
-                <span class="asset-badge" :class="{ miss: !l.image }">{{ l.image ? '场景图' : '缺场景图' }}</span>
+              <div class="asset-meta">
+                <div class="asset-line">
+                  <span class="asset-name">{{ l.name }}</span>
+                  <span class="asset-id">{{ l.loc_id }}</span>
+                </div>
+                <div class="asset-line">
+                  <span class="asset-badge" :class="{ miss: !l.image }">{{ l.image ? '场景图' : '缺场景图' }}</span>
+                </div>
+                <p v-if="l.description" class="asset-desc" :title="l.description">{{ l.description }}</p>
+                <div class="asset-nums">{{ l.scenes }} 场</div>
               </div>
-              <p v-if="l.description" class="asset-desc" :title="l.description">{{ l.description }}</p>
-              <div class="asset-nums">{{ l.scenes }} 场</div>
             </div>
           </div>
-        </div>
 
-        <!-- 成片与导入的素材：资产库是所有产出的最终归宿 -->
-        <div class="lib-label"><span class="seg-num">03</span>成片与素材</div>
-        <div v-if="assets.length" class="asset-grid">
-          <div v-for="a in assets" :key="a.id" class="asset-card">
-            <div class="asset-pic scene">
-              <video v-if="a.kind === 'video'" :src="a.url" muted playsinline preload="metadata"></video>
-              <img v-else-if="a.kind === 'image'" :src="a.url" :alt="a.name" loading="lazy" />
-              <div v-else class="asset-placeholder">{{ a.kind === 'audio' ? '音频' : '素材' }}</div>
-            </div>
-            <div class="asset-meta">
-              <div class="asset-line">
-                <span class="asset-name" :title="a.name">{{ a.name || '未命名' }}</span>
+          <div v-else-if="typeTab === 'clip'" class="asset-grid">
+            <div v-for="a in clipsOf(assets)" :key="a.id" class="asset-card">
+              <div class="asset-pic scene">
+                <video v-if="a.url" :src="a.url" muted playsinline preload="metadata"></video>
+                <div v-else class="asset-placeholder">成片</div>
               </div>
-              <div class="asset-line">
-                <span class="asset-badge">{{ kindZh(a.kind) }}</span>
+              <div class="asset-meta">
+                <div class="asset-line"><span class="asset-name" :title="a.name">{{ a.name || '未命名' }}</span></div>
+                <div class="asset-line"><span class="asset-badge">{{ sourceZh(a.source) }}</span></div>
+                <a class="asset-dl" :href="a.url" :download="a.name || true" target="_blank" rel="noopener">
+                  <AppIcon name="download" /> 下载
+                </a>
               </div>
-              <div class="asset-nums">{{ sourceZh(a.source) }}</div>
-              <a class="asset-dl" :href="a.url" :download="a.name || true" target="_blank" rel="noopener">
-                <AppIcon name="download" /> 下载
-              </a>
             </div>
           </div>
-        </div>
-        <div v-else class="lib-empty">还没有成片或导入的素材。出片后成片会出现在这里。</div>
 
-        <div v-if="!lib.characters.length && !lib.locations.length" class="lib-empty">
+          <div v-else class="asset-grid">
+            <div v-for="a in materialOf(assets)" :key="a.id" class="asset-card">
+              <div class="asset-pic scene">
+                <img v-if="a.kind === 'image' && a.url" :src="a.url" :alt="a.name" loading="lazy" />
+                <div v-else class="asset-placeholder">{{ a.kind === 'audio' ? '音频' : '素材' }}</div>
+              </div>
+              <div class="asset-meta">
+                <div class="asset-line"><span class="asset-name" :title="a.name">{{ a.name || '未命名' }}</span></div>
+                <div class="asset-line"><span class="asset-badge">{{ sourceZh(a.source) }}</span></div>
+                <a class="asset-dl" :href="a.url" :download="a.name || true" target="_blank" rel="noopener">
+                  <AppIcon name="download" /> 下载
+                </a>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- 全部作品范围：按作品分组 -->
+        <template v-else>
+          <div v-for="grp in allGroups" :key="grp.project_id" class="lib-group">
+            <div class="lib-meta">
+              <span class="lm-title">{{ grp.title }}</span>
+              <span v-if="grp.visual_style" class="lm-sub">{{ visualStyleZh(grp.visual_style) }}</span>
+              <span class="lm-sub">{{ grp.counts.character }} 角色 · {{ grp.counts.location }} 场景 · {{ grp.counts.clip }} 成片</span>
+            </div>
+
+            <div v-if="typeTab === 'character'" class="asset-grid">
+              <div v-for="c in grp.characters" :key="c.char_id" class="asset-card">
+                <div class="asset-pic">
+                  <img v-if="c.image" :src="c.image" :alt="c.name" loading="lazy" />
+                  <div v-else class="asset-placeholder">缺定妆照</div>
+                </div>
+                <div class="asset-meta">
+                  <div class="asset-line">
+                    <span class="asset-name">{{ c.name }}</span>
+                    <span class="asset-id">{{ c.char_id }}</span>
+                  </div>
+                  <div class="asset-voice" :class="{ none: !c.voice_label }">
+                    <AppIcon name="sound" />
+                    <span>{{ c.voice_label || '未指定音色' }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-else-if="typeTab === 'location'" class="asset-grid">
+              <div v-for="l in grp.locations" :key="l.loc_id" class="asset-card">
+                <div class="asset-pic scene">
+                  <img v-if="l.image" :src="l.image" :alt="l.name" loading="lazy" />
+                  <div v-else class="asset-placeholder">缺场景图</div>
+                </div>
+                <div class="asset-meta">
+                  <div class="asset-line">
+                    <span class="asset-name">{{ l.name }}</span>
+                    <span class="asset-id">{{ l.loc_id }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-else class="asset-grid">
+              <div v-for="a in grp.assets" :key="a.id" class="asset-card">
+                <div class="asset-pic scene">
+                  <video v-if="a.kind === 'video' && a.url" :src="a.url" muted playsinline preload="metadata"></video>
+                  <img v-else-if="a.kind === 'image' && a.url" :src="a.url" :alt="a.name" loading="lazy" />
+                  <div v-else class="asset-placeholder">素材</div>
+                </div>
+                <div class="asset-meta">
+                  <div class="asset-line"><span class="asset-name" :title="a.name">{{ a.name || '未命名' }}</span></div>
+                  <a class="asset-dl" :href="a.url" :download="a.name || true" target="_blank" rel="noopener">
+                    <AppIcon name="download" /> 下载
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-if="!allGroups.length" class="lib-empty">还没有作品的资产。先在对话里生成初稿。</div>
+        </template>
+
+        <div v-if="!lib.characters.length && !lib.locations.length && scope === 'current'" class="lib-empty">
           还没有资产。在对话里说一声「生成初稿」，流水线会产出人物定妆照与场景图。
         </div>
-
       </template>
     </div>
 
@@ -196,10 +276,71 @@ const lib = reactive({
 /** 成片与导入的素材（视频/图片/音频）—— 资产库的另一半。 */
 const assets = ref([])
 
+/** 全部作品范围的数据。 */
+const all = reactive({ projects: [], assets: [] })
+
+// ---- 两级导航：范围 + 类型 ----
+const SCOPES = [
+  { key: 'current', label: '当前作品' },
+  { key: 'all', label: '全部作品' },
+]
+const TYPE_TABS = [
+  { key: 'character', label: '角色' },
+  { key: 'location', label: '场景' },
+  { key: 'clip', label: '成片' },
+  { key: 'material', label: '素材' },
+]
+const scope = ref('current')
+const typeTab = ref('character')
+
 const ASSET_KIND_ZH = { video: '成片', image: '图片', audio: '音频' }
 const kindZh = (k) => ASSET_KIND_ZH[k] || '素材'
 const SOURCE_ZH = { upload: '手动导入', finalize: '流水线产出', url: '外部链接' }
 const sourceZh = (s) => SOURCE_ZH[s] || ''
+
+const visualStyleZh = (v) => VISUAL_STYLE_ZH[v] || v || ''
+
+/** 成片 = 视频类素材；素材 = 图片/音频类。 */
+const clipsOf = (list) => (list || []).filter((a) => a.kind === 'video')
+const materialOf = (list) => (list || []).filter((a) => a.kind !== 'video')
+
+/** 页签角标：当前范围下各类型的数量。 */
+const counts = computed(() => {
+  if (scope.value === 'current') {
+    return {
+      character: lib.characters.length,
+      location: lib.locations.length,
+      clip: clipsOf(assets.value).length,
+      material: materialOf(assets.value).length,
+    }
+  }
+  return {
+    character: all.projects.reduce((n, p) => n + (p.characters || []).length, 0),
+    location: all.projects.reduce((n, p) => n + (p.locations || []).length, 0),
+    clip: clipsOf(all.assets).length,
+    material: materialOf(all.assets).length,
+  }
+})
+
+/** 全部作品范围：按作品分组，每组带上自己的资产与计数。 */
+const allGroups = computed(() =>
+  (all.projects || []).map((p) => {
+    const own = (all.assets || []).filter((a) => a.project_id === p.project_id)
+    return {
+      project_id: p.project_id,
+      title: p.title,
+      visual_style: p.visual_style,
+      characters: p.characters || [],
+      locations: p.locations || [],
+      assets: own,
+      counts: {
+        character: (p.characters || []).length,
+        location: (p.locations || []).length,
+        clip: clipsOf(own).length,
+      },
+    }
+  }),
+)
 
 /** 缺图数量：角色缺定妆照 + 场景缺场景图。这是出片能不能锁住一致性的前提。 */
 const missingCount = computed(
@@ -246,6 +387,18 @@ function enterWorkspace(pid) {
   selectProject(pid)
 }
 
+/** 全部作品范围的数据：每部作品一份 + 素材带归属。 */
+async function loadAllLibrary() {
+  try {
+    const data = await api('/library/all')
+    all.projects = data.projects || []
+    all.assets = data.assets || []
+  } catch {
+    all.projects = []
+    all.assets = []
+  }
+}
+
 async function loadLibrary() {
   if (!store.pid) return
   lib.loading = true
@@ -256,6 +409,8 @@ async function loadLibrary() {
     } catch {
       assets.value = []
     }
+    // 「全部作品」范围的数据按需拉
+    if (scope.value === 'all') await loadAllLibrary()
     const data = await api(`/projects/${store.pid}/library`)
     lib.characters = data.characters || []
     lib.locations = data.locations || []
@@ -274,6 +429,8 @@ async function loadLibrary() {
 onMounted(() => { loadSkills() })
 
 watch(() => store.pid, (pid) => { if (pid) loadLibrary() }, { immediate: true })
+// 切到「全部作品」时按需拉一次
+watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 </script>
 
 <style scoped>
@@ -372,20 +529,40 @@ watch(() => store.pid, (pid) => { if (pid) loadLibrary() }, { immediate: true })
   gap: 10px;
   margin-bottom: 4px;
 }
-/* 概览：角色数 / 场景数 / 缺图数 —— 纯文字，用竖线分隔，不做胶囊 */
-.lib-stats {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0;
-  margin: 2px 0 10px; color: var(--muted); font-size: var(--fs-xs);
+/* 第一级：范围切换（当前作品 / 全部作品） */
+.lib-scope { display: flex; align-items: center; gap: 2px; margin: 2px 0 8px; }
+.scope-btn {
+  padding: 4px 11px; border-radius: var(--radius-md);
+  background: transparent; border: 1px solid transparent;
+  color: var(--muted); font-size: var(--fs-sm); cursor: pointer;
+  transition: color 130ms var(--ease), background 130ms var(--ease), border-color 130ms var(--ease);
 }
-.stat {
-  display: inline-flex; align-items: baseline; gap: 4px;
-  padding: 0 10px; color: var(--muted);
+.scope-btn:hover { color: var(--ink); background: rgba(255, 255, 255, .06); }
+.scope-btn.on {
+  color: var(--ink); background: rgba(255, 255, 255, .09);
+  border-color: var(--line);
 }
-.stat:first-child { padding-left: 0; }
-.stat + .stat { border-left: 1px solid var(--line); }
-.stat b { color: var(--ink); font-weight: 600; font-size: var(--fs-sm); }
-.stat.warn { color: var(--warn); }
-.stat.warn b { color: var(--warn); }
+
+/* 第二级：类型页签（角色 / 场景 / 成片 / 素材），带数量角标 */
+.lib-types { margin-bottom: 12px; }
+.lib-types .seg-tab { display: inline-flex; align-items: baseline; gap: 5px; }
+.tab-count {
+  font-size: 10px; color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.lib-types .seg-tab.active .tab-count { color: var(--muted); }
+
+/* 作品信息行：作品名 / 画风 / 缺图 */
+.lib-meta {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  margin: 2px 0 10px;
+}
+.lm-title { font-size: var(--fs-md); color: var(--ink); font-weight: 600; }
+.lm-sub { font-size: var(--fs-xs); color: var(--dim); }
+.lm-sub.warn { color: var(--warn); }
+
+/* 全部作品范围：按作品分组 */
+.lib-group { margin-bottom: 22px; }
 
 /* 缺图告警：后端算好的事实，直接摊开 */
 .lib-warn {

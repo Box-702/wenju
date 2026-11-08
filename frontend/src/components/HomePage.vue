@@ -11,8 +11,14 @@ import { store, selectProject, deleteProject, notify } from '../stores/app.js'
 import AppIcon from './AppIcon.vue'
 import HomeComposer from './HomeComposer.vue'
 
+/** 作品栏：按**最近使用**排序（最近聊过/跑过/出版本的那部排最前），
+    没有使用记录的新作品退回按创建时间排。 */
 const works = computed(() =>
-  [...(store.projects || [])].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')),
+  [...(store.projects || [])].sort((a, b) => {
+    const at = a.last_used_at || a.created_at || ''
+    const bt = b.last_used_at || b.created_at || ''
+    return bt.localeCompare(at)
+  }),
 )
 
 /** 产出目标：小说改编 / 分镜设计 / 成片交付 */
@@ -310,11 +316,18 @@ function formatDate(iso) {
   color: rgba(255, 255, 255, 0.34);
 }
 
+/* 作品栏：一行排开，不换行——放得下几张就放几张，其余横向滚动。
+   换行会把首页顶出一屏，用户得往下滚才看到自己的作品。 */
 .works-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
+  display: flex;
+  flex-wrap: nowrap;
   gap: 14px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
 }
+.works-grid::-webkit-scrollbar { display: none; }
+.works-grid > .work-card { flex: 0 0 212px; }
 
 .work-card {
   position: relative;

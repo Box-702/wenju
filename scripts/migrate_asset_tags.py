@@ -101,39 +101,36 @@ def main() -> int:
         return 1
     names = names_of(version.script)
 
-    # 视频版本（提示词在这里）
+    # 视频版本（提示词在这里）—— 所有版本都迁，链上任意一版都该是同一套写法
     vvers = store.list_video_versions(project.id)
     if not vvers:
         print("没有视频版本（提示词还没生成）")
         return 1
-    latest = sorted(vvers, key=lambda v: v.created_at)[-1]
 
-    shots = json.loads(latest.shots_json or "[]")
     total = 0
-    changed = 0
-    for shot in shots:
-        prompt = shot.get("video_prompt") or ""
-        new_prompt, n = rewrite(prompt, names)
-        total += n
-        if n:
-            changed += 1
-            shot["video_prompt"] = new_prompt
+    for version in sorted(vvers, key=lambda v: v.created_at):
+        shots = json.loads(version.shots_json or "[]")
+        changed = 0
+        for shot in shots:
+            prompt = shot.get("video_prompt") or ""
+            new_prompt, n = rewrite(prompt, names)
+            total += n
+            if n:
+                changed += 1
+                shot["video_prompt"] = new_prompt
+        if changed and not args.dry_run:
+            with store.session() as s:
+                from app.store import VideoVersion
+
+                row = s.get(VideoVersion, version.id)
+                row.shots_json = json.dumps(shots, ensure_ascii=False)
+                s.commit()
+        if changed:
+            print(f"  {version.id}（{version.label}）：{changed} 个镜头")
     if not total:
         print("没有需要迁移的旧标记")
         return 0
-    print(f"命中旧标记 {total} 处，涉及 {changed} 个镜头（版本 {latest.id}）")
-    if args.dry_run:
-        sample = next((s for s in shots if s.get("video_prompt")), {})
-        print("样例：", (sample.get("video_prompt") or "")[:160])
-        return 0
-
-    with store.session() as s:
-        from app.store import VideoVersion
-
-        row = s.get(VideoVersion, latest.id)
-        row.shots_json = json.dumps(shots, ensure_ascii=False)
-        s.commit()
-    print("已写回该视频版本")
+    print(f"共迁移 {total} 处")
     return 0
 
 

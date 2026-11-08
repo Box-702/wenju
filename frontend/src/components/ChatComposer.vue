@@ -11,7 +11,6 @@
 
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { store, sendMessage, clearHint, loadModelStatus, loadProviders, notify, generateAssetImages } from '../stores/app'
-import { useModelMenu } from '../composerModel'
 import { api, uploadChatImage } from '../api'
 import ComposerCard from './ComposerCard.vue'
 
@@ -30,8 +29,7 @@ const canSend = computed(() => (!!text.value.trim() || hasImages.value) && !stor
 
 const statusText = computed(() => (store.streaming ? store.streamingStage || '正在处理' : ''))
 
-// ---- 胶囊下拉：与首页共用同一份逻辑（composerModel.js）----
-const { openMenu, modelLabel, modelOptions, toggleMenu, chooseModel } = useModelMenu()
+// 模型切换在「设置」里做，输入框不再放模型胶囊。
 
 
 onMounted(() => {
@@ -159,49 +157,16 @@ watch(() => store.draftSeq, () => {
       placeholder="描述你的故事想法"
       :can-send="canSend"
       :busy="store.streaming"
-      :model-label="modelLabel"
       :status-text="statusText"
       :hint-text="store.hint"
       @send="send"
       @open-settings="store.showSettings = true"
-      @pick-model="toggleMenu('model')"
       @open-skills="emit('open-skills')"
       @focus-input="clearHint"
       :assets="store.assetIndex"
       @asset-picked="onAssetPicked"
       @new-project="store.showNewProject = true"
     >
-      <!-- 模型下拉 -->
-      <template #pills>
-        <div v-if="openMenu === 'model'" class="cc-pop">
-          <button
-            v-for="p in modelOptions" :key="p.id"
-            class="cc-pop-item" type="button"
-            @click.stop="chooseModel(p)"
-          >
-            <span class="pop-label">{{ p.label || p.name }}</span>
-            <span class="pop-desc">{{ p.config?.model || p.name }}</span>
-          </button>
-          <div v-if="!modelOptions.length" class="pop-empty">没有可用模型，去设置里配一个。</div>
-        </div>
-      </template>
-      <template #menu="{ close }">
-        <!-- 只有真实存在的入口；旧模型的「主体库（支持音色）」「音色库」已删 -->
-        <button class="cc-menu-item" type="button" role="menuitem" @click.stop="close(); pickImages()">
-          上传图片
-        </button>
-        <button class="cc-menu-item" type="button" role="menuitem" @click.stop="close(); store.leftOpen = true">
-          资产库
-        </button>
-        <button
-          class="cc-menu-item"
-          type="button"
-          role="menuitem"
-          :disabled="generatingAssets"
-          @click.stop="close(); generateAssets()"
-        >{{ generatingAssets ? '生成中…' : '生成资产图' }}</button>
-      </template>
-
       <template #attachments>
         <div v-if="attachedImages.length" class="image-strip" aria-label="待发送图片">
           <div v-for="item in attachedImages" :key="item.preview" class="image-thumb" :class="{ uploading: item.uploading }">

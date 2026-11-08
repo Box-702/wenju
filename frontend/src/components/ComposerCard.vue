@@ -25,8 +25,6 @@ const props = defineProps({
     type: String,
     default: '描述你想生成的内容，或点 ＋ 附上图片。',
   },
-  /** 模型名（胶囊） */
-  modelLabel: { type: String, default: '模型' },
   /** 阶段状态（生成中），显示在胶囊行左侧 */
   statusText: { type: String, default: '' },
   /** 上下文提示（只在有提示时显示） */
@@ -38,8 +36,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits([
-  'send', 'pick-menu', 'open-settings', 'pick-model', 'open-skills', 'asset-picked',
-  'new-project',
+  'send', 'pick-menu', 'open-settings', 'open-skills', 'asset-picked', 'new-project',
 ])
 
 const menuOpen = ref(false)
@@ -276,19 +273,12 @@ function onInput(e) {
           <span v-if="statusText" class="cc-status">
             <span class="cc-pulse" aria-hidden="true"></span>{{ statusText }}
           </span>
-          <button class="chip" type="button" @click.stop="emit('pick-model')">
-            <AppIcon name="sparkle" />
-            <span>{{ modelLabel }}</span>
-            <AppIcon name="chevron-down" class="cc-chev" />
-          </button>
+          <!-- 模型不在这里切换：模型设置归「设置」管，输入框只留作品与技能 -->
           <button class="chip" type="button" @click.stop="emit('open-skills')">
             <AppIcon name="folder" />
             <span>Skill</span>
           </button>
           <span v-if="hintText" class="cc-hint">{{ hintText }}</span>
-          <!-- 模型下拉等由外层注入（#pills 插槽）：外壳只负责摆位置，
-               下拉的具体内容（模型清单、说明）属于对话层。 -->
-          <slot name="pills" />
         </div>
 
         <div class="cc-right">

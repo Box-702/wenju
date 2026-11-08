@@ -48,6 +48,12 @@
                   <span class="dh-name">{{ selectedProvider.label || selectedProvider.name }}</span>
                   <span v-if="chatPref?.provider_id === selectedProvider.id" class="using-badge">使用中</span>
                   <span class="dh-actions">
+                    <button
+                      v-if="chatPref?.provider_id !== selectedProvider.id"
+                      class="mr-btn ok"
+                      :disabled="!selectedProvider.configured"
+                      @click="setAsDefault(selectedProvider)"
+                    >设为默认</button>
                     <button class="mr-btn" :disabled="testingId === selectedProvider.id" @click="testProvider(selectedProvider)">
                       {{ testingId === selectedProvider.id ? '测试中…' : '测试连接' }}
                     </button>
@@ -263,7 +269,7 @@
               <span class="active-src">{{ chatPref ? '界面指定' : '跟随 .env' }}</span>
             </div>
             <p class="pref-hint">
-              切换对话模型：在输入框的模型胶囊上直接选；切回 .env 默认用「恢复 .env 默认」。
+              在「对话模型」里选中厂商后点「设为默认」即可切换；切回 .env 默认用「恢复 .env 默认」。
             </p>
           </div>
         </div>
@@ -849,6 +855,7 @@ onMounted(() => {
 }
 .mr-btn:hover { color: var(--ink); border-color: var(--line-strong); }
 .mr-btn.on { color: var(--accent); border-color: color-mix(in oklch, var(--accent) 40%, transparent); }
+.mr-btn.ok { color: var(--accent); border-color: color-mix(in oklch, var(--accent) 40%, transparent); }
 .mr-btn.danger { color: var(--bad); border-color: color-mix(in oklch, var(--bad) 35%, transparent); }
 .add-model {
   align-self: flex-start; padding: 3px 9px; font-size: 11.5px;

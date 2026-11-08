@@ -16,6 +16,7 @@
 
 import { computed, nextTick, ref } from 'vue'
 import AppIcon from './AppIcon.vue'
+import { store, selectProject } from '../stores/app'
 
 const text = defineModel('text', { type: String, default: '' })
 
@@ -38,9 +39,32 @@ const props = defineProps({
 
 const emit = defineEmits([
   'send', 'pick-menu', 'open-settings', 'pick-model', 'open-skills', 'asset-picked',
+  'new-project',
 ])
 
 const menuOpen = ref(false)
+
+// ---- 作品选择：这轮对话算在哪部作品下 ----
+const projectOpen = ref(false)
+
+const projectOptions = computed(() =>
+  [...(store.projects || [])].sort((a, b) => {
+    const at = a.last_used_at || a.created_at || ''
+    const bt = b.last_used_at || b.created_at || ''
+    return bt.localeCompare(at)
+  }),
+)
+
+const projectLabel = computed(() => {
+  const cur = (store.projects || []).find((p) => p.id === store.pid)
+  return cur ? cur.title : '选择作品'
+})
+
+function pickProject(p) {
+  if (!p?.id) return
+  projectOpen.value = false
+  selectProject(p.id)
+}
 
 // ---- @ 引用资产：打 @ 弹候选，选中后插入 @名字 ----
 const mentionOpen = ref(false)
@@ -112,9 +136,16 @@ function closeMenu(e) {
   if (menuOpen.value && e.target.closest && !e.target.closest('.cc-plus-wrap')) {
     menuOpen.value = false
   }
+  if (projectOpen.value && e.target.closest && !e.target.closest('.cc-project-wrap')) {
+    projectOpen.value = false
+  }
 }
 
 function onKeydown(e) {
+  if (e.key === 'Escape') {
+    if (projectOpen.value) { projectOpen.value = false; return }
+    if (menuOpen.value) { menuOpen.value = false; return }
+  }
   // @ 候选打开时，方向键与回车归候选列表
   if (mentionOpen.value && ['ArrowDown', 'ArrowUp', 'Escape'].includes(e.key)) {
     onMentionKey(e)
@@ -206,6 +237,42 @@ function onInput(e) {
       <!-- 下：胶囊行 + 齿轮 + 发送 -->
       <div class="cc-bottom">
         <div class="cc-pills">
+          <!-- 作品选择：决定这轮对话挂在哪部作品下 -->
+          <div class="cc-project-wrap">
+            <button
+              class="chip cc-project"
+              type="button"
+              title="选择这轮对话所属的作品"
+              @click.stop="projectOpen = !projectOpen"
+            >
+              <AppIcon name="folder" />
+              <span>{{ projectLabel }}</span>
+              <AppIcon name="chevron-down" class="cc-chev" />
+            </button>
+            <Transition name="ccpop">
+              <div v-if="projectOpen" class="cc-menu cc-projects" role="menu">
+                <div class="cc-menu-head">这轮对话属于哪部作品</div>
+                <button
+                  v-for="p in projectOptions"
+                  :key="p.id"
+                  class="cc-menu-item"
+                  type="button"
+                  role="menuitem"
+                  @click.stop="pickProject(p)"
+                >
+                  <span class="pi-title">{{ p.title }}</span>
+                  <span class="pi-meta">{{ p.version_count || 0 }} 版</span>
+                </button>
+                <div v-if="!projectOptions.length" class="cc-menu-empty">还没有作品</div>
+                <button
+                  class="cc-menu-item"
+                  type="button"
+                  role="menuitem"
+                  @click.stop="projectOpen = false; emit('new-project')"
+                >+ 新建作品</button>
+              </div>
+            </Transition>
+          </div>
           <span v-if="statusText" class="cc-status">
             <span class="cc-pulse" aria-hidden="true"></span>{{ statusText }}
           </span>
@@ -411,6 +478,25 @@ function onInput(e) {
 .mi-id { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--dim); }
 
 .cc-gear:hover { color: var(--ink); background: rgba(255, 255, 255, .07); }
+
+/* 作品选择胶囊 + 下拉 */
+.cc-project-wrap { position: relative; }
+.cc-project { max-width: 170px; }
+.cc-project span {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cc-projects {
+  bottom: calc(100% + 6px); left: 0; right: auto; min-width: 220px;
+  background: var(--panel-solid); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); padding: 4px; box-shadow: var(--shadow-2);
+}
+.cc-menu-head {
+  padding: 5px 9px 6px; font-size: 10px; color: var(--dim);
+  letter-spacing: .04em; border-bottom: 1px solid var(--line); margin-bottom: 3px;
+}
+.cc-menu-empty { padding: 8px 9px; font-size: var(--fs-sm); color: var(--dim); }
+.pi-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pi-meta { margin-left: auto; font-size: 10px; color: var(--dim); flex: none; }
 .cc-gear .app-ic { width: 15px; height: 15px; }
 
 /* 发送：圆形箭头钮。

@@ -150,7 +150,10 @@
               </div>
               <div class="asset-meta">
                 <div class="asset-line"><span class="asset-name" :title="a.name">{{ a.name || '未命名' }}</span></div>
-                <div class="asset-line"><span class="asset-badge">{{ sourceZh(a.source) }}</span></div>
+                <div class="asset-line">
+                  <span class="asset-badge">{{ kindZh(a.kind) }}</span>
+                  <span class="asset-badge">{{ sourceZh(a.source) }}</span>
+                </div>
                 <a class="asset-dl" :href="a.url" :download="a.name || true" target="_blank" rel="noopener">
                   <AppIcon name="download" /> 下载
                 </a>
@@ -166,7 +169,10 @@
               </div>
               <div class="asset-meta">
                 <div class="asset-line"><span class="asset-name" :title="a.name">{{ a.name || '未命名' }}</span></div>
-                <div class="asset-line"><span class="asset-badge">{{ sourceZh(a.source) }}</span></div>
+                <div class="asset-line">
+                  <span class="asset-badge">{{ kindZh(a.kind) }}</span>
+                  <span class="asset-badge">{{ sourceZh(a.source) }}</span>
+                </div>
                 <a class="asset-dl" :href="a.url" :download="a.name || true" target="_blank" rel="noopener">
                   <AppIcon name="download" /> 下载
                 </a>
@@ -293,16 +299,19 @@ const TYPE_TABS = [
 const scope = ref('current')
 const typeTab = ref('character')
 
-const ASSET_KIND_ZH = { video: '成片', image: '图片', audio: '音频' }
+const ASSET_KIND_ZH = { video: '视频', image: '图片', audio: '音频' }
 const kindZh = (k) => ASSET_KIND_ZH[k] || '素材'
 const SOURCE_ZH = { upload: '手动导入', finalize: '流水线产出', url: '外部链接' }
 const sourceZh = (s) => SOURCE_ZH[s] || ''
 
 const visualStyleZh = (v) => VISUAL_STYLE_ZH[v] || v || ''
 
-/** 成片 = 视频类素材；素材 = 图片/音频类。 */
-const clipsOf = (list) => (list || []).filter((a) => a.kind === 'video')
-const materialOf = (list) => (list || []).filter((a) => a.kind !== 'video')
+/* 资产按**在流水线里的角色**分，不按文件后缀分：
+   - 成片 = source=finalize：合成出来的完整视频 + 字幕（是产出）
+   - 素材 = source=upload/url：用户导入 / 登记的参考素材（是输入，给生成当参考）
+   之前按 kind 分会把「用户上传的参考视频」也算成成片，混淆了产出与输入。 */
+const clipsOf = (list) => (list || []).filter((a) => a.source === 'finalize')
+const materialOf = (list) => (list || []).filter((a) => a.source !== 'finalize')
 
 /** 页签角标：当前范围下各类型的数量。 */
 const counts = computed(() => {

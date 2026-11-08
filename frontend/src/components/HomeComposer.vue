@@ -160,6 +160,7 @@ function cycleResolution() {
     @change-goal="emit('goal', goal)"
     :assets="store.assetIndex"
     @asset-picked="onAssetPicked"
+    @new-project="store.showNewProject = true"
   >
     <template #menu="{ close }">
       <input

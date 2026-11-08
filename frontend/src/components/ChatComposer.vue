@@ -197,6 +197,7 @@ watch(() => store.draftSeq, () => {
       @focus-input="clearHint"
       :assets="store.assetIndex"
       @asset-picked="onAssetPicked"
+      @new-project="store.showNewProject = true"
     >
       <!-- 模型下拉 -->
       <template #pills>

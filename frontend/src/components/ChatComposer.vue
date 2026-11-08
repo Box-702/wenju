@@ -11,6 +11,7 @@
 
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { store, sendMessage, clearHint, loadModelStatus, loadProviders, notify, generateAssetImages } from '../stores/app'
+import { useModelMenu } from '../composerModel'
 import { api, uploadChatImage } from '../api'
 import ComposerCard from './ComposerCard.vue'
 
@@ -29,37 +30,8 @@ const canSend = computed(() => (!!text.value.trim() || hasImages.value) && !stor
 
 const statusText = computed(() => (store.streaming ? store.streamingStage || '正在处理' : ''))
 
-// ---- 胶囊下拉 ----
-const openMenu = ref('')          // '' | 'model'
-const modelLabel = computed(() => {
-  const m = store.modelInfo
-  if (!m?.available) return '模型'
-  return m.name || m.provider
-})
-
-const modelOptions = computed(() =>
-  (store.providers || []).filter((p) => p.configured && p.enabled !== false),
-)
-
-function toggleMenu(name) {
-  openMenu.value = openMenu.value === name ? '' : name
-}
-
-async function chooseModel(p) {
-  openMenu.value = ''
-  try {
-    await api('/models/preferences', 'PUT', {
-      task_type: 'chat',
-      provider_id: p.id,
-      model_name: p.config?.model || '',
-      is_default: true,
-    })
-    await Promise.all([loadModelStatus(), loadProviders()])
-    notify(`对话模型已切到 ${p.label || p.name}`, 'ok')
-  } catch (e) {
-    notify(`切换失败：${e.message}`)
-  }
-}
+// ---- 胶囊下拉：与首页共用同一份逻辑（composerModel.js）----
+const { openMenu, modelLabel, modelOptions, toggleMenu, chooseModel } = useModelMenu()
 
 
 onMounted(() => {

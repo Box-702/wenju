@@ -7,7 +7,8 @@
 // =====================================================================
 
 import { ref, computed, onMounted } from 'vue'
-import { store, sendMessage, loadModelStatus, notify, setHint, generateAssetImages } from '../stores/app'
+import { store, sendMessage, loadModelStatus, loadProviders, notify, setHint, generateAssetImages } from '../stores/app'
+import { useModelMenu } from '../composerModel'
 import { uploadChatImage } from '../api'
 import ComposerCard from './ComposerCard.vue'
 
@@ -41,11 +42,8 @@ const MENU = [
 const SPEC_RESOLUTIONS = ['768P', '1080P']
 
 const goalLabel = computed(() => (GOALS.find((g) => g.id === props.goal) || GOALS[0]).label)
-const modelLabel = computed(() => {
-  const m = store.modelInfo
-  if (!m?.available) return '未配置模型'
-  return m.name || m.provider
-})
+// 模型胶囊 + 下拉：与工作区共用同一份逻辑（composerModel.js）
+const { openMenu, modelLabel, modelOptions, toggleMenu, chooseModel } = useModelMenu()
 const specLabel = computed(() => {
   const res = store.videoResolution || '768P'
   const aspect = store.videoAspect || '9:16'
@@ -56,6 +54,8 @@ const canSend = computed(() => (!!text.value.trim() || attachedImages.value.some
 
 onMounted(() => {
   loadModelStatus()
+  // 模型下拉的候选来自这里；不拉的话下拉是空的（点了像没反应）
+  loadProviders()
 })
 
 function pick(item) {
@@ -157,6 +157,7 @@ function cycleResolution() {
     @open-settings="store.showSettings = true"
     @cycle-spec="cycleResolution"
     @open-skills="emit('open-skills')"
+    @pick-model="toggleMenu('model')"
     @change-goal="emit('goal', goal)"
     :assets="store.assetIndex"
     @asset-picked="onAssetPicked"
@@ -179,6 +180,20 @@ function cycleResolution() {
         role="menuitem"
         @click.stop="close(); pick(item)"
       >{{ item.label }}</button>
+    </template>
+
+    <template #pills>
+      <div v-if="openMenu === 'model'" class="cc-pop">
+        <button
+          v-for="p in modelOptions" :key="p.id"
+          class="cc-pop-item" type="button"
+          @click.stop="chooseModel(p)"
+        >
+          <span class="pop-label">{{ p.label || p.name }}</span>
+          <span class="pop-desc">{{ p.config?.model || p.name }}</span>
+        </button>
+        <div v-if="!modelOptions.length" class="pop-empty">没有可用模型，去设置里配一个。</div>
+      </div>
     </template>
 
     <template #attachments>

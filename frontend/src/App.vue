@@ -252,37 +252,41 @@ onUnmounted(() => {
         <ContextPanel @open-assets="store.overlay = 'assets'" />
       </div>
     </div>
-
-    <!-- 页面：作品 / 资产库 / 技能 / 产出，都是从对话点进去的 -->
-    <PageShell
-      v-if="store.overlay === 'assets'"
-      title="资产库"
-      :subtitle="store.pid ? '角色定妆照 · 角色音色 · 场景图 · 成片' : '先选一部作品'"
-      @close="store.overlay = null"
-    >
-      <AssetPanel section="assets" />
-    </PageShell>
-
-    <SkillsPage v-if="store.overlay === 'skills'" @close="store.overlay = null" />
-
-    <PageShell
-      v-if="store.overlay === 'output'"
-      title="产出"
-      subtitle="剧本 · 场景 · 视频"
-      @close="store.overlay = null"
-    >
-      <ViewerPanel class="page-viewer" />
-    </PageShell>
-
-    <PageShell
-      v-if="store.overlay === 'tasks'"
-      title="我的作品"
-      subtitle="每部作品一个对话"
-      @close="store.overlay = null"
-    >
-      <AssetPanel section="tasks" />
-    </PageShell>
   </template>
+
+  <!-- 页面：资产库 / 技能 / 产出 / 我的作品。
+       放在工作区分支**外面**——这些是「点进去的一个新页面」，从首页的输入框
+       也能进（首页的 Skill 胶囊、@ 引用都指向它们）；之前挂在 v-else 里，
+       首页点「Skill」只改状态不渲染，看起来就是「点不了」。 -->
+  <PageShell
+    v-if="store.overlay === 'assets'"
+    title="资产库"
+    :subtitle="store.pid ? '角色定妆照 · 角色音色 · 场景图 · 成片' : '先选一部作品'"
+    @close="store.overlay = null"
+  >
+    <AssetPanel section="assets" />
+  </PageShell>
+
+  <SkillsPage v-if="store.overlay === 'skills'" @close="store.overlay = null" />
+
+  <PageShell
+    v-if="store.overlay === 'output'"
+    title="产出"
+    subtitle="剧本 · 场景 · 视频"
+    @close="store.overlay = null"
+  >
+    <ViewerPanel class="page-viewer" />
+  </PageShell>
+
+  <PageShell
+    v-if="store.overlay === 'tasks'"
+    title="我的作品"
+    subtitle="每部作品一个对话"
+    @close="store.overlay = null"
+  >
+    <AssetPanel section="tasks" />
+  </PageShell>
+
   <NewProjectModal />
   <SettingsModal
     :open="store.showSettings"

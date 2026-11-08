@@ -286,6 +286,9 @@ function onInput(e) {
             <span>Skill</span>
           </button>
           <span v-if="hintText" class="cc-hint">{{ hintText }}</span>
+          <!-- 模型下拉等由外层注入（#pills 插槽）：外壳只负责摆位置，
+               下拉的具体内容（模型清单、说明）属于对话层。 -->
+          <slot name="pills" />
         </div>
 
         <div class="cc-right">

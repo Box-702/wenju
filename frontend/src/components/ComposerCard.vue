@@ -108,6 +108,10 @@ const projectOptions = computed(() =>
   }),
 )
 
+/** 胶囊里只列最近 3 个——多了就成清单了，完整列表在「全部作品」页。 */
+const RECENT_LIMIT = 3
+const recentProjects = computed(() => projectOptions.value.slice(0, RECENT_LIMIT))
+
 const projectLabel = computed(() => {
   const cur = (store.projects || []).find((p) => p.id === store.pid)
   return cur ? cur.title : '选择作品'
@@ -303,16 +307,16 @@ function onInput(e) {
               @click.stop="projectOpen = !projectOpen"
             >
               <AppIcon name="folder" />
-              <span>{{ projectLabel }}</span>
+              <span class="cp-label">{{ projectLabel }}</span>
               <AppIcon name="chevron-down" class="cc-chev" />
             </button>
             <Transition name="ccpop">
               <div v-if="projectOpen" class="cc-menu cc-projects" role="menu">
                 <div class="cc-menu-head">这轮对话属于哪部作品</div>
                 <button
-                  v-for="p in projectOptions"
+                  v-for="p in recentProjects"
                   :key="p.id"
-                  class="cc-menu-item"
+                  :class="['cc-menu-item', { on: p.id === store.pid }]"
                   type="button"
                   role="menuitem"
                   @click.stop="pickProject(p)"
@@ -320,13 +324,20 @@ function onInput(e) {
                   <span class="pi-title">{{ p.title }}</span>
                   <span class="pi-meta">{{ p.version_count || 0 }} 版</span>
                 </button>
-                <div v-if="!projectOptions.length" class="cc-menu-empty">还没有作品</div>
+                <div v-if="!recentProjects.length" class="cc-menu-empty">还没有作品</div>
+                <div class="cc-menu-sep"></div>
                 <button
                   class="cc-menu-item"
                   type="button"
                   role="menuitem"
                   @click.stop="projectOpen = false; emit('new-project')"
-                >+ 新建作品</button>
+                ><span class="pi-title">新建作品</span></button>
+                <button
+                  class="cc-menu-item"
+                  type="button"
+                  role="menuitem"
+                  @click.stop="projectOpen = false; store.overlay = 'tasks'"
+                ><span class="pi-title">全部作品</span><AppIcon name="chevron-right" class="pi-chev" /></button>
               </div>
             </Transition>
           </div>
@@ -609,9 +620,10 @@ function onInput(e) {
 }
 .mp-item .mi-check { color: var(--accent); flex: none; font-size: 12px; }
 .mp-empty { padding: 9px; font-size: var(--fs-xs); color: var(--dim); line-height: 1.6; }
-.cc-project { max-width: 170px; }
-.cc-project span {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.cc-project { max-width: 190px; }
+/* 作品名超长就截断：不给它撑破胶囊的宽度 */
+.cc-project .cp-label {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cc-projects {
   bottom: calc(100% + 6px); left: 0; right: auto; min-width: 220px;
@@ -625,6 +637,9 @@ function onInput(e) {
 .cc-menu-empty { padding: 8px 9px; font-size: var(--fs-sm); color: var(--dim); }
 .pi-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pi-meta { margin-left: auto; font-size: 10px; color: var(--dim); flex: none; }
+.pi-chev { width: 13px; height: 13px; flex: none; opacity: .5; }
+.cc-menu-item.on { color: var(--ink); background: rgba(255, 255, 255, .07); }
+.cc-menu-sep { height: 1px; background: var(--line); margin: 4px 2px; }
 .cc-gear .app-ic { width: 15px; height: 15px; }
 
 /* 发送：圆形箭头钮。

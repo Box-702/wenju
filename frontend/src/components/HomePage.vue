@@ -97,10 +97,11 @@ function formatDate(iso) {
 
     <!-- 我的作品：折线以下 -->
     <section class="home-works" aria-label="我的作品">
-      <div class="works-head">
+      <button class="works-head" title="查看全部作品" @click="store.overlay = 'tasks'">
         <span class="works-title">我的作品</span>
         <span class="works-count">{{ works.length ? `${works.length} 部` : '' }}</span>
-      </div>
+        <span class="works-more">全部作品<AppIcon name="chevron-right" /></span>
+      </button>
 
       <div class="works-grid">
         <button class="work-card new-card" @click="store.showNewProject = true">
@@ -302,8 +303,19 @@ function formatDate(iso) {
   display: flex;
   align-items: baseline;
   gap: 10px;
+  width: 100%;
   margin-bottom: 14px;
+  padding: 0; background: none; border: none;
+  color: inherit; font-family: inherit; text-align: left; cursor: pointer;
 }
+.works-more {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 2px;
+  font-size: 12px; color: var(--dim);
+  transition: color 130ms var(--ease);
+}
+.works-more .app-ic { width: 13px; height: 13px; }
+.works-head:hover .works-more { color: var(--ink); }
 
 .works-title {
   font-size: 13px;

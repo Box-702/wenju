@@ -44,7 +44,7 @@
       </div>
     </div>
 
-    <!-- 资产库：两级导航 —— 范围（哪部作品 / 全部作品）+ 类型（角色 / 场景 / 成片 / 素材） -->
+    <!-- 资产库：两级导航 —— 范围（哪部作品 / 全部作品）+ 类型（角色 / 场景 / 成片 / 参考素材） -->
     <div v-if="store.pid && (section === 'all' || section === 'assets')" class="panel-section library-section">
       <div class="section-head">
         <span class="section-title">资产库</span>
@@ -320,7 +320,7 @@ const TYPE_TABS = [
   { key: 'character', label: '角色' },
   { key: 'location', label: '场景' },
   { key: 'clip', label: '成片' },
-  { key: 'material', label: '素材' },
+  { key: 'material', label: '参考素材' },
 ]
 const scope = ref('current')
 const typeTab = ref('character')

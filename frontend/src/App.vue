@@ -49,13 +49,13 @@ import AssetPanel from './components/AssetPanel.vue'
 import ChatThread from './components/ChatThread.vue'
 import ChatComposer from './components/ChatComposer.vue'
 import ContextPanel from './components/ContextPanel.vue'
+import ViewerPanel from './components/ViewerPanel.vue'
 import PageShell from './components/PageShell.vue'
 import SkillsPage from './components/SkillsPage.vue'
 import NewProjectModal from './components/NewProjectModal.vue'
 import SettingsModal from './components/settings/SettingsModal.vue'
 import PatchDrawer from './components/PatchDrawer.vue'
 import Toast from './components/Toast.vue'
-import CommandPalette from './components/CommandPalette.vue'
 import { loadTree, loadWorkspace, loadWorkspaceTree, restorePanelPrefs, toggleRightPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus } from './stores/app'
 import { importProject } from './api'
 
@@ -288,8 +288,6 @@ onUnmounted(() => {
   />
   <PatchDrawer />
   <Toast />
-  <!-- 命令面板：Ctrl+K 跳转到任意作品 / 打开资产库、技能、产出 -->
-  <CommandPalette />
 </template>
 
 <style scoped>

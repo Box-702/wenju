@@ -22,133 +22,153 @@
         </div>
 
         <div class="modal-body">
-          <!-- 对话模型 -->
-          <div v-if="tab === 'llm'" class="section">
-            <h4>对话模型（编剧/导演使用）</h4>
-            <div class="active-line">
-              当前生效：<strong>{{ activeModel.provider }}</strong>
-              <template v-if="activeModel.name"> · {{ activeModel.name }}</template>
-              <span class="active-src">{{ activeSourceLabel }}</span>
-            </div>
-
-            <div class="llm-list">
-              <div
+          <!-- 对话模型：左厂商列表 + 右详情面板（学 ZCode 的结构，不做厂商分类） -->
+          <div v-if="tab === 'llm'" class="section llm-split">
+            <!-- 左：厂商（扁平，不分组） -->
+            <aside class="llm-side">
+              <button
                 v-for="p in llmProviders"
                 :key="p.id"
-                :class="['llm-card', { active: chatPref?.provider_id === p.id }]"
+                :class="['llm-side-item', { on: selectedProviderId === p.id }]"
+                type="button"
+                @click="selectedProviderId = p.id"
               >
-                <div class="llm-main">
-                  <span class="llm-name">{{ p.label }}</span>
-                  <span class="llm-meta">{{ p.name }} · {{ p.base_url }}</span>
-                </div>
-                <span v-if="chatPref?.provider_id === p.id" class="using-badge">使用中</span>
+                <span class="side-dot" :class="{ on: p.configured }"></span>
+                <span class="side-name">{{ p.label || p.name }}</span>
+                <span class="side-count">{{ providerModels(p).length }}</span>
+              </button>
+              <div v-if="!llmProviders.length" class="pop-empty">还没有厂商</div>
+              <button class="llm-side-add" type="button" @click="openAddLlm()">+ 添加厂商</button>
+            </aside>
 
-                <!-- 模型清单：一个厂商下列多个模型，可逐个启用 / 编辑 / 删除 -->
+            <!-- 右：选中厂商的设置 + 模型列表 -->
+            <div class="llm-detail">
+              <template v-if="selectedProvider">
+                <div class="detail-head">
+                  <span class="dh-name">{{ selectedProvider.label || selectedProvider.name }}</span>
+                  <span v-if="chatPref?.provider_id === selectedProvider.id" class="using-badge">使用中</span>
+                  <span class="dh-actions">
+                    <button class="mr-btn" :disabled="testingId === selectedProvider.id" @click="testProvider(selectedProvider)">
+                      {{ testingId === selectedProvider.id ? '测试中…' : '测试连接' }}
+                    </button>
+                    <button class="mr-btn danger" @click="deleteLlm(selectedProvider)">删除厂商</button>
+                  </span>
+                </div>
+
+                <div class="form-row">
+                  <label>Base URL</label>
+                  <input v-model.trim="providerDraft.base_url" class="modal-input" placeholder="https://api.deepseek.com/v1" />
+                </div>
+                <div class="form-row">
+                  <label>API 格式</label>
+                  <div class="format-fixed">OpenAI 兼容（v1/chat/completions）</div>
+                </div>
+                <div class="form-row">
+                  <label>API Key</label>
+                  <div class="key-row">
+                    <input
+                      :type="showProviderKey ? 'text' : 'password'"
+                      v-model.trim="providerDraft.api_key"
+                      class="modal-input"
+                      :placeholder="selectedProvider.configured ? '已配置（留空 = 保持不变）' : 'sk-...'"
+                    />
+                    <button class="mr-btn" @click="showProviderKey = !showProviderKey">{{ showProviderKey ? '隐藏' : '显示' }}</button>
+                  </div>
+                </div>
+                <div class="form-actions">
+                  <button class="primary" :disabled="savingProvider" @click="saveProvider">
+                    {{ savingProvider ? '保存中…' : '保存厂商设置' }}
+                  </button>
+                </div>
+
+                <div class="detail-sub">
+                  <span class="ds-title">模型列表</span>
+                  <button class="add-model" type="button" @click="openAddModel(selectedProvider)">+ 添加模型</button>
+                </div>
                 <div class="model-list">
-                  <div v-for="(m, mi) in providerModels(p)" :key="m.model + mi" class="model-row">
+                  <div v-for="(m, mi) in providerModels(selectedProvider)" :key="m.model + mi" class="model-row">
                     <span class="mr-name">{{ m.name }}</span>
                     <span class="mr-id">{{ m.model }}</span>
+                    <button class="mr-btn" title="编辑" @click="editModel(selectedProvider, mi)">改</button>
+                    <button class="mr-btn danger" title="删除" @click="removeModel(selectedProvider, mi)">删</button>
                     <button
-                      class="mr-btn"
+                      class="mr-toggle"
                       :class="{ on: m.enabled }"
                       :title="m.enabled ? '停用这个模型' : '启用这个模型'"
-                      @click="toggleModel(p, mi)"
-                    >{{ m.enabled ? '已启用' : '已停用' }}</button>
-                    <button class="mr-btn" title="编辑" @click="editModel(p, mi)">改</button>
-                    <button class="mr-btn danger" title="删除" @click="removeModel(p, mi)">删</button>
+                      @click="toggleModel(selectedProvider, mi)"
+                    ><span></span></button>
                   </div>
-                  <button class="add-model" @click="openAddModel(p)">+ 添加模型</button>
+                  <div v-if="!providerModels(selectedProvider).length" class="pop-empty">
+                    这个厂商还没有列出模型。加一个，或让 .env 提供默认模型名。
+                  </div>
                 </div>
+              </template>
+              <div v-else class="pop-empty">左边选一个厂商。</div>
 
-                <div class="llm-actions">
-                  <button
-                    v-if="chatPref?.provider_id !== p.id"
-                    class="small ok"
-                    :disabled="!p.configured"
-                    @click="setAsDefault(p)"
-                  >设为默认</button>
-                  <button class="small" @click="testProvider(p)" :disabled="p.testing">
-                    {{ p.testing ? '测试中…' : '测试' }}
+              <!-- 添加/编辑厂商 -->
+              <div v-if="showAddLlm || editingLlmRow" class="sub-modal llm-form">
+                <h5>{{ editingLlmRow ? '编辑厂商' : '添加厂商' }}</h5>
+                <div class="form-row">
+                  <label>厂商预设</label>
+                  <select v-model="llmForm.preset" class="modal-select" :disabled="!!editingLlmRow" @change="applyPreset()">
+                    <option value="deepseek">DeepSeek</option>
+                    <option value="zhipu">智谱 (BigModel)</option>
+                    <option value="openai">OpenAI 兼容</option>
+                    <option value="custom">自定义</option>
+                  </select>
+                </div>
+                <div v-if="llmForm.preset === 'custom'" class="form-row">
+                  <label>名称（唯一标识）</label>
+                  <input v-model.trim="llmForm.name" class="modal-input" placeholder="my-provider" />
+                </div>
+                <div class="form-row">
+                  <label>显示名</label>
+                  <input v-model.trim="llmForm.label" class="modal-input" placeholder="我的模型" />
+                </div>
+                <div class="form-row">
+                  <label>Base URL</label>
+                  <input v-model.trim="llmForm.baseUrl" class="modal-input" placeholder="https://api.deepseek.com/v1" />
+                </div>
+                <div class="form-row">
+                  <label>模型名</label>
+                  <input v-model.trim="llmForm.model" class="modal-input" placeholder="deepseek-flash" />
+                </div>
+                <div class="form-row">
+                  <label>API Key</label>
+                  <div class="key-row">
+                    <input
+                      :type="showKey ? 'text' : 'password'"
+                      v-model="llmForm.apiKey"
+                      class="modal-input"
+                      :placeholder="editingLlmRow ? '留空 = 保持不变' : 'sk-...'"
+                    />
+                    <button class="mr-btn" @click="showKey = !showKey">{{ showKey ? '隐藏' : '显示' }}</button>
+                  </div>
+                </div>
+                <div v-if="llmFormError" class="test-result err">{{ llmFormError }}</div>
+                <div class="form-actions">
+                  <button class="primary" @click="saveLlm" :disabled="savingLlm">
+                    {{ savingLlm ? '保存中…' : '保存' }}
                   </button>
-                  <button class="small" @click="editLlm(p)">编辑</button>
-                  <button class="small danger" @click="deleteLlm(p)">删除</button>
-                </div>
-                <div v-if="p.testResult" :class="['test-result', p.testResult.ok ? 'ok' : 'err']">
-                  {{ p.testResult.message }}
+                  <button class="ghost" @click="closeLlmForm">取消</button>
                 </div>
               </div>
-              <div class="llm-card add" @click="openAddLlm()">
-                <span><AppIcon name="plus" /> 添加自定义模型</span>
-              </div>
-            </div>
 
-            <button class="follow-env" @click="followEnv">
-              恢复 .env 默认（当前：{{ envModelLabel }}）
-            </button>
-
-            <!-- 添加/编辑模型（行内表单） -->
-            <div v-if="modelForm.open" class="sub-modal model-form">
-              <h5>{{ modelForm.index >= 0 ? '编辑模型' : '添加模型' }}</h5>
-              <div class="form-row">
-                <label>显示名</label>
-                <input v-model.trim="modelForm.name" class="modal-input" placeholder="例如 GLM-5.3" />
-              </div>
-              <div class="form-row">
-                <label>模型名</label>
-                <input v-model.trim="modelForm.model" class="modal-input" placeholder="例如 glm-5.3" />
-              </div>
-              <div class="form-actions">
-                <button class="primary" @click="submitModel">保存</button>
-                <button class="ghost" @click="modelForm.open = false">取消</button>
-              </div>
-            </div>
-
-            <!-- 添加/编辑自定义模型 -->
-            <div v-if="showAddLlm || editingLlmRow" class="sub-modal">
-              <h5>{{ editingLlmRow ? '编辑模型' : '添加自定义模型' }}</h5>
-              <div class="form-row">
-                <label>厂商预设</label>
-                <select v-model="llmForm.preset" class="modal-select" :disabled="!!editingLlmRow" @change="applyPreset()">
-                  <option value="deepseek">DeepSeek</option>
-                  <option value="zhipu">智谱 (BigModel)</option>
-                  <option value="openai">OpenAI 兼容</option>
-                  <option value="custom">自定义</option>
-                </select>
-              </div>
-              <div v-if="llmForm.preset === 'custom'" class="form-row">
-                <label>名称（唯一标识）</label>
-                <input v-model.trim="llmForm.name" class="modal-input" placeholder="my-provider" />
-              </div>
-              <div class="form-row">
-                <label>显示名</label>
-                <input v-model.trim="llmForm.label" class="modal-input" placeholder="我的模型" />
-              </div>
-              <div class="form-row">
-                <label>Base URL</label>
-                <input v-model.trim="llmForm.baseUrl" class="modal-input" placeholder="https://api.deepseek.com/v1" />
-              </div>
-              <div class="form-row">
-                <label>模型名</label>
-                <input v-model.trim="llmForm.model" class="modal-input" placeholder="deepseek-flash" />
-              </div>
-              <div class="form-row">
-                <label>API Key</label>
-                <div class="key-row">
-                  <input
-                    :type="showKey ? 'text' : 'password'"
-                    v-model="llmForm.apiKey"
-                    class="modal-input"
-                    :placeholder="editingLlmRow ? '留空 = 保持不变' : 'sk-...'"
-                  />
-                  <button class="small" @click="showKey = !showKey">{{ showKey ? '隐藏' : '显示' }}</button>
+              <!-- 添加/编辑模型（行内表单） -->
+              <div v-if="modelForm.open" class="sub-modal model-form">
+                <h5>{{ modelForm.index >= 0 ? '编辑模型' : '添加模型' }}</h5>
+                <div class="form-row">
+                  <label>显示名</label>
+                  <input v-model.trim="modelForm.name" class="modal-input" placeholder="例如 GLM-5.3" />
                 </div>
-              </div>
-              <div v-if="llmFormError" class="test-result err">{{ llmFormError }}</div>
-              <div class="form-actions">
-                <button class="primary" @click="saveLlm" :disabled="savingLlm">
-                  {{ savingLlm ? '保存中…' : '保存' }}
-                </button>
-                <button class="ghost" @click="closeLlmForm">取消</button>
+                <div class="form-row">
+                  <label>模型名</label>
+                  <input v-model.trim="modelForm.model" class="modal-input" placeholder="例如 glm-5.3" />
+                </div>
+                <div class="form-actions">
+                  <button class="primary" @click="submitModel">保存</button>
+                  <button class="ghost" @click="modelForm.open = false">取消</button>
+                </div>
               </div>
             </div>
           </div>
@@ -243,7 +263,7 @@
               <span class="active-src">{{ chatPref ? '界面指定' : '跟随 .env' }}</span>
             </div>
             <p class="pref-hint">
-              在「对话模型」列表里点「设为默认」即可切换；切回 .env 默认用「恢复 .env 默认」。
+              切换对话模型：在输入框的模型胶囊上直接选；切回 .env 默认用「恢复 .env 默认」。
             </p>
           </div>
         </div>
@@ -285,6 +305,51 @@ const VIDEO_MODEL_OPTIONS = [
 const showKey = ref(false)
 const llmForm = reactive({ provider: 'openai', apiKey: '', baseUrl: '', model: '' })
 const llmProviders = ref([])
+
+// ---- 右侧详情面板：选中的厂商 + 待保存的字段 ----
+const selectedProviderId = ref('')
+const providerDraft = reactive({ base_url: '', api_key: '' })
+const showProviderKey = ref(false)
+const savingProvider = ref(false)
+const testingId = ref('')
+
+const selectedProvider = computed(
+  () => (llmProviders.value || []).find((p) => p.id === selectedProviderId.value) || null,
+)
+
+/** 选中厂商变化 → 把它的 Base URL 载进草稿（key 不回显，只提示「已配置」） */
+watch(selectedProvider, (p) => {
+  providerDraft.base_url = p?.base_url || ''
+  providerDraft.api_key = ''
+  showProviderKey.value = false
+})
+
+/** 列表加载后：默认选中「使用中」的那个，否则第一个 */
+watch(llmProviders, (list) => {
+  if (!list.length) { selectedProviderId.value = ''; return }
+  const still = list.find((p) => p.id === selectedProviderId.value)
+  if (still) return
+  const pref = list.find((p) => p.id === chatPref.value?.provider_id)
+  selectedProviderId.value = (pref || list[0]).id
+}, { immediate: true })
+
+async function saveProvider() {
+  const p = selectedProvider.value
+  if (!p) return
+  savingProvider.value = true
+  try {
+    const patch = { base_url: providerDraft.base_url }
+    if (providerDraft.api_key) patch.api_key = providerDraft.api_key
+    await api('/providers/' + p.id, 'PATCH', patch)
+    providerDraft.api_key = ''
+    await loadProviders()
+    notify('厂商设置已保存', 'ok')
+  } catch (e) {
+    notify('保存失败：' + e.message)
+  } finally {
+    savingProvider.value = false
+  }
+}
 
 /** 一个厂商下的模型清单（老配置只有单个 model 时视作一条）。 */
 function providerModels(p) {
@@ -503,22 +568,23 @@ async function saveLlm() {
 }
 
 async function testProvider(p) {
-  p.testing = true
+  testingId.value = p.id
   try {
     const res = await api('/providers/' + p.id + '/test', 'POST')
-    p.testResult = { ok: res.ok, message: res.ok ? '连接成功（' + (res.label || res.provider) + '）' : '失败：' + res.error }
+    notify(res.ok ? `连接成功（${res.label || res.provider}）` : `连接失败：${res.error}`, res.ok ? 'ok' : 'err')
   } catch (e) {
-    p.testResult = { ok: false, message: '错误：' + e.message }
+    notify('测试失败：' + e.message)
   } finally {
-    p.testing = false
+    testingId.value = ''
   }
 }
 
 async function deleteLlm(p) {
-  if (!confirm('确定删除 ' + p.label + '？')) return
+  if (!confirm('确定删除厂商「' + (p.label || p.name) + '」？它的模型清单会一起没了。')) return
   try {
     await api('/providers/' + p.id, 'DELETE')
     if (chatPref.value?.provider_id === p.id) chatPref.value = null
+    if (selectedProviderId.value === p.id) selectedProviderId.value = ''
     await Promise.all([loadProviders(), loadModelInfo()])
   } catch (e) {
     alert('删除失败：' + e.message)
@@ -705,6 +771,64 @@ onMounted(() => {
   align-self: flex-start; font-size: var(--fs-xs); color: var(--accent);
 }
 .llm-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 两栏：左厂商列表 + 右详情面板 */
+.llm-split { display: grid; grid-template-columns: 190px 1fr; gap: 16px; }
+.llm-side {
+  display: flex; flex-direction: column; gap: 2px;
+  padding-right: 12px; border-right: 1px solid var(--line);
+  min-height: 320px;
+}
+.llm-side-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 9px; border-radius: var(--radius-md);
+  background: transparent; border: none; color: var(--muted);
+  font-size: var(--fs-sm); font-family: inherit; text-align: left; cursor: pointer;
+  transition: background 130ms var(--ease), color 130ms var(--ease);
+}
+.llm-side-item:hover { background: rgba(255, 255, 255, .06); color: var(--ink); }
+.llm-side-item.on { background: rgba(255, 255, 255, .1); color: var(--ink); }
+.side-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--dim);
+}
+.side-dot.on { background: var(--ok); }
+.side-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-count { font-size: 10px; color: var(--dim); flex: none; font-variant-numeric: tabular-nums; }
+.llm-side-add {
+  margin-top: auto; padding: 6px 9px; border-style: dashed; color: var(--muted);
+  text-align: left;
+}
+.llm-detail { min-width: 0; }
+.detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.dh-name { font-size: var(--fs-lg); font-weight: 600; color: var(--ink); }
+.dh-actions { margin-left: auto; display: flex; gap: 6px; }
+.format-fixed {
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, .03); color: var(--muted); font-size: var(--fs-sm);
+}
+.detail-sub {
+  display: flex; align-items: center; gap: 10px;
+  margin: 18px 0 8px; padding-top: 14px; border-top: 1px solid var(--line);
+}
+.ds-title { font-size: var(--fs-sm); color: var(--muted); font-weight: 600; }
+.detail-sub .add-model { margin-left: auto; }
+
+/* 模型行的开关 */
+.mr-toggle {
+  width: 30px; height: 17px; flex: none; padding: 0;
+  border-radius: var(--radius-full); border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .06); cursor: pointer; position: relative;
+  transition: background 140ms var(--ease), border-color 140ms var(--ease);
+}
+.mr-toggle span {
+  position: absolute; top: 1px; left: 1px;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: var(--dim);
+  transition: transform 140ms var(--ease), background 140ms var(--ease);
+}
+.mr-toggle.on { background: var(--accent-soft); border-color: color-mix(in oklch, var(--accent) 45%, transparent); }
+.mr-toggle.on span { transform: translateX(13px); background: var(--accent); }
 
 /* 模型清单：厂商下列出的模型，可逐个启用 / 改 / 删 */
 .model-list { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 4px; }

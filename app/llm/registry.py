@@ -132,6 +132,41 @@ def _from_store(store: Any, kind: str, task_type: str = "") -> ModelConfig | Non
     return None
 
 
+def provider_models(config: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """一个厂商下列出的模型清单。
+
+    新形态：config["models"] = [{"name": "GLM-5.3", "model": "glm-5.3", "enabled": true}, ...]
+    老形态：只有 config["model"] —— 视作一条清单，行为不变。
+    """
+    cfg = config or {}
+    items = cfg.get("models")
+    if isinstance(items, list):
+        out = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            model = str(it.get("model") or "").strip()
+            if not model:
+                continue
+            out.append({
+                "name": str(it.get("name") or model),
+                "model": model,
+                "enabled": bool(it.get("enabled", True)),
+            })
+        if out:
+            return out
+    single = str(cfg.get("model") or "").strip()
+    return [{"name": single, "model": single, "enabled": True}] if single else []
+
+
+def active_model(config: dict[str, Any] | None) -> str:
+    """厂商当前生效的模型：清单里第一个启用的；没有清单就用老的单 model。"""
+    for it in provider_models(config):
+        if it.get("enabled"):
+            return str(it.get("model") or "")
+    return ""
+
+
 def _from_db_row(
     row: Any, override_model: str = "", params: dict[str, Any] | None = None
 ) -> ModelConfig:
@@ -140,7 +175,7 @@ def _from_db_row(
     return ModelConfig(
         provider=_canonical(getattr(row, "name", "")) or "custom",
         label=getattr(row, "label", "") or (spec.label if spec else ""),
-        model=override_model or config.get("model") or (spec.default_model if spec else ""),
+        model=override_model or active_model(config) or config.get("model") or (spec.default_model if spec else ""),
         api_key=getattr(row, "api_key", "") or "",
         base_url=getattr(row, "base_url", "") or (spec.default_base_url if spec else ""),
         extra_body=dict(params or {}),
@@ -266,7 +301,7 @@ def resolve_image(settings: Any, store: Any = None) -> ModelConfig | None:
                     spec = get_provider_spec(name)
                     source = _from_settings("zhipu" if name in ("cogview", "zhipu") else name, settings)
                     api_key = (row.api_key or "") or (source.api_key if source else "")
-                    model = pref.model_name or (row.config.get("model") or "")
+                    model = pref.model_name or active_model(row.config) or (row.config.get("model") or "")
                     model = model or (spec.image_model if spec else "")
                     if model and api_key:
                         return ModelConfig(

@@ -91,6 +91,9 @@ SYSTEM_PROMPT_TEMPLATE = (
     "{skill_index}\n"
     "\n"
     "【硬规矩】\n"
+    "0. 用户用 @ 引用资产（@林然 / @滨江路）：被 @ 到的就是本轮要处理的对象——"
+    "回答里直接用这个称呼，改它要走资产相关工具（改写定妆图 / 登记素材 / 重新生成该角色资产），"
+    "不要凭空描述、也不要换成别的角色；本轮上下文里的「本轮引用的资产」列的就是它们。\n"
     "1. 汇报以工具返回为准：说「已生成 / 已建成 / 已挑出 / 已提交 / 已出片」之前，本轮必须真的调用过对应工具；"
     "严禁凭对话历史编造版本号（ver_xxx）、场次、进度或任务结果。没调工具就直说还没做，或者先做再说。\n"
     "2. 不替用户做最终决定：接受、拒绝、批准永远由用户发起，你只负责解释影响和引导。\n"
@@ -296,6 +299,7 @@ def _prepare_turn(
     store: Store, llm: LLM, runner: SubAgentRunner | None, conversation_id: str | None,
     project_id: str | None, message: str, meta: dict[str, Any] | None,
     images: list[dict[str, Any]] | None = None,
+    refs: list[dict[str, Any]] | None = None,
 ) -> tuple[_Collector, AgentLoop, list[dict[str, Any]]]:
     """准备一轮对话的 collector, 内核, messages。
 
@@ -318,13 +322,42 @@ def _prepare_turn(
     messages: list[dict[str, Any]] = [
         system_message(system_prompt() + "\n" + note + memory_note),
         *history,
-        user_message(_user_turn_content(message, images)),
+        user_message(_user_turn_content(message, images, refs)),
     ]
     return collector, loop, messages
 
 
-def _user_turn_content(message: str, images: list[dict[str, Any]] | None) -> Any:
+_REF_KIND_ZH = {"character": "角色", "location": "场景", "asset": "素材"}
+
+
+def _refs_note(refs: list[dict[str, Any]] | None) -> str:
+    """把用户用 @ 引用的资产列成一段，附在本轮消息后面。
+
+    为什么要有这一段：输入框里只有「@林然」三个字，Agent 不知道它是哪部作品里的
+    哪个角色（同名角色、没定妆图的角色都存在）。列清楚「类型 + 编号 + 名字」，
+    Agent 才能定位到资产库条目去改。
+    """
+    items = [r for r in (refs or []) if (r.get("name") or r.get("id"))]
+    if not items:
+        return ""
+    lines = ["【本轮引用的资产】"]
+    for r in items:
+        kind = _REF_KIND_ZH.get(str(r.get("kind") or ""), "资产")
+        ident = str(r.get("id") or "").strip()
+        name = str(r.get("name") or "").strip()
+        lines.append(f"- @{name}（{kind} {ident}）".replace("  ", " "))
+    return "\n".join(lines)
+
+
+def _user_turn_content(
+    message: str,
+    images: list[dict[str, Any]] | None,
+    refs: list[dict[str, Any]] | None = None,
+) -> Any:
     """构造本轮用户消息：带图时为多模态内容块，否则纯文本。"""
+    note = _refs_note(refs)
+    if note:
+        message = f"{message}\n\n{note}" if message else note
     if not images:
         return message
     blocks: list[dict[str, Any]] = []
@@ -566,6 +599,7 @@ def _run_turn(
     meta: dict[str, Any] | None,
     runner: SubAgentRunner | None = None,
     images: list[str] | None = None,
+    refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """执行一轮对话（非流式），返回 {reply, payloads, events, project_id, thread_id}。"""
     # 审阅动作走确定性路径。
@@ -597,7 +631,7 @@ def _run_turn(
     ]
     collector, loop, messages = _prepare_turn(
         store, llm, runner,
-        conversation_id, project_id, message, meta, images=turn_images,
+        conversation_id, project_id, message, meta, images=turn_images, refs=refs,
     )
     events: list[dict[str, Any]] = []
     final_text = ""
@@ -651,6 +685,7 @@ def chat_stream(
     meta: dict[str, Any] | None = None,
     runner: SubAgentRunner | None = None,
     images: list[str] | None = None,
+    refs: list[dict[str, Any]] | None = None,
 ):
     """SSE 流式对话：逐条 yield {event, data} 事件。
 
@@ -687,9 +722,9 @@ def chat_stream(
     ]
     collector, loop, messages = _prepare_turn(
         store, llm, runner,
-        conversation_id, project_id, message, meta, images=turn_images,
+        conversation_id, project_id, message, meta, images=turn_images, refs=refs,
     )
-    # 用户消息在流开始时就落库：生成中途断开（客户端切走/刷新）或出错时，
+    # 用户消息在流开始时就落库：生成中途断开（客户端切走/刷新）或出错时、
     # 至少保住用户说过的话——此前只在整轮结束时统一保存，一旦中断整段丢失。
     # 图片快照一并落库（历史回放与后续轮次的上下文重建都靠它）。
     thread = conversation_id or GLOBAL_THREAD

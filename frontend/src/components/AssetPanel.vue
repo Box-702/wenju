@@ -155,12 +155,9 @@
         <div v-else class="lib-empty">还没有成片或导入的素材。出片后成片会出现在这里。</div>
 
         <div v-if="!lib.characters.length && !lib.locations.length" class="lib-empty">
-          还没有资产。点下方「开始制作」，流水线会生成人物定妆照与场景图。
+          还没有资产。在对话里说一声「生成初稿」，流水线会产出人物定妆照与场景图。
         </div>
 
-        <button class="produce-btn" :disabled="producing" @click="startProduction">
-          <AppIcon :name="producing ? 'pause' : 'play'" /> {{ producing ? '制作中…' : '开始制作（剧本→资产→提示词）' }}
-        </button>
       </template>
     </div>
 
@@ -243,7 +240,6 @@ async function onImportChosen(e) {
     importing.value = false
   }
 }
-const producing = ref(false)
 
 function enterWorkspace(pid) {
   if (store.pid === pid) return
@@ -273,32 +269,6 @@ async function loadLibrary() {
   }
 }
 
-async function startProduction() {
-  if (!store.pid || producing.value) return
-  producing.value = true
-  try {
-    const r = await api(`/projects/${store.pid}/production`, 'POST')
-    notify('生产流水线已启动，完成后提示词进入待审', 'ok')
-    // 轮询任务状态：结束后刷新资产库与右栏镜头（提示词版本已更新）。
-    const taskId = r.task_id
-    const timer = setInterval(async () => {
-      try {
-        const t = await api(`/tasks/${taskId}`)
-        if (t.status === 'done' || t.status === 'failed') {
-          clearInterval(timer)
-          producing.value = false
-          if (t.status === 'failed') notify('流水线失败：' + (t.result || ''))
-          else notify('流水线完成：' + (t.result || ''), 'ok')
-          await loadLibrary()
-          await loadShots()
-        }
-      } catch { clearInterval(timer); producing.value = false }
-    }, 3000)
-  } catch (e) {
-    notify('启动失败：' + e.message)
-    producing.value = false
-  }
-}
 
 // 进入新作品 / 资产可能被流水线更新 → 重新拉资产库
 onMounted(() => { loadSkills() })
@@ -490,16 +460,4 @@ watch(() => store.pid, (pid) => { if (pid) loadLibrary() }, { immediate: true })
 .asset-dl .app-ic { width: 12px; height: 12px; }
 
 .lib-empty { padding: 8px 14px; font-size: var(--fs-xs); color: var(--dim); line-height: 1.7; }
-.produce-btn {
-  background: var(--accent-grad); color: var(--on-accent); border-color: transparent;
-  box-shadow: 0 8px 24px rgba(34, 197, 94, .26);
-  display: block; width: calc(100% - 24px); margin: 10px 12px 4px;
-  min-height: 38px; border-radius: var(--radius-md);
-  border: 1px solid transparent;
-  cursor: pointer; font-size: 12px; font-weight: 650;
-  transition: filter 150ms var(--ease), transform 100ms var(--ease);
-}
-.produce-btn:hover:not(:disabled) { filter: brightness(1.08); }
-.produce-btn:active:not(:disabled) { transform: scale(.985); }
-.produce-btn:disabled { opacity: .6; cursor: default; }
 </style>

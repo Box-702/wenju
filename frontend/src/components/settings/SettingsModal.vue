@@ -39,9 +39,27 @@
               >
                 <div class="llm-main">
                   <span class="llm-name">{{ p.label }}</span>
-                  <span class="llm-meta">{{ p.name }} · {{ p.config?.model || '未填模型名' }}</span>
+                  <span class="llm-meta">{{ p.name }} · {{ p.base_url }}</span>
                 </div>
                 <span v-if="chatPref?.provider_id === p.id" class="using-badge">使用中</span>
+
+                <!-- 模型清单：一个厂商下列多个模型，可逐个启用 / 编辑 / 删除 -->
+                <div class="model-list">
+                  <div v-for="(m, mi) in providerModels(p)" :key="m.model + mi" class="model-row">
+                    <span class="mr-name">{{ m.name }}</span>
+                    <span class="mr-id">{{ m.model }}</span>
+                    <button
+                      class="mr-btn"
+                      :class="{ on: m.enabled }"
+                      :title="m.enabled ? '停用这个模型' : '启用这个模型'"
+                      @click="toggleModel(p, mi)"
+                    >{{ m.enabled ? '已启用' : '已停用' }}</button>
+                    <button class="mr-btn" title="编辑" @click="editModel(p, mi)">改</button>
+                    <button class="mr-btn danger" title="删除" @click="removeModel(p, mi)">删</button>
+                  </div>
+                  <button class="add-model" @click="openAddModel(p)">+ 添加模型</button>
+                </div>
+
                 <div class="llm-actions">
                   <button
                     v-if="chatPref?.provider_id !== p.id"
@@ -67,6 +85,23 @@
             <button class="follow-env" @click="followEnv">
               恢复 .env 默认（当前：{{ envModelLabel }}）
             </button>
+
+            <!-- 添加/编辑模型（行内表单） -->
+            <div v-if="modelForm.open" class="sub-modal model-form">
+              <h5>{{ modelForm.index >= 0 ? '编辑模型' : '添加模型' }}</h5>
+              <div class="form-row">
+                <label>显示名</label>
+                <input v-model.trim="modelForm.name" class="modal-input" placeholder="例如 GLM-5.3" />
+              </div>
+              <div class="form-row">
+                <label>模型名</label>
+                <input v-model.trim="modelForm.model" class="modal-input" placeholder="例如 glm-5.3" />
+              </div>
+              <div class="form-actions">
+                <button class="primary" @click="submitModel">保存</button>
+                <button class="ghost" @click="modelForm.open = false">取消</button>
+              </div>
+            </div>
 
             <!-- 添加/编辑自定义模型 -->
             <div v-if="showAddLlm || editingLlmRow" class="sub-modal">
@@ -250,6 +285,77 @@ const VIDEO_MODEL_OPTIONS = [
 const showKey = ref(false)
 const llmForm = reactive({ provider: 'openai', apiKey: '', baseUrl: '', model: '' })
 const llmProviders = ref([])
+
+/** 一个厂商下的模型清单（老配置只有单个 model 时视作一条）。 */
+function providerModels(p) {
+  const list = p?.config?.models
+  if (Array.isArray(list) && list.length) {
+    return list
+      .filter((m) => m && m.model)
+      .map((m) => ({ name: m.name || m.model, model: m.model, enabled: m.enabled !== false }))
+  }
+  const one = p?.config?.model
+  return one ? [{ name: one, model: one, enabled: true }] : []
+}
+
+/** 当前生效的模型 = 第一个启用的。 */
+function activeOf(models) {
+  const on = models.find((m) => m.enabled)
+  return on ? on.model : ''
+}
+
+/** 把模型清单写回厂商配置（同时同步 config.model，老代码路径继续可用）。 */
+async function saveModels(p, models) {
+  const config = { ...(p.config || {}), models, model: activeOf(models) }
+  try {
+    await api('/providers/' + p.id, 'PATCH', { config })
+    await loadProviders()
+    notify('已更新模型清单', 'ok')
+  } catch (e) {
+    notify('更新失败：' + e.message)
+  }
+}
+
+function toggleModel(p, index) {
+  const models = providerModels(p).map((m, i) => (i === index ? { ...m, enabled: !m.enabled } : m))
+  return saveModels(p, models)
+}
+
+function removeModel(p, index) {
+  const models = providerModels(p).filter((_, i) => i !== index)
+  return saveModels(p, models)
+}
+
+// 添加 / 编辑模型的行内表单
+const modelForm = reactive({ open: false, provider: null, index: -1, name: '', model: '' })
+function openAddModel(p) {
+  modelForm.open = true
+  modelForm.provider = p
+  modelForm.index = -1
+  modelForm.name = ''
+  modelForm.model = ''
+}
+function editModel(p, index) {
+  const m = providerModels(p)[index]
+  if (!m) return
+  modelForm.open = true
+  modelForm.provider = p
+  modelForm.index = index
+  modelForm.name = m.name
+  modelForm.model = m.model
+}
+async function submitModel() {
+  const p = modelForm.provider
+  const name = modelForm.name.trim() || modelForm.model.trim()
+  const model = modelForm.model.trim()
+  if (!p || !model) { notify('模型名必填'); return }
+  const models = providerModels(p).slice()
+  const item = { name, model, enabled: true }
+  if (modelForm.index >= 0) models[modelForm.index] = item
+  else models.push(item)
+  modelForm.open = false
+  await saveModels(p, models)
+}
 const activeModel = ref({ provider: '-', name: '' })
 const activeSource = ref('env')
 const chatPref = ref(null)          // task_type=chat 的偏好（含 provider_id）
@@ -599,6 +705,31 @@ onMounted(() => {
   align-self: flex-start; font-size: var(--fs-xs); color: var(--accent);
 }
 .llm-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 模型清单：厂商下列出的模型，可逐个启用 / 改 / 删 */
+.model-list { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 4px; }
+.model-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 9px; border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, .2);
+}
+.mr-name { font-size: var(--fs-sm); color: var(--ink); flex: none; }
+.mr-id {
+  font-family: var(--mono); font-size: 10px; color: var(--dim);
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mr-btn {
+  flex: none; padding: 1px 8px; font-size: 11px; border-radius: var(--radius-sm);
+  background: transparent; border: 1px solid var(--line); color: var(--muted);
+  cursor: pointer;
+}
+.mr-btn:hover { color: var(--ink); border-color: var(--line-strong); }
+.mr-btn.on { color: var(--accent); border-color: color-mix(in oklch, var(--accent) 40%, transparent); }
+.mr-btn.danger { color: var(--bad); border-color: color-mix(in oklch, var(--bad) 35%, transparent); }
+.add-model {
+  align-self: flex-start; padding: 3px 9px; font-size: 11.5px;
+  border-style: dashed; color: var(--muted);
+}
 .follow-env {
   width: 100%; padding: 8px; border: 1px dashed var(--line-strong); border-radius: var(--radius-md);
   background: transparent; color: var(--muted); font-size: var(--fs-sm); cursor: pointer;

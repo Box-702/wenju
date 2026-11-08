@@ -111,6 +111,14 @@ function removeImage(item) {
   }
 }
 
+// ---- @ 引用的资产 ----
+const refs = ref([])
+function onAssetPicked(item) {
+  if (!item?.id) return
+  if (refs.value.some((r) => r.id === item.id)) return
+  refs.value = [...refs.value, { kind: item.kind, id: item.id, name: item.name }]
+}
+
 function send() {
   const t = text.value.trim()
   if ((!t && !attachedImages.value.some((i) => i.id)) || store.streaming || uploadingCount.value > 0) return
@@ -120,7 +128,9 @@ function send() {
   attachedImages.value = []
   // 产出目标作为意图前缀，让 Agent 一上来就知道这轮要什么
   const prefix = goalLabel.value ? `【${goalLabel.value}】` : ''
-  sendMessage(prefix + t, imageIds)
+  const used = refs.value
+  refs.value = []
+  sendMessage(prefix + t, imageIds, used)
 }
 
 function cycleResolution() {
@@ -143,6 +153,8 @@ function cycleResolution() {
     @cycle-spec="cycleResolution"
     @open-skills="emit('open-skills')"
     @change-goal="emit('goal', goal)"
+    :assets="store.assetIndex"
+    @asset-picked="onAssetPicked"
   >
     <template #menu="{ close }">
       <input

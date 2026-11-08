@@ -14,7 +14,7 @@
 //   Skill —— 打开技能页（选技能 / 导入新技能）
 // =====================================================================
 
-import { ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import AppIcon from './AppIcon.vue'
 
 const text = defineModel('text', { type: String, default: '' })
@@ -32,13 +32,77 @@ const props = defineProps({
   hintText: { type: String, default: '' },
   canSend: { type: Boolean, default: false },
   busy: { type: Boolean, default: false },
+  /** 可被 @ 引用的资产 [{ kind, id, name, sub }] */
+  assets: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits([
-  'send', 'pick-menu', 'open-settings', 'pick-model', 'open-skills',
+  'send', 'pick-menu', 'open-settings', 'pick-model', 'open-skills', 'asset-picked',
 ])
 
 const menuOpen = ref(false)
+
+// ---- @ 引用资产：打 @ 弹候选，选中后插入 @名字 ----
+const mentionOpen = ref(false)
+const mentionQuery = ref('')
+const mentionIndex = ref(0)
+const textEl = ref(null)
+
+const mentionItems = computed(() => {
+  const q = mentionQuery.value.trim().toLowerCase()
+  const list = props.assets || []
+  if (!q) return list.slice(0, 12)
+  return list.filter((a) => (a.name || '').toLowerCase().includes(q)).slice(0, 12)
+})
+
+/** 光标前是不是正打在 @ 上（@后面还没空格） */
+function mentionContext() {
+  const el = textEl.value
+  if (!el) return null
+  const upto = (el.value || '').slice(0, el.selectionStart || 0)
+  const m = upto.match(/@([^\s@]*)$/)
+  return m ? m[1] : null
+}
+
+function syncMention() {
+  const q = mentionContext()
+  if (q === null) { mentionOpen.value = false; return }
+  mentionQuery.value = q
+  mentionIndex.value = 0
+  mentionOpen.value = true
+}
+
+/** 选中候选：把 @名字 插到光标处，并通知外层记下这条引用 */
+function pickMention(item) {
+  const el = textEl.value
+  if (!el) return
+  const pos = el.selectionStart || 0
+  const before = (el.value || '').slice(0, pos)
+  const m = before.match(/@[^\s@]*$/)
+  const start = m ? pos - m[0].length : pos
+  const ins = `@${item.name} `
+  const next = (el.value || '').slice(0, start) + ins + (el.value || '').slice(pos)
+  text.value = next
+  mentionOpen.value = false
+  emit('asset-picked', item)
+  nextTick(() => {
+    el.focus()
+    const caret = start + ins.length
+    el.setSelectionRange(caret, caret)
+  })
+}
+
+function onMentionKey(e) {
+  if (!mentionOpen.value) return
+  const n = mentionItems.value.length
+  if (e.key === 'ArrowDown') { e.preventDefault(); mentionIndex.value = n ? (mentionIndex.value + 1) % n : 0; return }
+  if (e.key === 'ArrowUp') { e.preventDefault(); mentionIndex.value = n ? (mentionIndex.value - 1 + n) % n : 0; return }
+  if (e.key === 'Escape') { e.preventDefault(); mentionOpen.value = false; return }
+  if (e.key === 'Enter' || e.key === 'Tab') {
+    const item = mentionItems.value[mentionIndex.value]
+    if (item) { e.preventDefault(); e.stopPropagation(); pickMention(item) }
+  }
+}
 
 function toggleMenu() {
   menuOpen.value = !menuOpen.value
@@ -51,6 +115,15 @@ function closeMenu(e) {
 }
 
 function onKeydown(e) {
+  // @ 候选打开时，方向键与回车归候选列表
+  if (mentionOpen.value && ['ArrowDown', 'ArrowUp', 'Escape'].includes(e.key)) {
+    onMentionKey(e)
+    return
+  }
+  if (mentionOpen.value && (e.key === 'Enter' || e.key === 'Tab') && mentionItems.value.length) {
+    onMentionKey(e)
+    return
+  }
   if (e.key !== 'Enter' || e.shiftKey) return
   if (e.isComposing || e.keyCode === 229) return
   e.preventDefault()
@@ -61,6 +134,12 @@ function autoSize(e) {
   const el = e.target
   el.style.height = 'auto'
   el.style.height = Math.min(200, el.scrollHeight) + 'px'
+}
+
+/** 输入时：既调高度，也判断是不是正打在 @ 上 */
+function onInput(e) {
+  autoSize(e)
+  syncMention()
 }
 </script>
 
@@ -89,14 +168,38 @@ function autoSize(e) {
 
         <div class="cc-input-wrap">
           <textarea
+            ref="textEl"
             v-model="text"
             class="cc-text"
             rows="1"
             :placeholder="placeholder"
             @keydown="onKeydown"
-            @input="autoSize"
+            @input="onInput"
+            @click="syncMention"
+            @blur="mentionOpen = false"
           ></textarea>
           <slot name="attachments" />
+
+          <!-- @ 候选：打 @ 弹出资产库里的角色 / 场景 / 成片 -->
+          <Transition name="ccpop">
+            <div v-if="mentionOpen && mentionItems.length" class="cc-mention" role="listbox">
+              <div class="cc-mention-head">引用资产</div>
+              <button
+                v-for="(it, i) in mentionItems"
+                :key="it.kind + ':' + it.id"
+                :class="['cc-mention-item', { active: i === mentionIndex }]"
+                type="button"
+                role="option"
+                :aria-selected="i === mentionIndex"
+                @mousedown.prevent="pickMention(it)"
+                @mouseenter="mentionIndex = i"
+              >
+                <span class="mi-name">{{ it.name }}</span>
+                <span class="mi-sub">{{ it.sub }}</span>
+                <span class="mi-id">{{ it.id }}</span>
+              </button>
+            </div>
+          </Transition>
         </div>
       </div>
 
@@ -191,7 +294,7 @@ function autoSize(e) {
   z-index: 30;
 }
 
-.cc-input-wrap { flex: 1; min-width: 0; padding-top: 14px; }
+.cc-input-wrap { position: relative; flex: 1; min-width: 0; padding-top: 14px; }
 
 .cc-text {
   width: 100%;
@@ -282,6 +385,31 @@ function autoSize(e) {
   cursor: pointer;
   transition: color 130ms var(--ease), background 130ms var(--ease);
 }
+/* @ 候选列表：贴着输入框上方浮起 */
+.cc-mention {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 30;
+  max-height: 240px; overflow-y: auto;
+  background: var(--panel-solid); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-2);
+  padding: 4px;
+}
+.cc-mention-head {
+  padding: 5px 9px 6px; font-size: 10px; color: var(--dim);
+  letter-spacing: .04em; border-bottom: 1px solid var(--line); margin-bottom: 3px;
+}
+.cc-mention-item {
+  display: flex; align-items: baseline; gap: 7px; width: 100%;
+  padding: 6px 9px; border-radius: var(--radius-md);
+  background: transparent; border: none; color: var(--muted);
+  font-size: var(--fs-sm); font-family: inherit; text-align: left; cursor: pointer;
+}
+.cc-mention-item:hover, .cc-mention-item.active {
+  background: rgba(255, 255, 255, .08); color: var(--ink);
+}
+.mi-name { color: var(--ink); font-weight: 500; flex: none; }
+.mi-sub { font-size: 10px; color: var(--dim); flex: none; }
+.mi-id { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--dim); }
+
 .cc-gear:hover { color: var(--ink); background: rgba(255, 255, 255, .07); }
 .cc-gear .app-ic { width: 15px; height: 15px; }
 

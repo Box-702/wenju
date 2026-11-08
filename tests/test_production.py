@@ -85,7 +85,7 @@ def patched_llm(monkeypatch):
 
         shot = Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
                     camera=CameraMovement(type="static"))
-        shot.video_prompt = "昏暗密室［资产:loc_room］。人物：齐夏［资产:char_a］。齐夏推门。"
+        shot.video_prompt = "昏暗密室@密室(loc_room)。人物：齐夏@齐夏(char_a)。齐夏推门。"
         return _Result([shot], "1 镜提示词")
 
     monkeypatch.setattr(prod_mod, "run_generation", fake_generate, raising=False)
@@ -118,7 +118,7 @@ def test_五阶段按序跑完并落库(store, project, patched_llm):
     latest = sorted(vvs, key=lambda v: v.created_at)[-1]
     assert latest.shots[0]["prompt_status"] == "needs_review"
     # 提示词带资产编号
-    assert "［资产:char_a］" in latest.shots[0]["video_prompt"]
+    assert "@齐夏(char_a)" in latest.shots[0]["video_prompt"]
     assert result["prompt_version_id"] == latest.id
     assert len(result["notes"]) == 5
 

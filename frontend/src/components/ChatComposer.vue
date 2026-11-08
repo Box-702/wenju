@@ -120,6 +120,14 @@ function onPaste(e) {
   }
 }
 
+// ---- @ 引用的资产：随本轮消息一起发给 Agent ----
+const refs = ref([])
+function onAssetPicked(item) {
+  if (!item?.id) return
+  if (refs.value.some((r) => r.id === item.id)) return
+  refs.value = [...refs.value, { kind: item.kind, id: item.id, name: item.name }]
+}
+
 function send() {
   const t = text.value.trim()
   if ((!t && !hasImages.value) || store.streaming || uploadingCount.value > 0) return
@@ -127,7 +135,9 @@ function send() {
   attachedImages.value.forEach((i) => URL.revokeObjectURL(i.preview))
   text.value = ''
   attachedImages.value = []
-  sendMessage(t, imageIds)
+  const used = refs.value
+  refs.value = []
+  sendMessage(t, imageIds, used)
 }
 
 function cycleResolution() {
@@ -173,6 +183,8 @@ watch(() => store.draftSeq, () => {
       @pick-model="toggleMenu('model')"
       @open-skills="emit('open-skills')"
       @focus-input="clearHint"
+      :assets="store.assetIndex"
+      @asset-picked="onAssetPicked"
     >
       <!-- 模型下拉 -->
       <template #pills>

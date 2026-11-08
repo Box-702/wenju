@@ -29,6 +29,7 @@ export const store = reactive({
 
   // 对话与版本
   messages: [],        // 当前对话消息 [{ role, content, events, payloads, streaming }]
+  assetIndex: [],      // 可被 @ 引用的资产清单 [{ kind, id, name, sub }]
   versions: [],        // 当前项目的版本列表
 
   // 左侧面板开关（默认展开，记忆在 localStorage）
@@ -637,7 +638,39 @@ export function focusComposer() {
 }
 
 /** 发送一条用户消息（可带图片 id 列表），流式接收回复并实时更新最后一条 assistant 消息。 */
-export async function sendMessage(text, imageIds = []) {
+/** 拉一份「可 @ 引用的资产清单」：角色 / 场景 / 成片素材。
+    输入框里打 @ 会用它做候选列表。 */
+export async function loadAssetIndex(pid = store.pid) {
+  if (!pid) { store.assetIndex = []; return }
+  const out = []
+  try {
+    const lib = await api(`/projects/${pid}/library`)
+    for (const c of lib.characters || []) {
+      out.push({
+        kind: 'character', id: c.char_id || '', name: c.name || '',
+        sub: c.image ? '定妆照' : '缺定妆照',
+      })
+    }
+    for (const l of lib.locations || []) {
+      out.push({
+        kind: 'location', id: l.loc_id || '', name: l.name || '',
+        sub: l.image ? '场景图' : '缺场景图',
+      })
+    }
+  } catch { /* 没有剧本时资产库是空的，不影响对话 */ }
+  try {
+    const assets = await api(`/projects/${pid}/assets`)
+    for (const a of assets || []) {
+      out.push({
+        kind: 'asset', id: a.id || '', name: a.name || '未命名',
+        sub: a.kind === 'video' ? '成片' : a.kind === 'audio' ? '音频' : '图片',
+      })
+    }
+  } catch { /* 素材接口失败不影响角色/场景引用 */ }
+  store.assetIndex = out
+}
+
+export async function sendMessage(text, imageIds = [], refs = []) {
   if (store.streaming || (!text && !imageIds.length)) return
   // 先渲染用户气泡 + 一个「打字中」的 assistant 气泡
   // 带图时用回放 url 预览（与历史消息渲染同一数据形状）。
@@ -651,7 +684,12 @@ export async function sendMessage(text, imageIds = []) {
   _streamAbort = new AbortController()
   try {
     await streamChat(
-      { project_id: store.pid, conversation_id: store.convId, message: text, meta: null, images: imageIds },
+      {
+        project_id: store.pid, conversation_id: store.convId, message: text,
+        meta: null, images: imageIds,
+        // 用户用 @ 引用了哪些资产（角色 / 场景 / 成片）
+        refs: (refs || []).map((r) => ({ kind: r.kind || '', id: r.id || '', name: r.name || '' })),
+      },
       (ev) => handleStreamEvent(ev, reply),
       _streamAbort.signal,
     )

@@ -207,7 +207,8 @@ def test_dp_reuses_anchors_verbatim_and_filters_cast_per_shot():
     ]}]}
     out = _dp()._apply(shots, llm_out, script, "写实质感。", guide)
     env = "密闭的方形房间，钨丝灯昏黄"
-    assert all(s.video_prompt.startswith(env) for s in out)          # 环境锚逐字复用
+    # 环境锚逐字复用（前面可能带 @场景名(编号) 的引用标记）
+    assert all(env in s.video_prompt for s in out)
     assert "人羊" in out[0].video_prompt and "齐夏" not in out[0].video_prompt   # 按镜过滤
     assert "齐夏" in out[1].video_prompt and "人羊" not in out[1].video_prompt
     assert "戴山羊头面具的黑西服男人" in out[0].video_prompt         # 人物锚来自风格指南（逐字）
@@ -703,7 +704,7 @@ def test_dp_apply_strips_quoted_dialogue_from_prompt_body():
 def test_dp_apply_tags_anchors_with_asset_ids():
     """提示词里的每个视觉锚（人物/场景）都带资产库映射编号。
 
-    用户拿到提示词后要能回答「这个人用的哪份资产」：顺着 [资产:char_a] 找到
+    用户拿到提示词后要能回答「这个人用的哪份资产」：顺着 @齐夏(char_a) 找到
     资产库条目，换一张定妆图就能影响所有引用它的镜头。
     """
     script = _script()
@@ -718,8 +719,8 @@ def test_dp_apply_tags_anchors_with_asset_ids():
          "prompt_body": "齐夏推门而入。"},
     ]}]}
     out = _dp()._apply(shots, llm_out, script, "", guide)[0].video_prompt
-    assert "［资产:char_a］" in out      # 人物锚带编号
-    assert "［资产:loc_room］" in out    # 环境锚带编号
+    assert "@齐夏(char_a)" in out        # 人物锚：@名字(编号)
+    assert "@密室(loc_room)" in out       # 环境锚：@名字(编号)
 
     # 无风格指南：人物名仍可从剧本解析出编号；环境锚没有可靠归属，不乱标。
     out2 = _dp()._apply(
@@ -727,8 +728,8 @@ def test_dp_apply_tags_anchors_with_asset_ids():
               camera=CameraMovement(type="static"))],
         llm_out, script, "", None,
     )[0].video_prompt
-    assert "［资产:char_a］" in out2
-    assert "［资产:loc_room］" not in out2
+    assert "@齐夏(char_a)" in out2
+    assert "@密室(loc_room)" not in out2
 
 
 def test_resolve_submission_references_chains_videos_and_fills_images():

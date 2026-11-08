@@ -56,7 +56,7 @@ import NewProjectModal from './components/NewProjectModal.vue'
 import SettingsModal from './components/settings/SettingsModal.vue'
 import PatchDrawer from './components/PatchDrawer.vue'
 import Toast from './components/Toast.vue'
-import { loadTree, loadWorkspace, loadWorkspaceTree, restorePanelPrefs, toggleRightPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus } from './stores/app'
+import { loadTree, loadWorkspace, loadWorkspaceTree, restorePanelPrefs, toggleRightPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex } from './stores/app'
 import { importProject } from './api'
 
 // ---- 拖拽导入 ----
@@ -178,6 +178,8 @@ function onResize() {
 }
 // 窄屏下选中项目 / 对话 → 收起抽屉（内容已切到中间列，面板挡视线）
 watch(() => [store.pid, store.convId], () => {
+  // 进入作品 → 拉一份可 @ 引用的资产清单（角色 / 场景 / 成片）
+  loadAssetIndex()
   if (!isNarrow.value) return
   store.leftOpen = false
   store.rightOpen = false

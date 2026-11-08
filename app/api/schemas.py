@@ -71,6 +71,19 @@ class ResumeRequest(BaseModel):
 # ---------- 对话 ----------
 
 
+class AssetRef(BaseModel):
+    """用户用 @ 引用的一份资产。
+
+    kind: character=角色 / location=场景 / asset=成片或导入素材
+    id:   资产库编号（char_xxx / loc_xxx / asset_xxx），Agent 靠它定位
+    name: 显示名（用户输入框里写的就是它）
+    """
+
+    kind: str = ""
+    id: str = ""
+    name: str = ""
+
+
 class ChatRequest(BaseModel):
     """对话式 Agent 的一轮输入。"""
 
@@ -78,6 +91,7 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None  # 项目下的具体对话（线程）；缺省用项目默认对话
     message: str = Field(default="")  # 审阅动作（meta.intent=resume）时可为空
     meta: dict[str, Any] | None = None  # 结构化意图（如 {"intent": "resume", ...}）
+    refs: list[AssetRef] = Field(default_factory=list)  # 用户用 @ 引用的资产
     # 本轮消息附带的图片 id（先经 /chat/images 上传拿 id）；进入上下文且随消息持久化。
     images: list[str] = Field(default_factory=list)
 

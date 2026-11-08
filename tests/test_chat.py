@@ -624,3 +624,41 @@ def test_main_skills_related_tools_exist(store, llm):
         named = set(re.findall(r"`([a-z_]+)`", tail))
         assert named, f"{meta.name} 的「相关工具」一节是空的"
         assert named <= set(tools), f"{meta.name} 点名了不存在的工具：{named - set(tools)}"
+
+
+# ---------- @ 引用资产 ----------
+
+
+def test_refs_note_lists_mentioned_assets():
+    """用户用 @ 引用资产时，本轮消息里要列出「类型 + 编号 + 名字」。
+
+    只写「@林然」三个字，Agent 不知道它是哪部作品里的哪个角色；
+    上下文里必须能定位到资产库条目。
+    """
+    from app.chat.conductor import _refs_note, _user_turn_content
+
+    note = _refs_note([
+        {"kind": "character", "id": "char_lin", "name": "林然"},
+        {"kind": "location", "id": "loc_street", "name": "滨江路"},
+    ])
+    assert "@林然" in note and "char_lin" in note and "角色" in note
+    assert "@滨江路" in note and "loc_street" in note and "场景" in note
+
+    # 空引用不产生任何附加内容
+    assert _refs_note([]) == ""
+    assert _refs_note(None) == ""
+
+    # 本轮用户消息 = 原文 + 引用清单
+    content = _user_turn_content("把 @林然 的定妆照改一下", None, [
+        {"kind": "character", "id": "char_lin", "name": "林然"},
+    ])
+    assert "把 @林然 的定妆照改一下" in content
+    assert "【本轮引用的资产】" in content
+
+
+def test_system_prompt_teaches_at_semantics():
+    """系统提示要教会 Agent @ 的含义，否则它会把 @林然 当成普通文字。"""
+    from app.chat.conductor import system_prompt
+
+    sp = system_prompt()
+    assert "@" in sp and "引用" in sp

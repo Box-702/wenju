@@ -176,6 +176,7 @@ def chat(payload: ChatRequest) -> dict[str, Any]:
         message=payload.message,
         meta=payload.meta,
         images=payload.images,
+        refs=[r.model_dump() for r in (payload.refs or [])],
         runner=deps.subagent_runner(),
     )
 
@@ -191,6 +192,7 @@ async def chat_stream(payload: ChatRequest) -> StreamingResponse:
         message=payload.message,
         meta=payload.meta,
         images=payload.images,
+        refs=[r.model_dump() for r in (payload.refs or [])],
         runner=deps.subagent_runner(),
     )
 

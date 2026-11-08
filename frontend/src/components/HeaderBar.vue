@@ -37,7 +37,7 @@ function openWorkbench() {
       title="我的作品"
       @click="emit('open-tasks')"
     >
-      <AppIcon name="menu" />
+      <AppIcon name="folder-open" />
     </button>
 
     <h1 class="brand" title="回到首页" @click="exitWorkspace">

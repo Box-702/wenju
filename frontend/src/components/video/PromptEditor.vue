@@ -1,5 +1,7 @@
 <template>
-  <div class="prompt-editor" v-if="shot">
+  <div class="prompt-editor-wrap" v-if="shot">
+    <div class="prompt-editor-scrim" @click="$emit('close')"></div>
+    <div class="prompt-editor">
     <div class="editor-header">
       <div>
         <div class="eyebrow">HUMAN REVIEW</div>
@@ -112,6 +114,7 @@
         批准并解锁出片
       </button>
     </div>
+    </div>
   </div>
 </template>
 
@@ -174,10 +177,18 @@ function formatTime(value) {
 </script>
 
 <style scoped>
+/* 浮层：编辑器在 App 层，从侧栏或产出页打开都是这一块 */
+.prompt-editor-wrap { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; }
+.prompt-editor-scrim { position: absolute; inset: 0; background: oklch(0 0 0 / .55); }
 .prompt-editor {
-  background: var(--panel2); border: 1px solid var(--line);
-  border-radius: var(--radius-md); padding: 16px;
+  position: relative; z-index: 1;
+  width: min(760px, 94vw); max-height: 86vh; overflow-y: auto;
+  background: var(--panel-solid); border: 1px solid var(--line);
+  border-radius: var(--radius-card); padding: 18px 20px;
+  box-shadow: var(--shadow-3);
+  animation: modal-pop 180ms var(--ease);
 }
+@keyframes modal-pop { from { opacity: 0; transform: scale(.97) translateY(8px); } }
 .editor-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .editor-header h4 { margin: 3px 0 0; font-size: 15px; }
 .eyebrow { color: var(--gold); font: 700 9px/1 var(--mono); letter-spacing: .12em; }

@@ -69,6 +69,8 @@ SYSTEM_PROMPT_TEMPLATE = (
     "· 生成初稿（生成 / 初稿 / 第一版 / 出剧本）→ generate_script\n"
     "· 改编（改对白 / 改节奏 / 压缩 / 反转 / 口语化）→ run_adaptation，细则见 script-review 技能\n"
     "· 咨询（剧本怎么样 / 这个结尾好不好）→ ask，凭剧本概况与作者风格给有依据的回答\n"
+    "· 读原文（原文第几段写了什么 / 原文里怎么写的某句话 / 核对初稿有没有偏离原文）"
+    "→ read_source 分段读、search_source 定位关键词；原文很长时先用 search_source 定位再读\n"
     "· 拆镜头（拆解 / 分镜 / 设计镜头 / 场景拆解）→ breakdown_scenes\n"
     "· 风格指南（视觉风格 / 角色造型 / 画面风格）→ generate_style_guide\n"
     "· 定妆图（参考图 / 人物形象图 / 视觉参考）→ generate_reference_assets\n"

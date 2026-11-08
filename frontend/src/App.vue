@@ -1,3 +1,29 @@
+<script setup>
+// =====================================================================
+// App.vue —— 根组件：创作工作台布局
+//
+//   ┌─────────── 顶栏（品牌 + 批次状态 + 面板开关）──────────────┐
+//   │ 作品导航      │ 创作区（对话）      │ 上下文侧栏      │
+//   └──────────────────────────────────────────────────────┘
+// =====================================================================
+
+import { ref, onMounted, onUnmounted, watch } from 'vue'
+import HeaderBar from './components/HeaderBar.vue'
+import HomePage from './components/HomePage.vue'
+import AssetPanel from './components/AssetPanel.vue'
+import ChatThread from './components/ChatThread.vue'
+import ChatComposer from './components/ChatComposer.vue'
+import ContextPanel from './components/ContextPanel.vue'
+import ViewerPanel from './components/ViewerPanel.vue'
+import PageShell from './components/PageShell.vue'
+import SkillsPage from './components/SkillsPage.vue'
+import NewProjectModal from './components/NewProjectModal.vue'
+import SettingsModal from './components/settings/SettingsModal.vue'
+import PatchDrawer from './components/PatchDrawer.vue'
+import PromptEditor from './components/video/PromptEditor.vue'
+import Toast from './components/Toast.vue'
+import { loadTree, loadWorkspace, loadWorkspaceTree, restorePanelPrefs, toggleRightPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, closePromptEditor, saveShotPrompt } from './stores/app'
+import { importProject } from './api'
 
 // ---- 侧边栏自动弹出（通用上下文侧边栏的核心行为） ----
 // 出片时：用户此刻最想看的是刚生成的东西 —— 自动弹出并切到「镜头」。
@@ -33,31 +59,11 @@ watch(
     }
   },
 )
-<script setup>
-// =====================================================================
-// App.vue —— 根组件：创作工作台布局
-//
-//   ┌─────────── 顶栏（品牌 + 批次状态 + 面板开关）──────────────┐
-//   │ 作品导航      │ 创作区（对话）      │ 上下文侧栏      │
-//   └──────────────────────────────────────────────────────┘
-// =====================================================================
 
-import { ref, onMounted, onUnmounted, watch } from 'vue'
-import HeaderBar from './components/HeaderBar.vue'
-import HomePage from './components/HomePage.vue'
-import AssetPanel from './components/AssetPanel.vue'
-import ChatThread from './components/ChatThread.vue'
-import ChatComposer from './components/ChatComposer.vue'
-import ContextPanel from './components/ContextPanel.vue'
-import ViewerPanel from './components/ViewerPanel.vue'
-import PageShell from './components/PageShell.vue'
-import SkillsPage from './components/SkillsPage.vue'
-import NewProjectModal from './components/NewProjectModal.vue'
-import SettingsModal from './components/settings/SettingsModal.vue'
-import PatchDrawer from './components/PatchDrawer.vue'
-import Toast from './components/Toast.vue'
-import { loadTree, loadWorkspace, loadWorkspaceTree, restorePanelPrefs, toggleRightPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex } from './stores/app'
-import { importProject } from './api'
+/** 保存提示词审阅结果（编辑器在 App 层，产出页与右侧栏共用同一份）。 */
+async function onPromptReview(payload) {
+  await saveShotPrompt(payload, payload.decision, payload.prompt_review_note)
+}
 
 // ---- 拖拽导入 ----
 const dragging = ref(false)
@@ -231,7 +237,12 @@ onUnmounted(() => {
       <span class="blob blob-red"></span>
       <span class="grain"></span>
     </div>
-    <HeaderBar @open-assets="store.overlay = 'assets'" @open-skills="store.overlay = 'skills'" @open-output="store.overlay = 'output'" />
+    <HeaderBar
+      @open-assets="store.overlay = 'assets'"
+      @open-skills="store.overlay = 'skills'"
+      @open-output="store.overlay = 'output'"
+      @open-tasks="store.overlay = 'tasks'"
+    />
     <!-- 拖拽导入覆盖层 -->
     <Transition name="fade">
       <div v-if="dragging" class="drop-overlay" @dragleave="onDragLeave" @drop="onDrop">
@@ -291,6 +302,15 @@ onUnmounted(() => {
   <SettingsModal
     :open="store.showSettings"
     @close="store.showSettings = false; loadModelStatus()"
+  />
+    <!-- 提示词编辑器：提到 App 层，右侧栏与产出页都能打开同一份 -->
+  <PromptEditor
+    v-if="store.editingPrompt"
+    :shot="store.editingPrompt"
+    :history="store.promptHistory"
+    :history-loading="store.promptHistoryLoading"
+    @close="closePromptEditor"
+    @review="onPromptReview"
   />
   <PatchDrawer />
   <Toast />

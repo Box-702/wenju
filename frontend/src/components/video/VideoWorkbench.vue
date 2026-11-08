@@ -9,7 +9,6 @@
 import { computed, onMounted, ref } from 'vue'
 import ShotList from './ShotList.vue'
 import VideoPlayer from './VideoPlayer.vue'
-import PromptEditor from './PromptEditor.vue'
 import CastLibrary from './CastLibrary.vue'
 import AppIcon from '../AppIcon.vue'
 import {
@@ -111,10 +110,6 @@ onMounted(async () => {
   ensureBatchPolling()
   ensureFinalizePolling()
 })
-
-async function onPromptReview(payload) {
-  await saveShotPrompt(payload, payload.decision, payload.prompt_review_note)
-}
 
 async function onEditPrompt(shot) {
   openPromptEditor(shot)
@@ -291,15 +286,6 @@ function formatVersionTime(value) {
         </div>
       </div>
     </div>
-
-    <PromptEditor
-      v-if="store.editingPrompt"
-      :shot="store.editingPrompt"
-      :history="store.promptHistory"
-      :history-loading="store.promptHistoryLoading"
-      @close="closePromptEditor"
-      @review="onPromptReview"
-    />
 
     <!-- 批次进度 / 审批面板 -->
     <div v-if="batch && batch.status !== 'none'" class="batch" :class="'batch-' + batch.status">

@@ -18,6 +18,7 @@ import { computed, ref, watch, onMounted } from 'vue'
 import { store, loadShots, loadVideoJobs, loadAssets, notify } from '../stores/app'
 import AppIcon from './AppIcon.vue'
 import ShotList from './video/ShotList.vue'
+import { openPromptEditor, loadPromptHistory } from '../stores/app'
 import VideoPlayer from './video/VideoPlayer.vue'
 
 const props = defineProps({
@@ -57,7 +58,9 @@ const charNames = computed(() => {
   return m
 })
 
-/** 大纲：一幕一行，说清这场发生了什么 */
+/** 大纲：一幕一行，说清这场发生了什么。点开看细节（节拍 / 台词 / 动作）。 */
+const openSceneId = ref('')
+
 const outline = computed(() =>
   (script.value.scenes || []).map((sc, i) => ({
     id: sc.id,
@@ -67,8 +70,29 @@ const outline = computed(() =>
     conflict: sc.conflict || '',
     chars: (sc.characters || []).map((cid) => charNames.value[cid] || cid),
     beats: (sc.beats || []).length,
+    // 细节：这一场具体写了什么
+    beatList: (sc.beats || []).map((b) => ({
+      type: b.type || '',
+      text: b.text || '',
+    })),
+    dialogue: (sc.dialogue || []).map((d) => ({
+      name: charNames.value[d.character_id || d.speaker] || d.character_id || d.speaker || '',
+      text: d.text || d.line || '',
+    })),
+    action: (sc.action || []).filter(Boolean),
+    open: openSceneId.value === sc.id,
   })),
 )
+
+function toggleScene(id) {
+  openSceneId.value = openSceneId.value === id ? '' : id
+}
+
+/** 从侧栏打开提示词编辑器（编辑器在 App 层，这里只负责打开 + 拉历史）。 */
+async function onEditPrompt(shot) {
+  openPromptEditor(shot)
+  await loadPromptHistory(shot.id)
+}
 
 /** 镜头视图：已生成的视频优先展示 */
 const clips = computed(() =>
@@ -156,16 +180,40 @@ watch(() => store.videoBatch?.status, (st) => {
         还没有剧本。让我帮你改编，或先导入一部作品。
       </div>
       <ol v-else class="outline">
-        <li v-for="o in outline" :key="o.id" class="ol-item">
-          <div class="ol-head">
+        <li v-for="o in outline" :key="o.id" class="ol-item" :class="{ open: o.open }">
+          <button class="ol-head" @click="toggleScene(o.id)">
             <span class="ol-no">{{ o.no }}</span>
             <span class="ol-title">{{ o.title }}</span>
-          </div>
+            <span class="ol-toggle">{{ o.open ? '收起' : '细节' }}</span>
+          </button>
           <p v-if="o.purpose" class="ol-purpose">{{ o.purpose }}</p>
           <p v-if="o.conflict" class="ol-conflict">冲突：{{ o.conflict }}</p>
           <div class="ol-meta">
             <span v-if="o.chars.length">{{ o.chars.join('、') }}</span>
             <span v-if="o.beats">{{ o.beats }} 个节拍</span>
+          </div>
+
+          <!-- 细节：这一场具体写了什么 -->
+          <div v-if="o.open" class="ol-detail">
+            <div v-if="o.action.length" class="od-sec">
+              <span class="od-label">动作</span>
+              <p v-for="(a, i) in o.action" :key="'a' + i" class="od-line">{{ a }}</p>
+            </div>
+            <div v-if="o.beatList.length" class="od-sec">
+              <span class="od-label">节拍（{{ o.beatList.length }}）</span>
+              <p v-for="(b, i) in o.beatList" :key="'b' + i" class="od-line">
+                <span v-if="b.type" class="od-type">{{ b.type }}</span>{{ b.text }}
+              </p>
+            </div>
+            <div v-if="o.dialogue.length" class="od-sec">
+              <span class="od-label">台词（{{ o.dialogue.length }}）</span>
+              <p v-for="(d, i) in o.dialogue" :key="'d' + i" class="od-line">
+                <span v-if="d.name" class="od-who">{{ d.name }}</span>{{ d.text }}
+              </p>
+            </div>
+            <div v-if="!o.action.length && !o.beatList.length && !o.dialogue.length" class="od-line dim">
+              这一场还没有写进细节。
+            </div>
           </div>
         </li>
       </ol>
@@ -198,6 +246,7 @@ watch(() => store.videoBatch?.status, (st) => {
         class="cp-shots"
         :shots="store.shots || []"
         :scenes="store.scenes || []"
+        @edit-prompt="onEditPrompt"
       />
     </div>
 
@@ -310,6 +359,29 @@ watch(() => store.videoBatch?.status, (st) => {
 
 /* ---- 大纲 ---- */
 .outline { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.ol-head {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  padding: 0; background: none; border: none; color: inherit;
+  font-family: inherit; font-size: inherit; text-align: left; cursor: pointer;
+}
+.ol-toggle {
+  margin-left: auto; font-size: 10px; color: var(--dim); flex: none;
+  transition: color 130ms var(--ease);
+}
+.ol-head:hover .ol-toggle { color: var(--ink); }
+.ol-detail {
+  margin-top: 8px; padding: 9px 10px;
+  border-left: 2px solid var(--line-strong);
+  background: rgba(255, 255, 255, .03);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+.od-sec { margin-bottom: 8px; }
+.od-sec:last-child { margin-bottom: 0; }
+.od-label { display: block; font-size: 10px; color: var(--dim); margin-bottom: 3px; letter-spacing: .04em; }
+.od-line { margin: 0 0 3px; font-size: var(--fs-xs); color: var(--muted); line-height: 1.6; }
+.od-line.dim { color: var(--dim); }
+.od-type { color: var(--gold); margin-right: 5px; font-size: 10px; }
+.od-who { color: var(--ink); margin-right: 5px; }
 
 .ol-item {
   padding: 10px 12px;

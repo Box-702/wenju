@@ -27,6 +27,11 @@ def status() -> dict[str, Any]:
     """返回当前运行配置摘要（供前端展示「模型 / 存储」状态）。"""
     cfg = deps.settings()
     info = deps.llm().describe()
+    # 生图模型也要露出来：资产库的「生成资产图」走的就是它，
+    # 用户在设置里绑好的那个模型，得看得见才敢用。
+    from ..llm.registry import resolve_image
+
+    img = resolve_image(cfg, deps.store())
     return {
         "model": {
             "available": info["available"],
@@ -35,6 +40,13 @@ def status() -> dict[str, Any]:
             "source": info["source"],
         },
         "vision": info["vision"],
+        "image": {
+            "available": bool(img and img.api_key),
+            "provider": (img.provider if img else "") or "",
+            "label": (img.label if img else "") or "",
+            "model": (img.model if img else "") or "",
+            "source": (img.source if img else "none") or "none",
+        },
         "storage": {
             "database": cfg.database_url.split("://")[0],
             "checkpointer": cfg.checkpointer,

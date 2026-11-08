@@ -112,9 +112,35 @@
                 </div>
                 <div class="asset-voice" :class="{ none: !c.voice_label }">
                   <AppIcon name="sound" />
-                  <span>{{ c.voice_label || '未指定音色' }}</span>
+                  <button
+                    class="voice-btn"
+                    type="button"
+                    :title="'点击更换音色（' + (c.voice_label || '未指定') + '）'"
+                    @click.stop="toggleVoice(c)"
+                  >{{ c.voice_label || '未指定音色' }}</button>
                   <span v-if="c.gender" class="asset-gender">{{ genderZh(c.gender) }}</span>
                   <span v-if="c.confirmed" class="asset-ok" title="音色已人工确认">已确认</span>
+                  <button
+                    class="voice-play"
+                    type="button"
+                    title="试听这一句"
+                    :disabled="previewing === c.char_id"
+                    @click.stop="previewVoice(c)"
+                  >{{ previewing === c.char_id ? '…' : '试听' }}</button>
+
+                  <!-- 音色选择浮层 -->
+                  <Transition name="ccpop">
+                    <div v-if="voiceFor?.char_id === c.char_id" class="voice-pop" role="menu">
+                      <button
+                        v-for="v in voiceChoices"
+                        :key="v.voice_id"
+                        :class="['voice-pop-item', { on: v.voice_id === c.voice_id }]"
+                        type="button"
+                        role="menuitem"
+                        @click.stop="pickVoice(c, v)"
+                      >{{ v.label }}<span class="vp-gender">{{ genderZh(v.gender) }}</span></button>
+                    </div>
+                  </Transition>
                 </div>
                 <p v-if="c.appearance" class="asset-desc" :title="c.appearance">{{ c.appearance }}</p>
                 <div class="asset-nums">台词 {{ c.speech_chars }} 字 · {{ c.scenes }} 场</div>
@@ -276,7 +302,7 @@ const props = defineProps({
 
 const lib = reactive({
   loading: false, characters: [], locations: [], warnings: [],
-  visual_style: '', project_title: '',
+  visual_style: '', project_title: '', voiceOptions: [],
 })
 
 /** 成片与导入的素材（视频/图片/音频）—— 资产库的另一半。 */
@@ -356,6 +382,62 @@ const missingCount = computed(
   () => lib.characters.filter((c) => !c.image).length + lib.locations.filter((l) => !l.image).length,
 )
 
+// ---- 音色：可人工指定 + 试听 ----
+const voiceFor = ref(null)        // 正在展开音色选择器的角色
+const previewing = ref('')        // 正在试听的角色 id
+
+/** 该角色可选的音色：按性别分池；性别未知时给全部。 */
+const voiceChoices = computed(() => {
+  const c = voiceFor.value
+  const all = lib.voiceOptions || []
+  if (!c) return []
+  const g = String(c.gender || '').toLowerCase()
+  const same = all.filter((v) => v.gender === g)
+  return same.length ? same : all
+})
+
+async function toggleVoice(c) {
+  voiceFor.value = voiceFor.value?.char_id === c.char_id ? null : c
+}
+
+async function pickVoice(c, v) {
+  voiceFor.value = null
+  try {
+    await api(`/projects/${store.pid}/library`, 'PATCH', {
+      characters: { [c.name]: { voice_id: v.voice_id, gender: v.gender } },
+    })
+    await loadLibrary()
+    notify(`${c.name} 的音色已设为「${v.label}」`, 'ok')
+  } catch (e) {
+    notify('设置音色失败：' + (e.detail || e.message))
+  }
+}
+
+/** 试听：拿这个角色的一句台词（没有就用占位句）读一遍。 */
+async function previewVoice(c) {
+  previewing.value = c.char_id
+  try {
+    const res = await fetch(`/api/projects/${store.pid}/library/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voice_id: c.voice_id, gender: c.gender, text: '' }),
+    })
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}))
+      throw new Error(j.detail || res.statusText)
+    }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const audio = new Audio(url)
+    audio.play()
+    audio.onended = () => URL.revokeObjectURL(url)
+  } catch (e) {
+    notify('试听失败：' + (e.detail || e.message))
+  } finally {
+    previewing.value = ''
+  }
+}
+
 const VISUAL_STYLE_ZH = {
   realistic: '实拍写实',
   anime: '二次元（漫剧）',
@@ -426,6 +508,7 @@ async function loadLibrary() {
     lib.warnings = data.warnings || []
     lib.visual_style = data.visual_style || ''
     lib.project_title = data.project_title || ''
+    lib.voiceOptions = data.voice_options || []
   } catch (e) {
     notify('资产库加载失败：' + e.message)
   } finally {
@@ -619,6 +702,7 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 }
 .asset-id { font-family: var(--mono); font-size: 10px; color: var(--dim); flex: none; }
 .asset-voice {
+  position: relative;
   display: flex; align-items: center; gap: 4px;
   font-size: var(--fs-xs); color: var(--muted);
   min-width: 0;
@@ -626,6 +710,37 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 .asset-voice .app-ic { width: 12px; height: 12px; flex: none; opacity: .8; }
 .asset-voice span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .asset-voice.none { color: var(--dim); }
+.voice-btn {
+  padding: 0; background: none; border: none;
+  color: inherit; font: inherit; font-size: var(--fs-xs);
+  cursor: pointer; text-align: left;
+  border-bottom: 1px dashed var(--line-strong);
+}
+.voice-btn:hover { color: var(--ink); border-bottom-color: var(--accent); }
+.voice-play {
+  flex: none; padding: 0 6px; font-size: 10px; border-radius: var(--radius-sm);
+  background: transparent; border: 1px solid var(--line); color: var(--dim);
+  cursor: pointer;
+}
+.voice-play:hover { color: var(--ink); border-color: var(--line-strong); }
+.voice-play:disabled { opacity: .5; cursor: default; }
+
+/* 音色选择浮层 */
+.voice-pop {
+  position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 40;
+  min-width: 190px; max-height: 240px; overflow-y: auto;
+  background: var(--panel-solid); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-2); padding: 4px;
+}
+.voice-pop-item {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  padding: 6px 9px; border-radius: var(--radius-md);
+  background: transparent; border: none; color: var(--muted);
+  font-size: var(--fs-sm); font-family: inherit; text-align: left; cursor: pointer;
+}
+.voice-pop-item:hover { background: rgba(255, 255, 255, .08); color: var(--ink); }
+.voice-pop-item.on { color: var(--accent); }
+.vp-gender { margin-left: auto; font-size: 10px; color: var(--dim); }
 .asset-gender { flex: none; color: var(--dim); font-size: 10px; }
 .asset-ok { flex: none; color: var(--accent); font-size: 10px; }
 .asset-desc {

@@ -152,9 +152,78 @@ def delete_provider(provider_id: str) -> dict[str, Any]:
     return {"ok": True}
 
 
+def _probe_openai_compatible(base_url: str, api_key: str, model: str = "") -> tuple[bool, str, list[str]]:
+    """真的打一次厂商接口（OpenAI 兼容协议）。
+
+    返回 (成功?, 说明, 模型名列表)。失败时说明是人话，直接给用户看。
+    """
+    import json as _json
+    from urllib.error import HTTPError, URLError
+    from urllib.request import Request as _Request, urlopen as _urlopen
+
+    base = (base_url or "").rstrip("/")
+    if not base:
+        return False, "没有填 Base URL", []
+    if not api_key:
+        return False, "没有配置 API Key", []
+
+    def _get(path: str) -> tuple[int, str]:
+        req = _Request(base + path, headers={"Authorization": f"Bearer {api_key}"})
+        try:
+            with _urlopen(req, timeout=15) as r:
+                return r.status, r.read().decode("utf-8", "replace")
+        except HTTPError as e:
+            return e.code, e.read().decode("utf-8", "replace")
+        except URLError as e:
+            return 0, str(getattr(e, "reason", e))
+        except Exception as e:  # noqa: BLE001
+            return 0, str(e)
+
+    status, body = _get("/models")
+    if status == 200:
+        try:
+            data = _json.loads(body)
+            names = [m.get("id", "") for m in (data.get("data") or []) if m.get("id")]
+            return True, f"连接成功，厂商返回 {len(names)} 个模型", names[:12]
+        except Exception:  # noqa: BLE001
+            return True, "连接成功", []
+    if status in (401, 403):
+        return False, "Key 被拒绝（401/403）：key 不对、已过期，或没开通这个模型", []
+    if status in (404, 405):
+        # 不支持 /models：退一步，用最小的 chat 请求探一次
+        payload = _json.dumps({
+            "model": model or "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+        }).encode("utf-8")
+        req = _Request(
+            base + "/chat/completions",
+            data=payload,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        )
+        try:
+            with _urlopen(req, timeout=20) as r:
+                if r.status == 200:
+                    return True, "连接成功（该厂商不支持 /models，用最小请求验证）", []
+                return False, f"连接失败：HTTP {r.status}", []
+        except HTTPError as e:
+            code = e.code
+            if code in (401, 403):
+                return False, "Key 被拒绝（401/403）：key 不对、已过期，或没开通这个模型", []
+            detail = e.read().decode("utf-8", "replace")[:160]
+            return False, f"连接失败：HTTP {code} {detail}", []
+        except URLError as e:
+            return False, f"连不上：{getattr(e, 'reason', e)}", []
+        except Exception as e:  # noqa: BLE001
+            return False, f"连接失败：{e}", []
+    if status == 0:
+        return False, f"连不上：{body[:120]}", []
+    return False, f"连接失败：HTTP {status} {body[:120]}", []
+
+
 @router.post("/providers/{provider_id}/test")
 async def test_provider(provider_id: str) -> dict[str, Any]:
-    """测试 Provider 连接（校验 key 是否已配置、Provider 名是否可解析）。"""
+    """测试 Provider 连接：**真的打一次厂商接口**，不是只看 key 有没有填。"""
     p = deps.store().get_api_provider(provider_id)
     if not p:
         raise HTTPException(404, "Provider 不存在")
@@ -164,10 +233,30 @@ async def test_provider(provider_id: str) -> dict[str, Any]:
         provider = get_registry().get_provider(p.name, api_key=p.api_key, base_url=p.base_url)
         if not provider:
             return {"ok": False, "error": f"未找到视频 Provider: {p.name}"}
-        return {"ok": bool(p.api_key), "provider": p.name, "label": provider.label}
-    if not p.api_key:
-        return {"ok": False, "error": "未配置 API Key"}
-    return {"ok": True, "provider": p.name, "label": p.label}
+        if not p.api_key:
+            return {"ok": False, "error": "未配置 API Key"}
+        # MiniMax 没有通用探活接口，只能到这里为止——如实说，别假装测过了。
+        return {
+            "ok": True,
+            "provider": p.name,
+            "label": provider.label,
+            "detail": "视频厂商没有统一的探活接口，这里只校验了 key 已配置与厂商可解析；"
+                      "真实可用性要等出片时才知道",
+        }
+
+    model = str((p.config or {}).get("model") or "")
+    ok, detail, models = _probe_openai_compatible(p.base_url, p.api_key, model)
+    out: dict[str, Any] = {
+        "ok": ok,
+        "provider": p.name,
+        "label": p.label,
+        "detail": detail,
+    }
+    if models:
+        out["models"] = models
+    if not ok:
+        out["error"] = detail
+    return out
 
 
 # ---------- 模型偏好 ----------

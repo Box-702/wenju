@@ -83,9 +83,10 @@
   /* ---------- 结构化设计变量 ---------- */
   --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
   --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 64px;
-  /* 圆角：小圆角语言（2026-11-08 定：控件 4px、卡片 8px、面板 12px）。
-     以前的 9/14/20px 属于「胶囊/软糯」观感，用户明确不喜欢。 */
-  --radius-sm: 3px; --radius-md: 4px; --radius-lg: 8px; --radius-card: 12px;
+  /* 圆角：按参考图的比例——卡片大圆角、控件中等圆角，全都没有药丸。
+     （2026-11-08 先一刀切到 4/3px 是过头了：那本来是给「分类页签」定的，
+     不该把卡片和控件一起缩成硬边；用户反馈「和参考图不融入」后调回。） */
+  --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px; --radius-card: 20px;
   --radius-full: 999px;
   --shadow-1: 0 1px 4px rgba(0, 0, 0, .3);
   --shadow-2: 0 10px 30px rgba(0, 0, 0, .34);
@@ -441,11 +442,11 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 
 /* ---------- 参数胶囊（首页与工作区共用） ---------- */
 .chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 32px; padding: 0 11px; border-radius: var(--radius-md);
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 36px; padding: 0 13px; border-radius: var(--radius-md);
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, .05);
-  color: var(--muted); font-size: 12.5px; font-family: inherit;
+  color: var(--muted); font-size: 13px; font-family: inherit;
   cursor: pointer;
   transition: background 130ms var(--ease), color 130ms var(--ease), border-color 130ms var(--ease);
 }

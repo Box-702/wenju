@@ -24,7 +24,7 @@ const text = defineModel('text', { type: String, default: '' })
 const props = defineProps({
   placeholder: {
     type: String,
-    default: '描述你想生成的内容，或点 ＋ 附上图片。',
+    default: '描述画面、人物与剧情，支持使用 @ 快速调用参考素材。内容将由 AI 生成。',
   },
   /** 阶段状态（生成中），显示在胶囊行左侧 */
   statusText: { type: String, default: '' },
@@ -471,9 +471,9 @@ function onInput(e) {
 .cc-plus-wrap { position: relative; flex: none; }
 
 .cc-plus {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--radius-lg);
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
   display: grid;
   place-items: center;
   color: rgba(255, 255, 255, 0.82);

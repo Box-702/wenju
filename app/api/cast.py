@@ -72,6 +72,29 @@ def _script_of(
     return script
 
 
+def _shot_clips(store: Any, project_id: str) -> list[dict[str, Any]]:
+    """已成功的镜头视频，作为资产列出（source='shot'）。
+
+    单镜视频不在 media_assets 里（在 video_jobs），但它同样是这部作品的产出，
+    资产库要能一眼看到、能下载。
+    """
+    out: list[dict[str, Any]] = []
+    for j in store.list_video_jobs(project_id):
+        if j.status != "succeeded" or not j.video_url:
+            continue
+        out.append({
+            "id": j.id,
+            "project_id": project_id,
+            "kind": "video",
+            "name": f"镜头 {j.shot_id}",
+            "source": "shot",
+            "url": j.video_url,
+            "shot_id": j.shot_id,
+            "created_at": j.created_at.isoformat() if j.created_at else "",
+        })
+    return out
+
+
 @router.get("/projects/{project_id}/library")
 def get_library(project_id: str, version_id: str | None = None) -> dict[str, Any]:
     """资产库总览：每个角色的形象锚、定妆图、性别与音色（含判定依据）。
@@ -89,8 +112,11 @@ def get_library(project_id: str, version_id: str | None = None) -> dict[str, Any
             "locations": [],
             "warnings": [],
             "visual_style": normalize_visual_style(style.get("visual_style")),
+            "clips": _shot_clips(store, project_id),
         }
-    return build_library(script, style, visual_style=style.get("visual_style"))
+    lib = build_library(script, style, visual_style=style.get("visual_style"))
+    lib["clips"] = _shot_clips(store, project_id)
+    return lib
 
 
 @router.get("/library/all")
@@ -115,6 +141,7 @@ def get_library_all() -> dict[str, Any]:
                 "characters": lib.get("characters", []),
                 "locations": lib.get("locations", []),
                 "warnings": lib.get("warnings", []),
+                "clips": _shot_clips(store, p.id),
             })
         for a in store.list_assets(p.id):
             assets.append({

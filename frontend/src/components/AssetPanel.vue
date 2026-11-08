@@ -177,7 +177,7 @@
               <div class="asset-meta">
                 <div class="asset-line"><span class="asset-name" :title="a.name">{{ a.name || '未命名' }}</span></div>
                 <div class="asset-line">
-                  <span class="asset-badge">{{ kindZh(a.kind) }}</span>
+                  <span class="asset-badge">{{ a.source === 'shot' ? '单镜' : '整片' }}</span>
                   <span class="asset-badge">{{ sourceZh(a.source) }}</span>
                 </div>
                 <a class="asset-dl" :href="a.url" :download="a.name || true" target="_blank" rel="noopener">
@@ -249,7 +249,11 @@
               </div>
             </div>
             <div v-else class="asset-grid">
-              <div v-for="a in grp.assets" :key="a.id" class="asset-card">
+              <div
+                v-for="a in (typeTab === 'clip' ? grp.clips : grp.materials)"
+                :key="a.id"
+                class="asset-card"
+              >
                 <div class="asset-pic scene">
                   <video v-if="a.kind === 'video' && a.url" :src="a.url" muted playsinline preload="metadata"></video>
                   <img v-else-if="a.kind === 'image' && a.url" :src="a.url" :alt="a.name" loading="lazy" />
@@ -302,7 +306,7 @@ const props = defineProps({
 
 const lib = reactive({
   loading: false, characters: [], locations: [], warnings: [],
-  visual_style: '', project_title: '', voiceOptions: [],
+  visual_style: '', project_title: '', voiceOptions: [], clips: [],
 })
 
 /** 成片与导入的素材（视频/图片/音频）—— 资产库的另一半。 */
@@ -327,17 +331,17 @@ const typeTab = ref('character')
 
 const ASSET_KIND_ZH = { video: '视频', image: '图片', audio: '音频' }
 const kindZh = (k) => ASSET_KIND_ZH[k] || '素材'
-const SOURCE_ZH = { upload: '手动导入', finalize: '流水线产出', url: '外部链接' }
+const SOURCE_ZH = { upload: '手动导入', finalize: '流水线产出', url: '外部链接', shot: '逐镜生成' }
 const sourceZh = (s) => SOURCE_ZH[s] || ''
 
 const visualStyleZh = (v) => VISUAL_STYLE_ZH[v] || v || ''
 
 /* 资产按**在流水线里的角色**分，不按文件后缀分：
-   - 成片 = source=finalize：合成出来的完整视频 + 字幕（是产出）
+   - 成片 = source=finalize（整片 + 字幕）与 source=shot（单镜视频）：都是产出
    - 素材 = source=upload/url：用户导入 / 登记的参考素材（是输入，给生成当参考）
    之前按 kind 分会把「用户上传的参考视频」也算成成片，混淆了产出与输入。 */
-const clipsOf = (list) => (list || []).filter((a) => a.source === 'finalize')
-const materialOf = (list) => (list || []).filter((a) => a.source !== 'finalize')
+const clipsOf = (list) => (list || []).filter((a) => a.source === 'finalize' || a.source === 'shot')
+const materialOf = (list) => (list || []).filter((a) => a.source !== 'finalize' && a.source !== 'shot')
 
 /** 页签角标：当前范围下各类型的数量。 */
 const counts = computed(() => {
@@ -349,18 +353,23 @@ const counts = computed(() => {
       material: materialOf(assets.value).length,
     }
   }
+  const allClips = [
+    ...(all.assets || []).filter((a) => a.source === 'finalize' || a.source === 'shot'),
+    ...(all.projects || []).flatMap((p) => p.clips || []),
+  ]
+  const allMaterials = (all.assets || []).filter((a) => a.source !== 'finalize' && a.source !== 'shot')
   return {
     character: all.projects.reduce((n, p) => n + (p.characters || []).length, 0),
     location: all.projects.reduce((n, p) => n + (p.locations || []).length, 0),
-    clip: clipsOf(all.assets).length,
-    material: materialOf(all.assets).length,
+    clip: allClips.length,
+    material: allMaterials.length,
   }
 })
 
 /** 全部作品范围：按作品分组，每组带上自己的资产与计数。 */
 const allGroups = computed(() =>
   (all.projects || []).map((p) => {
-    const own = (all.assets || []).filter((a) => a.project_id === p.project_id)
+    const own = [...(all.assets || []).filter((a) => a.project_id === p.project_id), ...(p.clips || [])]
     return {
       project_id: p.project_id,
       title: p.title,
@@ -368,10 +377,12 @@ const allGroups = computed(() =>
       characters: p.characters || [],
       locations: p.locations || [],
       assets: own,
+      clips: own.filter((a) => a.source === 'finalize' || a.source === 'shot'),
+      materials: own.filter((a) => a.source !== 'finalize' && a.source !== 'shot'),
       counts: {
         character: (p.characters || []).length,
         location: (p.locations || []).length,
-        clip: clipsOf(own).length,
+        clip: own.filter((a) => a.source === 'finalize' || a.source === 'shot').length,
       },
     }
   }),
@@ -509,6 +520,7 @@ async function loadLibrary() {
     lib.visual_style = data.visual_style || ''
     lib.project_title = data.project_title || ''
     lib.voiceOptions = data.voice_options || []
+    lib.clips = data.clips || []
   } catch (e) {
     notify('资产库加载失败：' + e.message)
   } finally {

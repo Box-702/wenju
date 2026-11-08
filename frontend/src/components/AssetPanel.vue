@@ -66,28 +66,90 @@
 
       <div v-if="lib.loading" class="lib-empty">加载中…</div>
       <template v-else>
-        <div class="lib-label">人物（{{ lib.characters.length }}）</div>
-        <div class="asset-grid">
-          <div v-for="c in lib.characters" :key="c.char_id" class="asset-card" :title="c.appearance || c.name">
-            <img v-if="c.image" :src="c.image" :alt="c.name" loading="lazy" />
-            <div v-else class="asset-placeholder">白模</div>
-            <span class="asset-name">{{ c.name }}</span>
-            <span class="asset-id">{{ c.char_id }}</span>
+        <!-- 概览：一眼看清这部作品攒了多少资产、还缺什么 -->
+        <div class="lib-stats">
+          <span class="stat"><b>{{ lib.characters.length }}</b> 角色</span>
+          <span class="stat"><b>{{ lib.locations.length }}</b> 场景</span>
+          <span class="stat" :class="{ warn: missingCount > 0 }"><b>{{ missingCount }}</b> 缺图</span>
+          <span v-if="lib.visual_style" class="stat">画风 · {{ visualStyleLabel }}</span>
+        </div>
+
+        <!-- 缺什么：后端已经算好了（没定妆照会断人物一致性），直接摊开说 -->
+        <div v-if="lib.warnings.length" class="lib-warn">
+          <div v-for="(w, i) in lib.warnings" :key="i" class="warn-row">
+            <AppIcon name="warning" /> <span>{{ w }}</span>
           </div>
         </div>
 
-        <div class="lib-label">场景（{{ lib.locations.length }}）</div>
+        <div class="lib-label">角色 · 定妆照与音色</div>
         <div class="asset-grid">
-          <div v-for="l in lib.locations" :key="l.loc_id" class="asset-card" :title="l.description || l.name">
-            <img v-if="l.image" :src="l.image" :alt="l.name" loading="lazy" />
-            <div v-else class="asset-placeholder">场景图</div>
-            <span class="asset-name">{{ l.name }}</span>
-            <span class="asset-id">{{ l.loc_id }}</span>
+          <div v-for="c in lib.characters" :key="c.char_id" class="asset-card">
+            <div class="asset-pic">
+              <img v-if="c.image" :src="c.image" :alt="c.name" loading="lazy" />
+              <div v-else class="asset-placeholder">缺定妆照</div>
+              <span class="asset-badge" :class="{ miss: !c.image }">{{ c.image ? '定妆照' : '缺图' }}</span>
+            </div>
+            <div class="asset-meta">
+              <div class="asset-line">
+                <span class="asset-name">{{ c.name }}</span>
+                <span class="asset-id">{{ c.char_id }}</span>
+              </div>
+              <div class="asset-voice" :class="{ none: !c.voice_label }">
+                <AppIcon name="sound" />
+                <span>{{ c.voice_label || '未指定音色' }}</span>
+                <span v-if="c.gender" class="asset-gender">{{ genderZh(c.gender) }}</span>
+                <span v-if="c.confirmed" class="asset-ok" title="音色已人工确认">已确认</span>
+              </div>
+              <p v-if="c.appearance" class="asset-desc" :title="c.appearance">{{ c.appearance }}</p>
+              <div class="asset-nums">台词 {{ c.speech_chars }} 字 · {{ c.scenes }} 场</div>
+            </div>
           </div>
         </div>
+
+        <div class="lib-label">场景 · 场景图</div>
+        <div class="asset-grid">
+          <div v-for="l in lib.locations" :key="l.loc_id" class="asset-card">
+            <div class="asset-pic scene">
+              <img v-if="l.image" :src="l.image" :alt="l.name" loading="lazy" />
+              <div v-else class="asset-placeholder">缺场景图</div>
+              <span class="asset-badge" :class="{ miss: !l.image }">{{ l.image ? '场景图' : '缺图' }}</span>
+            </div>
+            <div class="asset-meta">
+              <div class="asset-line">
+                <span class="asset-name">{{ l.name }}</span>
+                <span class="asset-id">{{ l.loc_id }}</span>
+              </div>
+              <p v-if="l.description" class="asset-desc" :title="l.description">{{ l.description }}</p>
+              <div class="asset-nums">{{ l.scenes }} 场</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 成片与导入的素材：资产库是所有产出的最终归宿 -->
+        <div class="lib-label">成片与素材</div>
+        <div v-if="assets.length" class="asset-grid">
+          <div v-for="a in assets" :key="a.id" class="asset-card">
+            <div class="asset-pic scene">
+              <video v-if="a.kind === 'video'" :src="a.url" muted playsinline preload="metadata"></video>
+              <img v-else-if="a.kind === 'image'" :src="a.url" :alt="a.name" loading="lazy" />
+              <div v-else class="asset-placeholder">{{ a.kind === 'audio' ? '音频' : '素材' }}</div>
+              <span class="asset-badge">{{ kindZh(a.kind) }}</span>
+            </div>
+            <div class="asset-meta">
+              <div class="asset-line">
+                <span class="asset-name" :title="a.name">{{ a.name || '未命名' }}</span>
+              </div>
+              <div class="asset-nums">{{ sourceZh(a.source) }}</div>
+              <a class="asset-dl" :href="a.url" :download="a.name || true" target="_blank" rel="noopener">
+                <AppIcon name="download" /> 下载
+              </a>
+            </div>
+          </div>
+        </div>
+        <div v-else class="lib-empty">还没有成片或导入的素材。出片后成片会出现在这里。</div>
 
         <div v-if="!lib.characters.length && !lib.locations.length" class="lib-empty">
-          还没有资产。点下方「开始制作」，流水线会生成人物白模与场景图。
+          还没有资产。点下方「开始制作」，流水线会生成人物定妆照与场景图。
         </div>
 
         <button class="produce-btn" :disabled="producing" @click="startProduction">
@@ -123,7 +185,36 @@ const props = defineProps({
   section: { type: String, default: 'all' },
 })
 
-const lib = reactive({ loading: false, characters: [], locations: [], warnings: [] })
+const lib = reactive({
+  loading: false, characters: [], locations: [], warnings: [],
+  visual_style: '', project_title: '',
+})
+
+/** 成片与导入的素材（视频/图片/音频）—— 资产库的另一半。 */
+const assets = ref([])
+
+const ASSET_KIND_ZH = { video: '成片', image: '图片', audio: '音频' }
+const kindZh = (k) => ASSET_KIND_ZH[k] || '素材'
+const SOURCE_ZH = { upload: '手动导入', finalize: '流水线产出', url: '外部链接' }
+const sourceZh = (s) => SOURCE_ZH[s] || ''
+
+/** 缺图数量：角色缺定妆照 + 场景缺场景图。这是出片能不能锁住一致性的前提。 */
+const missingCount = computed(
+  () => lib.characters.filter((c) => !c.image).length + lib.locations.filter((l) => !l.image).length,
+)
+
+const VISUAL_STYLE_ZH = {
+  realistic: '实拍写实',
+  anime: '二次元（漫剧）',
+  '3d': '三维动画',
+  ink: '水墨国风',
+}
+const visualStyleLabel = computed(() => VISUAL_STYLE_ZH[lib.visual_style] || lib.visual_style || '')
+
+const GENDER_ZH = { male: '男', female: '女' }
+function genderZh(g) {
+  return GENDER_ZH[String(g || '').toLowerCase()] || ''
+}
 
 // ---- 导入素材 ----
 const importInput = ref(null)
@@ -157,10 +248,18 @@ async function loadLibrary() {
   if (!store.pid) return
   lib.loading = true
   try {
+    // 素材与成片一起拉；失败不阻断资产库主体（人物/场景）
+    try {
+      assets.value = await api(`/projects/${store.pid}/assets`)
+    } catch {
+      assets.value = []
+    }
     const data = await api(`/projects/${store.pid}/library`)
     lib.characters = data.characters || []
     lib.locations = data.locations || []
     lib.warnings = data.warnings || []
+    lib.visual_style = data.visual_style || ''
+    lib.project_title = data.project_title || ''
   } catch (e) {
     notify('资产库加载失败：' + e.message)
   } finally {
@@ -292,40 +391,111 @@ watch(() => store.pid, (pid) => { if (pid) loadLibrary() }, { immediate: true })
   font-size: 11px; font-weight: 650; color: var(--muted);
 }
 .asset-grid {
-  display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
-  padding: 4px 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(152px, 1fr));
+  gap: 10px;
+  margin-bottom: 4px;
 }
+/* 概览：角色数 / 场景数 / 缺图数 */
+.lib-stats {
+  display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 10px;
+}
+.stat {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  padding: 3px 9px; border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, .05); border: 1px solid var(--line);
+  color: var(--muted); font-size: var(--fs-xs);
+}
+.stat b { color: var(--ink); font-weight: 600; font-size: var(--fs-sm); }
+.stat.warn { color: var(--warn); border-color: color-mix(in oklch, var(--warn) 38%, var(--line)); }
+.stat.warn b { color: var(--warn); }
+
+/* 缺图告警：后端算好的事实，直接摊开 */
+.lib-warn {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-bottom: 12px; padding: 8px 10px;
+  border: 1px solid color-mix(in oklch, var(--warn) 32%, var(--line));
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklch, var(--warn) 8%, transparent);
+}
+.warn-row {
+  display: flex; align-items: flex-start; gap: 6px;
+  font-size: var(--fs-xs); color: var(--muted); line-height: 1.5;
+}
+.warn-row .app-ic { width: 13px; height: 13px; flex: none; margin-top: 1px; color: var(--warn); }
+
+/* 资产卡：图 + 档案信息 */
 .asset-card {
-  position: relative; border: 1px solid var(--line); border-radius: 8px;
-  overflow: hidden; background: color-mix(in oklch, var(--ink) 4%, transparent);
-  cursor: default;
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  background: var(--panel); overflow: hidden;
+  transition: border-color 130ms var(--ease), transform 130ms var(--ease);
 }
-.asset-card img {
-  display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover;
-}
+.asset-card:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+.asset-pic { position: relative; aspect-ratio: 3 / 4; background: rgba(0, 0, 0, .28); }
+.asset-pic.scene { aspect-ratio: 16 / 10; }
+.asset-pic img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .asset-placeholder {
-  display: flex; align-items: center; justify-content: center;
-  width: 100%; aspect-ratio: 3 / 4;
-  color: var(--dim); font-size: 11px; letter-spacing: .08em;
+  display: grid; place-items: center; height: 100%;
+  color: var(--dim); font-size: var(--fs-xs);
+  background: repeating-linear-gradient(
+    45deg, rgba(255, 255, 255, .025) 0 8px, transparent 8px 16px
+  );
 }
+.asset-badge {
+  position: absolute; left: 6px; top: 6px;
+  padding: 1px 7px; border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, .55); color: var(--muted);
+  font-size: 10px; letter-spacing: .02em;
+  border: 1px solid var(--line);
+}
+.asset-badge.miss { color: var(--warn); border-color: color-mix(in oklch, var(--warn) 40%, transparent); }
+
+.asset-meta { padding: 8px 9px 9px; display: flex; flex-direction: column; gap: 4px; }
+.asset-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .asset-name {
-  position: absolute; left: 6px; bottom: 5px; right: 6px;
-  font-size: 10.5px; font-weight: 650; color: #fff;
-  text-shadow: 0 1px 3px rgb(0 0 0 / 70%);
+  font-size: var(--fs-md); color: var(--ink); font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.asset-id {
-  position: absolute; right: 4px; top: 4px;
-  font-size: 8.5px; color: rgb(255 255 255 / 85%);
-  background: rgb(0 0 0 / 45%); border-radius: 4px; padding: 1px 4px;
-  font-variant-numeric: tabular-nums;
+.asset-id { font-family: var(--mono); font-size: 10px; color: var(--dim); flex: none; }
+.asset-voice {
+  display: flex; align-items: center; gap: 4px;
+  font-size: var(--fs-xs); color: var(--muted);
+  min-width: 0;
 }
-.lib-empty { padding: 8px 14px; font-size: 11.5px; color: var(--dim); line-height: 1.7; }
+.asset-voice .app-ic { width: 12px; height: 12px; flex: none; opacity: .8; }
+.asset-voice span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asset-voice.none { color: var(--dim); }
+.asset-gender {
+  flex: none; padding: 0 5px; border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, .07); color: var(--muted); font-size: 10px;
+}
+.asset-ok {
+  flex: none; padding: 0 5px; border-radius: var(--radius-full);
+  background: var(--accent-soft); color: var(--accent); font-size: 10px;
+}
+.asset-desc {
+  margin: 0; font-size: var(--fs-xs); color: var(--dim); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.asset-nums { font-size: 10px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.asset-pic video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.asset-dl {
+  display: inline-flex; align-items: center; gap: 4px; align-self: flex-start;
+  margin-top: 2px; padding: 2px 8px; border-radius: var(--radius-md);
+  border: 1px solid var(--line); color: var(--muted);
+  font-size: 11px; text-decoration: none;
+  transition: color 130ms var(--ease), border-color 130ms var(--ease), background 130ms var(--ease);
+}
+.asset-dl:hover { color: var(--ink); border-color: var(--line-strong); background: rgba(255, 255, 255, .06); }
+.asset-dl .app-ic { width: 12px; height: 12px; }
+
+.lib-empty { padding: 8px 14px; font-size: var(--fs-xs); color: var(--dim); line-height: 1.7; }
 .produce-btn {
   background: var(--accent-grad); color: var(--on-accent); border-color: transparent;
   box-shadow: 0 8px 24px rgba(34, 197, 94, .26);
   display: block; width: calc(100% - 24px); margin: 10px 12px 4px;
-  min-height: 38px; border-radius: 9px;
+  min-height: 38px; border-radius: var(--radius-md);
   border: 1px solid transparent;
   cursor: pointer; font-size: 12px; font-weight: 650;
   transition: filter 150ms var(--ease), transform 100ms var(--ease);

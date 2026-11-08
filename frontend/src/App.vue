@@ -255,7 +255,7 @@ onUnmounted(() => {
     <PageShell
       v-if="store.overlay === 'assets'"
       title="资产库"
-      :subtitle="store.pid ? '当前作品的人物与场景' : '先选一个任务'"
+      :subtitle="store.pid ? '角色定妆照 · 角色音色 · 场景图 · 成片' : '先选一部作品'"
       @close="store.overlay = null"
     >
       <AssetPanel section="assets" />

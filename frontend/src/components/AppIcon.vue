@@ -52,6 +52,7 @@ const ICONS = {
   user: '<circle cx="8" cy="5.6" r="2.6" /><path d="M2.8 13.4c.7-2.4 2.8-3.7 5.2-3.7s4.5 1.3 5.2 3.7" />',
   download: '<path d="M8 3.2v7.1M4.8 7.5L8 10.7l3.2-3.2M3 13h10" />',
   eye: '<path d="M1.8 8s2.3-4 6.2-4 6.2 4 6.2 4-2.3 4-6.2 4S1.8 8 1.8 8z" /><circle cx="8" cy="8" r="1.9" />',
+  sound: '<path d="M3.2 6.4h2.1l2.9-2.5v8.2L5.3 9.6H3.2z" /><path d="M10.9 6.3a2.8 2.8 0 0 1 0 3.4M12.7 4.5a5.2 5.2 0 0 1 0 7" />',
 }
 
 const html = computed(() => ICONS[props.name] || ICONS.info)

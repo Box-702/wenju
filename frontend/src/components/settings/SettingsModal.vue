@@ -549,20 +549,33 @@ async function saveLlm() {
   llmFormError.value = ''
   try {
     if (editingLlmRow.value) {
+      const models = [{ name: model, model, enabled: true }]
       await api('/providers/' + editingLlmRow.value.id, 'PATCH', {
         label: llmForm.label.trim(),
         base_url: baseUrl,
-        config: { model },
+        config: { models, model },
         api_key: llmForm.apiKey.trim() || undefined,
       })
     } else {
       const preset = PRESETS[llmForm.preset]
       const name = llmForm.preset === 'custom' ? llmForm.name.trim() : preset.name
       const label = llmForm.label.trim() || preset.label || name
-      await api('/providers', 'POST', {
-        kind: 'llm', name, label, base_url: baseUrl,
-        api_key: llmForm.apiKey.trim(), config: { model }, enabled: true,
-      })
+      // 模型配置存成**清单**：与「模型列表」是同一份数据，加完厂商就能在那儿继续加模型。
+      const models = [{ name: model, model, enabled: true }]
+      // 同名厂商不重复建：用户可以反复「添加厂商」来改配置，而不是攒出两行同名。
+      const same = (llmProviders.value || []).find((p) => p.name === name)
+      if (same) {
+        await api('/providers/' + same.id, 'PATCH', {
+          label, base_url: baseUrl,
+          config: { models, model },
+          api_key: llmForm.apiKey.trim() || undefined,
+        })
+      } else {
+        await api('/providers', 'POST', {
+          kind: 'llm', name, label, base_url: baseUrl,
+          api_key: llmForm.apiKey.trim(), config: { models, model }, enabled: true,
+        })
+      }
     }
     closeLlmForm()
     await Promise.all([loadProviders(), loadModelInfo()])

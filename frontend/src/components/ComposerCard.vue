@@ -52,9 +52,9 @@ const currentProvider = computed(() => {
   return list.find((p) => p.id === prefId) || list.find((p) => p.configured) || null
 })
 
-/** 该供应商名下的模型（模型设置里配的清单；老配置只有单个 model 时视作一条）。 */
-const providerModels = computed(() => {
-  const p = currentProvider.value
+/** 某个厂商名下的模型（模型设置里配的清单；老配置只有单个 model 时视作一条）。 */
+function modelsOf(provider) {
+  const p = provider
   if (!p) return []
   const list = p.config?.models
   if (Array.isArray(list) && list.length) {
@@ -64,23 +64,46 @@ const providerModels = computed(() => {
   }
   const one = p.config?.model
   return one ? [{ name: one, model: one, enabled: true }] : []
+}
+
+const providerModels = computed(() => modelsOf(currentProvider.value))
+
+/** 所有已配置厂商的模型，按厂商分组。
+    用户配了多个厂商时，下拉里能一次看到每家的模型（选中即切到那家）。 */
+const modelGroups = computed(() =>
+  (store.providers || [])
+    .filter((p) => p.configured)
+    .map((p) => ({ provider: p, label: p.label || p.name, models: modelsOf(p) }))
+    .filter((g) => g.models.length),
+)
+
+/** 当前真正生效的那一条（厂商 + 模型），用来在下拉里打勾。
+    优先用对话偏好；没有偏好时按「实际在用的模型名」反查是哪家。 */
+const activeKey = computed(() => {
+  const pref = store.chatPref
+  if (pref?.provider_id && pref?.model_name) return pref.provider_id + '|' + pref.model_name
+  const name = store.modelInfo?.name
+  if (!name) return ''
+  const hit = (store.providers || []).find(
+    (p) => modelsOf(p).some((m) => m.model === name),
+  )
+  return hit ? hit.id + '|' + name : ''
 })
 
-/** 当前生效的模型名（对话偏好里的 model_name，或清单里第一个启用的）。 */
-const activeModelName = computed(() => {
-  const pref = store.chatPref?.model_name
-  if (pref) return pref
-  const on = providerModels.value.find((m) => m.enabled)
-  return on?.model || ''
+/** 生效中的模型来自 .env（界面没指定过）且不在任何厂商的清单里 → 单独列一行，
+    让用户看得见「现在用的是哪个」。 */
+const envModelName = computed(() => {
+  if (activeKey.value) return ''
+  const info = store.modelInfo
+  if (info?.available && info?.name && info.source === 'env') return info.name
+  return ''
 })
 
-async function chooseModel(m) {
-  const p = currentProvider.value
-  if (!p) return
+async function chooseModel(provider, m) {
   modelOpen.value = false
   try {
     await api('/models/preferences', 'PUT', {
-      task_type: 'chat', provider_id: p.id, model_name: m.model, is_default: true,
+      task_type: 'chat', provider_id: provider.id, model_name: m.model, is_default: true,
     })
     await Promise.all([loadModelStatus(), loadChatPref()])
     notify(`对话模型已切到 ${m.name}`, 'ok')
@@ -359,25 +382,38 @@ function onInput(e) {
             <Transition name="ccpop">
               <div v-if="modelOpen" class="cc-model-pop" role="menu">
                 <div class="mp-head">
-                  <span class="mp-provider">{{ currentProvider?.label || currentProvider?.name || '未配置供应商' }}</span>
-                  <span class="mp-hint">模型设置里配的模型</span>
+                  <span class="mp-provider">对话模型</span>
+                  <span class="mp-hint">模型设置里配好的</span>
                 </div>
-                <div class="mp-label">模型</div>
-                <button
-                  v-for="m in providerModels"
-                  :key="m.model"
-                  class="mp-item"
-                  type="button"
-                  role="menuitemradio"
-                  :aria-checked="m.model === activeModelName"
-                  @click.stop="chooseModel(m)"
-                >
-                  <span class="mi-name">{{ m.name }}</span>
-                  <span class="mi-model">{{ m.model }}</span>
-                  <span v-if="m.model === activeModelName" class="mi-check">✓</span>
-                </button>
-                <div v-if="!providerModels.length" class="mp-empty">
-                  这个供应商还没配模型，去「设置 → 模型」里加。
+                <template v-if="envModelName">
+                  <div class="mp-label">当前使用</div>
+                  <div class="mp-item static">
+                    <span class="mi-name">{{ envModelName }}</span>
+                    <span class="mi-model">来自 .env</span>
+                    <span class="mi-check">✓</span>
+                  </div>
+                </template>
+                <template v-for="g in modelGroups" :key="g.provider.id">
+                  <div class="mp-label">{{ g.label }}</div>
+                  <button
+                    v-for="m in g.models"
+                    :key="g.provider.id + ':' + m.model"
+                    class="mp-item"
+                    type="button"
+                    role="menuitemradio"
+                    :aria-checked="g.provider.id + '|' + m.model === activeKey"
+                    @click.stop="chooseModel(g.provider, m)"
+                  >
+                    <span class="mi-name">{{ m.name }}</span>
+                    <span class="mi-model">{{ m.model }}</span>
+                    <span
+                      v-if="g.provider.id + '|' + m.model === activeKey"
+                      class="mi-check"
+                    >✓</span>
+                  </button>
+                </template>
+                <div v-if="!modelGroups.length" class="mp-empty">
+                  还没有配好模型，去「设置 → 模型」里加厂商与模型。
                 </div>
               </div>
             </Transition>
@@ -603,8 +639,10 @@ function onInput(e) {
 .mp-provider { font-size: var(--fs-sm); color: var(--ink); font-weight: 600; }
 .mp-hint { margin-left: auto; font-size: 10px; color: var(--dim); }
 .mp-label {
-  padding: 5px 9px 4px; font-size: 10px; color: var(--dim); letter-spacing: .04em;
+  padding: 7px 9px 4px; font-size: 10px; color: var(--muted);
+  letter-spacing: .04em; font-weight: 600;
 }
+.mp-label:first-of-type { padding-top: 5px; }
 .mp-item {
   display: flex; align-items: baseline; gap: 8px; width: 100%;
   padding: 7px 9px; border-radius: var(--radius-md);
@@ -612,6 +650,8 @@ function onInput(e) {
   font-size: var(--fs-sm); font-family: inherit; text-align: left; cursor: pointer;
 }
 .mp-item:hover { background: rgba(255, 255, 255, .08); color: var(--ink); }
+.mp-item.static { cursor: default; color: var(--muted); }
+.mp-item.static:hover { background: transparent; }
 .mp-item[aria-checked="true"] { color: var(--ink); }
 .mp-item .mi-name { color: var(--ink); font-weight: 500; flex: none; }
 .mp-item .mi-model {

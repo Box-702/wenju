@@ -2,7 +2,7 @@
   <div class="video-player" v-if="url">
     <div class="player-header">
       <span class="player-title">{{ title || '视频预览' }}</span>
-      <button class="btn-ghost" @click="$emit('close')"><AppIcon name="close" /></button>
+      <button class="small ghost" @click="$emit('close')"><AppIcon name="close" /></button>
     </div>
     <video
       ref="videoEl"
@@ -53,7 +53,6 @@ watch(() => props.url, () => { error.value = '' })
   padding: 10px 14px; border-bottom: 1px solid var(--border, #222);
 }
 .player-title { font-size: 13px; font-weight: 600; }
-.btn-ghost { background: none; border: none; color: var(--text2, #999); cursor: pointer; }
 .video-element { width: 100%; display: block; max-height: 400px; background: #000; }
 .player-error { padding: 8px 14px; font-size: 12px; color: var(--red, #f87171); }
 .player-meta {

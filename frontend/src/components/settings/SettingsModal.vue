@@ -50,14 +50,14 @@
                   <span class="dh-actions">
                     <button
                       v-if="chatPref?.provider_id !== selectedProvider.id"
-                      class="mr-btn ok"
+                      class="small ok"
                       :disabled="!selectedProvider.configured"
                       @click="setAsDefault(selectedProvider)"
                     >设为默认</button>
-                    <button class="mr-btn" :disabled="testingId === selectedProvider.id" @click="testProvider(selectedProvider)">
+                    <button class="small ghost" :disabled="testingId === selectedProvider.id" @click="testProvider(selectedProvider)">
                       {{ testingId === selectedProvider.id ? '测试中…' : '测试连接' }}
                     </button>
-                    <button class="mr-btn danger" @click="deleteLlm(selectedProvider)">删除厂商</button>
+                    <button class="small danger" @click="deleteLlm(selectedProvider)">删除厂商</button>
                   </span>
                 </div>
 
@@ -78,7 +78,7 @@
                       class="modal-input"
                       :placeholder="selectedProvider.configured ? '已配置（留空 = 保持不变）' : 'sk-...'"
                     />
-                    <button class="mr-btn" @click="showProviderKey = !showProviderKey">{{ showProviderKey ? '隐藏' : '显示' }}</button>
+                    <button class="small ghost" @click="showProviderKey = !showProviderKey">{{ showProviderKey ? '隐藏' : '显示' }}</button>
                   </div>
                 </div>
                 <div class="form-actions">
@@ -89,14 +89,24 @@
 
                 <div class="detail-sub">
                   <span class="ds-title">模型列表</span>
-                  <button class="add-model" type="button" @click="openAddModel(selectedProvider)">+ 添加模型</button>
+                  <button class="small ghost dashed" type="button" @click="openAddModel(selectedProvider)">+ 添加模型</button>
                 </div>
                 <div class="model-list">
                   <div v-for="(m, mi) in providerModels(selectedProvider)" :key="m.model + mi" class="model-row">
                     <span class="mr-name">{{ m.name }}</span>
                     <span class="mr-id">{{ m.model }}</span>
-                    <button class="mr-btn" title="编辑" @click="editModel(selectedProvider, mi)">改</button>
-                    <button class="mr-btn danger" title="删除" @click="removeModel(selectedProvider, mi)">删</button>
+                    <button
+                      class="icon-btn"
+                      title="改这个模型（显示名 / 模型名）"
+                      aria-label="编辑模型"
+                      @click="editModel(selectedProvider, mi)"
+                    ><AppIcon name="edit" /></button>
+                    <button
+                      class="icon-btn danger"
+                      title="从清单里删掉这个模型"
+                      aria-label="删除模型"
+                      @click="removeModel(selectedProvider, mi)"
+                    ><AppIcon name="trash" /></button>
                     <button
                       class="mr-toggle"
                       :class="{ on: m.enabled }"
@@ -148,7 +158,7 @@
                       class="modal-input"
                       :placeholder="editingLlmRow ? '留空 = 保持不变' : 'sk-...'"
                     />
-                    <button class="mr-btn" @click="showKey = !showKey">{{ showKey ? '隐藏' : '显示' }}</button>
+                    <button class="small ghost" @click="showKey = !showKey">{{ showKey ? '隐藏' : '显示' }}</button>
                   </div>
                 </div>
                 <div v-if="llmFormError" class="test-result err">{{ llmFormError }}</div>
@@ -834,20 +844,33 @@ onMounted(() => {
 .detail-sub .add-model { margin-left: auto; }
 
 /* 模型行的开关 */
+/* 开关：小圆角轨道（不是胶囊），滑块是方块 —— 与全站小圆角语言一致 */
 .mr-toggle {
-  width: 30px; height: 17px; flex: none; padding: 0;
-  border-radius: var(--radius-full); border: 1px solid var(--line);
+  width: 32px; height: 18px; flex: none; padding: 0;
+  border-radius: var(--radius-sm); border: 1px solid var(--line);
   background: rgba(255, 255, 255, .06); cursor: pointer; position: relative;
   transition: background 140ms var(--ease), border-color 140ms var(--ease);
 }
 .mr-toggle span {
-  position: absolute; top: 1px; left: 1px;
-  width: 13px; height: 13px; border-radius: 50%;
+  position: absolute; top: 2px; left: 2px;
+  width: 12px; height: 12px; border-radius: 2px;
   background: var(--dim);
   transition: transform 140ms var(--ease), background 140ms var(--ease);
 }
 .mr-toggle.on { background: var(--accent-soft); border-color: color-mix(in oklch, var(--accent) 45%, transparent); }
-.mr-toggle.on span { transform: translateX(13px); background: var(--accent); }
+.mr-toggle.on span { transform: translateX(14px); background: var(--accent); }
+
+/* 图标按钮：表格行里的小操作（编辑 / 删除） */
+.icon-btn {
+  width: 24px; height: 24px; flex: none; padding: 0;
+  display: inline-grid; place-items: center;
+  border-radius: var(--radius-sm); border: 1px solid transparent;
+  background: transparent; color: var(--dim); cursor: pointer;
+  transition: color 130ms var(--ease), background 130ms var(--ease), border-color 130ms var(--ease);
+}
+.icon-btn:hover { color: var(--ink); background: rgba(255, 255, 255, .07); border-color: var(--line); }
+.icon-btn.danger:hover { color: var(--bad); border-color: color-mix(in oklch, var(--bad) 40%, transparent); }
+.icon-btn .app-ic { width: 13px; height: 13px; }
 
 /* 模型清单：厂商下列出的模型，可逐个启用 / 改 / 删 */
 .model-list { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 4px; }
@@ -860,19 +883,6 @@ onMounted(() => {
 .mr-id {
   font-family: var(--mono); font-size: 10px; color: var(--dim);
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.mr-btn {
-  flex: none; padding: 1px 8px; font-size: 11px; border-radius: var(--radius-sm);
-  background: transparent; border: 1px solid var(--line); color: var(--muted);
-  cursor: pointer;
-}
-.mr-btn:hover { color: var(--ink); border-color: var(--line-strong); }
-.mr-btn.on { color: var(--accent); border-color: color-mix(in oklch, var(--accent) 40%, transparent); }
-.mr-btn.ok { color: var(--accent); border-color: color-mix(in oklch, var(--accent) 40%, transparent); }
-.mr-btn.danger { color: var(--bad); border-color: color-mix(in oklch, var(--bad) 35%, transparent); }
-.add-model {
-  align-self: flex-start; padding: 3px 9px; font-size: 11.5px;
-  border-style: dashed; color: var(--muted);
 }
 .follow-env {
   width: 100%; padding: 8px; border: 1px dashed var(--line-strong); border-radius: var(--radius-md);

@@ -95,10 +95,10 @@ async function submitImport() {
           hidden
           @change="onFileChosen"
         />
-        <button class="btn-small" type="button" @click="openImport">
+        <button class="small ghost" type="button" @click="openImport">
           <AppIcon name="plus" /> 导入技能
         </button>
-        <button class="btn-small" type="button" @click="fileInput?.click()">选文件…</button>
+        <button class="small ghost" type="button" @click="fileInput?.click()">选文件…</button>
       </div>
     </header>
 
@@ -120,7 +120,7 @@ async function submitImport() {
       <div v-if="importOpen" class="import-box">
         <div class="import-head">
           <span>导入技能</span>
-          <button class="btn-small" type="button" @click="importOpen = false">收起</button>
+          <button class="small ghost" type="button" @click="importOpen = false">收起</button>
         </div>
         <textarea
           v-model="importText"
@@ -128,7 +128,7 @@ async function submitImport() {
           rows="10"
           placeholder="粘贴或选择 .md 文件内容，例如：&#10;---&#10;name: my-skill&#10;description: 做什么用&#10;when_to_use: 什么时候用&#10;---&#10;&#10;具体步骤…"
         ></textarea>
-        <button class="btn-small ok" type="button" :disabled="importing" @click="submitImport">
+        <button class="small ok" type="button" :disabled="importing" @click="submitImport">
           {{ importing ? '导入中…' : '确认导入' }}
         </button>
       </div>

@@ -5,12 +5,12 @@
         <span class="ws-eyebrow">FILES</span>
         <span class="ws-title">工作区</span>
       </div>
-      <button class="btn-tiny" @click="onRefresh" title="刷新" aria-label="刷新">↻</button>
+      <button class="small ghost" @click="onRefresh" title="刷新" aria-label="刷新">↻</button>
     </div>
 
     <div v-if="!tree" class="ws-empty">
       <p>未配置工作目录</p>
-      <button class="btn-small" @click="$emit('open-workspace')">设置工作目录</button>
+      <button class="small ghost" @click="$emit('open-workspace')">设置工作目录</button>
     </div>
 
     <div v-else class="ws-content">
@@ -64,19 +64,8 @@ function onRefresh() {
 .ws-header > div { display: flex; flex-direction: column; gap: 4px; }
 .ws-eyebrow { color: var(--cyan); font: 700 9px/1 var(--mono); letter-spacing: .14em; }
 .ws-title { font-size: 13px; font-weight: 650; color: var(--ink); }
-.btn-tiny {
-  background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: var(--radius-sm);
-  cursor: pointer; font-size: 15px; padding: 0; width: 25px; height: 25px;
-  opacity: .8; display: grid; place-items: center;
-}
-.btn-tiny:hover { opacity: 1; }
 
 .ws-empty { padding: 20px 12px; text-align: center; color: var(--text2, #666); font-size: 12px; }
-.btn-small {
-  margin-top: 8px; padding: 5px 12px; border: 1px solid var(--border, #333);
-  border-radius: var(--radius-sm); background: none; color: var(--text, #eee); cursor: pointer; font-size: 11px;
-}
-.btn-small:hover { border-color: var(--gold); color: var(--ink); background: color-mix(in oklch, var(--gold) 6%, transparent); }
 
 .ws-content { flex: 1; overflow-y: auto; padding: 4px 0; }
 .ws-root { padding: 4px 12px; font-size: 10px; color: var(--text2, #555); word-break: break-all; }

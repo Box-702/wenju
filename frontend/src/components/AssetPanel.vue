@@ -57,10 +57,10 @@
             hidden
             @change="onImportChosen"
           />
-          <button class="btn-tiny" :disabled="importing" @click="importInput?.click()" title="导入图片/视频">
+          <button class="small ghost" :disabled="importing" @click="importInput?.click()" title="导入图片/视频">
             <AppIcon name="upload" /> {{ importing ? '导入中…' : '导入' }}
           </button>
-          <button class="btn-tiny" @click="loadLibrary" title="刷新" aria-label="刷新">⟳</button>
+          <button class="small ghost" @click="loadLibrary" title="刷新" aria-label="刷新">⟳</button>
         </span>
       </div>
 
@@ -121,7 +121,7 @@
                   <span v-if="c.gender" class="asset-gender">{{ genderZh(c.gender) }}</span>
                   <span v-if="c.confirmed" class="asset-ok" title="音色已人工确认">已确认</span>
                   <button
-                    class="voice-play"
+                    class="small ghost"
                     type="button"
                     title="试听这一句"
                     :disabled="previewing === c.char_id"
@@ -560,12 +560,6 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
   border-color: color-mix(in oklch, var(--gold) 45%, var(--line));
   color: var(--gold); background: var(--gold-soft);
 }
-.btn-tiny {
-  background: transparent; border: none; border-radius: 4px;
-  cursor: pointer; font-size: 12px; padding: 4px 6px;
-  opacity: .55; color: var(--muted); transition: opacity 120ms, background 120ms;
-}
-.btn-tiny:hover { opacity: 1; background: color-mix(in oklch, var(--ink) 8%, transparent); }
 
 /* 新任务入口 */
 .new-task {
@@ -729,13 +723,6 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
   border-bottom: 1px dashed var(--line-strong);
 }
 .voice-btn:hover { color: var(--ink); border-bottom-color: var(--accent); }
-.voice-play {
-  flex: none; padding: 0 6px; font-size: 10px; border-radius: var(--radius-sm);
-  background: transparent; border: 1px solid var(--line); color: var(--dim);
-  cursor: pointer;
-}
-.voice-play:hover { color: var(--ink); border-color: var(--line-strong); }
-.voice-play:disabled { opacity: .5; cursor: default; }
 
 /* 音色选择浮层 */
 .voice-pop {

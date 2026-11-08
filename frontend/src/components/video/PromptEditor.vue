@@ -7,7 +7,7 @@
         <div class="eyebrow">HUMAN REVIEW</div>
         <h4>审阅镜头提示词</h4>
       </div>
-      <button class="btn-ghost" aria-label="关闭 Prompt 审阅" @click="$emit('close')">关闭</button>
+      <button class="ghost" aria-label="关闭 Prompt 审阅" @click="$emit('close')">关闭</button>
     </div>
 
     <div class="shot-info">
@@ -107,10 +107,10 @@
     </div>
 
     <div class="editor-actions">
-      <button class="btn-ghost" @click="$emit('close')">取消</button>
-      <button class="btn" :disabled="!editedPrompt.trim()" @click="review('needs_revision')">标记需修改</button>
-      <button class="btn" :disabled="!editedPrompt.trim()" @click="review('save')">保存草稿</button>
-      <button class="btn ok" :disabled="!editedPrompt.trim()" @click="review('approve')">
+      <button class="ghost" @click="$emit('close')">取消</button>
+      <button class="ghost" :disabled="!editedPrompt.trim()" @click="review('needs_revision')">标记需修改</button>
+      <button class="ghost" :disabled="!editedPrompt.trim()" @click="review('save')">保存草稿</button>
+      <button class="ok" :disabled="!editedPrompt.trim()" @click="review('approve')">
         批准并解锁出片
       </button>
     </div>
@@ -192,7 +192,6 @@ function formatTime(value) {
 .editor-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .editor-header h4 { margin: 3px 0 0; font-size: 15px; }
 .eyebrow { color: var(--gold); font: 700 9px/1 var(--mono); letter-spacing: .12em; }
-.btn-ghost { background: transparent; border: 1px solid var(--line); color: var(--muted); cursor: pointer; }
 
 .shot-info { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 13px; }
 .shot-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -276,12 +275,6 @@ function formatTime(value) {
 .field-foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 5px; color: var(--dim); font-size: 10.5px; line-height: 1.4; }
 .char-count { flex: none; font-variant-numeric: tabular-nums; }
 .editor-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-.btn {
-  padding: 7px 12px; background: var(--code-bg); border: 1px solid var(--line);
-  border-radius: var(--radius-sm); color: var(--text, #eee); cursor: pointer; font-size: 12px;
-}
-.btn.ok { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
 
 @media (max-width: 620px) {
   .field-foot { display: block; }

@@ -3,18 +3,18 @@
     <div class="shot-header">
       <h4><span class="section-mark">03</span> 镜头列表</h4>
       <div class="shot-actions">
-        <button class="btn-small" @click="$emit('refresh')">刷新</button>
+        <button class="small ghost" @click="$emit('refresh')">刷新</button>
         <button
           v-if="pendingShots.length"
-          class="btn-small"
+          class="small ghost"
           @click="selectAllPending"
         >{{ allPendingSelected ? '取消全选' : '全选待审阅' }}</button>
         <button
           v-if="selectedIds.length"
-          class="btn-small ok"
+          class="small ok"
           @click="approveSelected"
         >批准选中（{{ selectedIds.length }}）</button>
-        <button class="btn-small ok" @click="$emit('generate-all')" v-if="shots.length">
+        <button class="small ok" @click="$emit('generate-all')" v-if="shots.length">
           全部生成视频
         </button>
       </div>
@@ -83,17 +83,17 @@
             </div>
             <div class="shot-actions-row">
               <button
-                class="btn-tiny ok"
+                class="small ok"
                 @click.stop="$emit('generate-video', shot)"
                 v-if="shot.video_prompt && shot.prompt_status === 'approved' && !shot.video_url"
               >生成视频</button>
               <button
-                class="btn-tiny"
+                class="small ghost"
                 @click.stop="$emit('play-video', shot)"
                 v-if="shot.video_url"
               ><AppIcon name="play" /> 播放</button>
               <button
-                class="btn-tiny"
+                class="small ghost"
                 @click.stop="$emit('edit-prompt', shot)"
               >编辑提示词</button>
             </div>
@@ -224,10 +224,6 @@ function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + '...' : s }
 .shot-header h4 { margin: 0; font-size: 14px; }
 .section-mark { color: var(--gold); font: 700 9px/1 var(--mono); letter-spacing: .08em; }
 .shot-actions { display: flex; gap: 6px; }
-.btn-small { padding: 5px 12px; background: var(--code-bg, #111); border: 1px solid var(--border, #333); border-radius: var(--radius-sm); color: var(--text, #eee); cursor: pointer; font-size: 11px; }
-.btn-small.ok { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
-.btn-tiny { padding: 3px 8px; background: none; border: 1px solid var(--border, #333); border-radius: 4px; color: var(--text2, #999); cursor: pointer; font-size: 10px; }
-.btn-tiny.ok { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
 
 .empty-state { text-align: center; padding: 40px 20px; color: var(--text2, #666); }
 .empty-state .hint { font-size: 12px; color: var(--text2, #555); }

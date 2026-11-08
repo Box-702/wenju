@@ -322,7 +322,7 @@ function formatDate(iso) {
   align-items: center;
   gap: 12px;
   padding: 14px;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   border: 1px solid rgba(255, 255, 255, 0.09);
   background: rgba(255, 255, 255, 0.045);
   color: inherit;
@@ -347,7 +347,7 @@ function formatDate(iso) {
 .new-plus {
   width: 34px;
   height: 34px;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   display: grid;
   place-items: center;
   background: rgba(255, 255, 255, 0.09);
@@ -368,7 +368,7 @@ function formatDate(iso) {
   width: 42px;
   height: 42px;
   flex: none;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   display: grid;
   place-items: center;
   background: linear-gradient(135deg, rgba(59, 130, 246, 0.35), rgba(147, 51, 234, 0.35));
@@ -403,7 +403,7 @@ function formatDate(iso) {
   width: 22px;
   height: 22px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   display: grid;
   place-items: center;
   background: rgba(255, 255, 255, 0.06);

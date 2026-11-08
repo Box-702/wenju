@@ -388,13 +388,13 @@ onUnmounted(() => {
 }
 .drop-zone {
   display: flex; flex-direction: column; align-items: center; gap: 12px;
-  padding: 40px 60px; border-radius: 10px;
+  padding: 40px 60px; border-radius: var(--radius-md);
   border: 1px dashed var(--line-strong);
   background: var(--panel);
   box-shadow: var(--shadow-3);
 }
 .drop-icon {
-  display: grid; place-items: center; width: 60px; height: 60px; border-radius: 10px;
+  display: grid; place-items: center; width: 60px; height: 60px; border-radius: var(--radius-md);
   border: 1px solid var(--line-strong);
   color: var(--gold); font: 500 12px/1 var(--mono); letter-spacing: 0.12em;
   background: transparent;

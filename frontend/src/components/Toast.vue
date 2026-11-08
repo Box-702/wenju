@@ -31,7 +31,7 @@ const TYPE_ICON = { error: 'warning', ok: 'check', info: 'info' }
   padding: 9px 12px;
   background: var(--panel2);
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   box-shadow: 0 14px 40px oklch(0 0 0 / 0.4);
   font-size: 12.5px; color: var(--ink);
   animation: toast-in 180ms var(--ease);
@@ -49,7 +49,7 @@ const TYPE_ICON = { error: 'warning', ok: 'check', info: 'info' }
 .close {
   display: inline-flex; align-items: center;
   background: transparent; border: none; color: var(--muted); cursor: pointer;
-  font-size: 11px; line-height: 1; padding: 3px; border-radius: 6px; flex: none;
+  font-size: 11px; line-height: 1; padding: 3px; border-radius: var(--radius-sm); flex: none;
 }
 .close:hover { color: var(--ink); background: color-mix(in oklch, var(--ink) 8%, transparent); }
 

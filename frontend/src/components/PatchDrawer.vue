@@ -197,7 +197,7 @@ function regenerateWith(txt) { resumeReview(runId.value, 'regenerate', { feedbac
 .d-title { flex: 1; min-width: 0; }
 .d-title h3 { margin: 0 0 2px; font-size: 14px; }
 .x {
-  width: 28px; height: 28px; padding: 0; border-radius: 8px; flex: none;
+  width: 28px; height: 28px; padding: 0; border-radius: var(--radius-sm); flex: none;
   background: transparent; border: 1px solid var(--line); color: var(--muted);
   display: inline-grid; place-items: center; font-size: 12px;
 }
@@ -213,7 +213,7 @@ function regenerateWith(txt) { resumeReview(runId.value, 'regenerate', { feedbac
 .scene-head .cnt { font-size: 11px; color: var(--dim); font-weight: 500; }
 
 /* 评审打分 + 一致性保障 */
-.review-sec { background: color-mix(in oklch, var(--panel2) 55%, transparent); border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px 10px; }
+.review-sec { background: color-mix(in oklch, var(--panel2) 55%, transparent); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 9px 12px 10px; }
 .review-sec .scene-head { border-bottom: 1px solid color-mix(in oklch, var(--ink) 9%, transparent); margin-bottom: 8px; }
 .rv-top { display: flex; align-items: center; gap: 8px; }
 .rv-score { font-size: 18px; font-weight: 700; }
@@ -240,7 +240,7 @@ function regenerateWith(txt) { resumeReview(runId.value, 'regenerate', { feedbac
 .rv-cat { font-weight: 600; }
 .rv-sum { margin: 8px 0 0; font-size: 11.5px; color: var(--dim); }
 .op {
-  border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--radius-md); padding: 8px 10px;
   margin-bottom: 6px; background: var(--code-bg);
   transition: border-color var(--dur) var(--ease);
 }
@@ -252,7 +252,7 @@ function regenerateWith(txt) { resumeReview(runId.value, 'regenerate', { feedbac
 .edlbl { color: var(--warn); font-size: 11px; flex: none; }
 .inline-edit {
   flex: 1; min-width: 0; background: var(--panel2); border: 1px solid color-mix(in oklch, var(--warn) 45%, var(--line));
-  border-radius: 8px; color: var(--ink); padding: 4px 8px; font-size: 12.5px; font-family: inherit;
+  border-radius: var(--radius-sm); color: var(--ink); padding: 4px 8px; font-size: 12.5px; font-family: inherit;
 }
 .inline-edit:focus { outline: none; border-color: color-mix(in oklch, var(--accent) 45%, var(--line)); }
 

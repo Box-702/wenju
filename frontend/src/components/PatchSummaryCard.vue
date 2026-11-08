@@ -74,7 +74,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
 .summary:hover .detail { color: var(--ink); }
 .review {
   display: flex; align-items: center; gap: 8px; margin-top: 10px;
-  padding: 6px 8px; border-radius: 8px; background: color-mix(in oklch, var(--ok) 8%, transparent);
+  padding: 6px 8px; border-radius: var(--radius-sm); background: color-mix(in oklch, var(--ok) 8%, transparent);
 }
 .review.bad { background: color-mix(in oklch, var(--bad) 9%, transparent); }
 .review .score { font-weight: 700; color: var(--ok); font-size: 14px; }

@@ -247,7 +247,7 @@ watch(() => store.videoBatch?.status, (st) => {
 .cp-tab {
   height: 26px;
   padding: 0 11px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   border: 1px solid transparent;
   background: transparent;
   color: var(--muted);
@@ -269,7 +269,7 @@ watch(() => store.videoBatch?.status, (st) => {
   width: 26px;
   height: 26px;
   padding: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   display: grid;
   place-items: center;
   background: transparent;
@@ -327,7 +327,7 @@ watch(() => store.videoBatch?.status, (st) => {
 
 .ol-item {
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: rgba(255, 255, 255, .04);
   border: 1px solid var(--line);
 }
@@ -337,7 +337,7 @@ watch(() => store.videoBatch?.status, (st) => {
 .ol-no {
   flex: none;
   width: 18px; height: 18px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   display: grid; place-items: center;
   background: rgba(255, 255, 255, .08);
   color: var(--muted);
@@ -364,7 +364,7 @@ watch(() => store.videoBatch?.status, (st) => {
 
 .clip {
   padding: 5px 9px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, .05);
   border: 1px solid var(--line);
   color: var(--muted);
@@ -380,13 +380,13 @@ watch(() => store.videoBatch?.status, (st) => {
 .clip.active { color: var(--ink); background: rgba(255, 255, 255, .13); }
 
 .clip-player { display: flex; flex-direction: column; gap: 8px; }
-.clip-player :deep(video) { width: 100%; border-radius: 10px; }
+.clip-player :deep(video) { width: 100%; border-radius: var(--radius-md); }
 
 .cp-dl {
   display: inline-flex; align-items: center; gap: 5px;
   align-self: flex-start;
   padding: 5px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, .06);
   border: 1px solid var(--line);
   color: var(--muted);
@@ -404,7 +404,7 @@ watch(() => store.videoBatch?.status, (st) => {
 .asset-row {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 9px;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: rgba(255, 255, 255, .035);
   border: 1px solid transparent;
 }

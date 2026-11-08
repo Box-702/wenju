@@ -243,7 +243,7 @@ select.ed-loc:hover, select.ed-spk:hover { background: color-mix(in oklch, var(-
 select.ed-loc:focus, select.ed-spk:focus { outline: none; box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 30%, transparent); }
 
 /* 删除 ✕：悬停该节拍才出现，贴在左侧留白，不挤正文 */
-.ed-row { position: relative; border-radius: 6px; transition: background var(--dur) var(--ease); }
+.ed-row { position: relative; border-radius: var(--radius-sm); transition: background var(--dur) var(--ease); }
 .ed-row:hover { background: color-mix(in oklch, var(--ink) 4%, transparent); }
 .ed-row .mini.del { position: absolute; left: -24px; top: 6px; opacity: 0; background: transparent; border: none; color: var(--dim); padding: 0 4px; font-size: 11px; }
 .ed-row:hover .mini.del { opacity: 1; }
@@ -252,7 +252,7 @@ select.ed-loc:focus, select.ed-spk:focus { outline: none; box-shadow: 0 0 0 1px 
 .ed-beats-empty { color: var(--dim); font-size: 12px; margin: 10px 0 4px; }
 .ed-add { display: flex; gap: 4px; margin: 4px 0 0; }
 .mini { background: transparent; border: none; color: var(--muted); padding: 2px 6px; font-size: 11px;
-  font-weight: 500; line-height: 1.6; cursor: pointer; border-radius: 6px;
+  font-weight: 500; line-height: 1.6; cursor: pointer; border-radius: var(--radius-sm);
   transition: color var(--dur) var(--ease), background var(--dur) var(--ease); }
 .mini:hover { color: var(--ink); background: color-mix(in oklch, var(--ink) 5%, transparent); }
 .ed-add .mini { color: var(--muted); }

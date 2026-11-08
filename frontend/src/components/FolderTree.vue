@@ -46,7 +46,7 @@ const props = defineProps({
 
 <style scoped>
 .ftree { font-size: 12.5px; line-height: 1.5; }
-.frow { display: flex; align-items: center; gap: 7px; padding: 4px 6px; border-radius: 7px; min-width: 0; }
+.frow { display: flex; align-items: center; gap: 7px; padding: 4px 6px; border-radius: var(--radius-sm); min-width: 0; }
 .frow:hover { background: color-mix(in oklch, var(--ink) 4%, transparent); }
 .frow .ic { width: 15px; height: 15px; color: color-mix(in oklch, var(--ink) 70%, var(--muted)); flex: none; }
 .frow.root { font-weight: 650; }

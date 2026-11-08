@@ -117,7 +117,7 @@ watch(() => store.messages.length, () => { nearBottom.value = true; toBottom() }
   padding: 0 var(--space-4);
   background: rgba(255, 255, 255, .05);
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   color: var(--muted);
   font-size: var(--fs-sm);
   font-weight: 400;
@@ -130,7 +130,7 @@ watch(() => store.messages.length, () => { nearBottom.value = true; toBottom() }
 }
 .ee-focus {
   margin-top: var(--space-3); min-height: 42px; padding: 0 var(--space-6);
-  border-radius: 10px; font-size: var(--fs-md); font-weight: 500;
+  border-radius: var(--radius-md); font-size: var(--fs-md); font-weight: 500;
   background: rgba(255, 255, 255, .07);
   border-color: var(--line-strong);
 }

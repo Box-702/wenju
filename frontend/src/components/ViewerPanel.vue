@@ -338,7 +338,7 @@ function onSceneDragEnd() {
 .export-menu {
   position: absolute; right: 0; top: calc(100% + 4px); z-index: 20;
   display: flex; flex-direction: column; gap: 2px; min-width: 120px;
-  background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 4px;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 4px;
   box-shadow: 0 10px 28px oklch(0.03 0.01 270 / 0.32);
   animation: menu-pop 200ms var(--ease-bounce) both;
   transform-origin: top right;
@@ -371,7 +371,7 @@ function onSceneDragEnd() {
 }
 .foot-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .foot-msg { color: var(--ok); font-size: 11.5px; }
-.foot-ws { background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.foot-ws { background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 8px 10px; }
 .mile { display: inline-flex; align-items: center; font-size: 11px; font-weight: 500; padding: 1px 7px;
   border-radius: 3px; border: none; color: var(--muted); background: color-mix(in oklch, var(--ink) 5%, transparent); }
 .mile-final { color: var(--ok); background: color-mix(in oklch, var(--ok) 12%, transparent); }
@@ -387,7 +387,7 @@ function onSceneDragEnd() {
 }
 .sl-item {
   display: flex; align-items: center; gap: 6px;
-  padding: 6px 8px; border-radius: 7px; cursor: grab;
+  padding: 6px 8px; border-radius: var(--radius-sm); cursor: grab;
   font-size: 12px; color: var(--muted);
   transition: all 160ms var(--ease);
   animation: slide-in-left 250ms var(--ease) both;

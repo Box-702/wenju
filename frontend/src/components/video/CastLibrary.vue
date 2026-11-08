@@ -256,7 +256,7 @@ watch(() => props.open, (open) => { if (open) load() })
   display: flex; align-items: center; justify-content: center;
 }
 .lib {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg);
   width: 920px; max-width: 94vw; max-height: 88vh; overflow-y: auto;
   padding: 18px 20px; box-shadow: 0 20px 60px oklch(0 0 0 / 0.5);
 }
@@ -266,7 +266,7 @@ h4 { margin: 18px 0 8px; font-size: 13px; color: var(--muted); font-weight: 500;
 .sub { color: var(--muted); font-size: 12px; }
 .head-actions { display: flex; gap: 6px; }
 .warns {
-  margin-top: 10px; padding: 8px 10px; border-radius: 8px; font-size: 12px;
+  margin-top: 10px; padding: 8px 10px; border-radius: var(--radius-sm); font-size: 12px;
   background: oklch(0.85 0.12 80 / 0.12); border: 1px solid oklch(0.8 0.12 80 / 0.35);
   color: var(--ink); display: flex; flex-direction: column; gap: 4px;
 }
@@ -276,11 +276,11 @@ h4 { margin: 18px 0 8px; font-size: 13px; color: var(--muted); font-weight: 500;
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .card {
   display: flex; gap: 10px; padding: 10px; border: 1px solid var(--line);
-  border-radius: 10px; background: var(--bg, transparent);
+  border-radius: var(--radius-md); background: var(--bg, transparent);
 }
 .portrait {
   position: relative;
-  width: 76px; height: 96px; flex: 0 0 auto; border-radius: 8px; overflow: hidden;
+  width: 76px; height: 96px; flex: 0 0 auto; border-radius: var(--radius-sm); overflow: hidden;
   background: oklch(0 0 0 / 0.15); display: flex; align-items: center; justify-content: center;
 }
 .portrait img { width: 100%; height: 100%; object-fit: cover; }
@@ -313,7 +313,7 @@ h4 { margin: 18px 0 8px; font-size: 13px; color: var(--muted); font-weight: 500;
 .row label { font-size: 10.5px; color: var(--muted); }
 .row select {
   font-size: 11.5px; padding: 2px 4px; max-width: 118px;
-  background: transparent; color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+  background: transparent; color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius-sm);
 }
 .play {
   font-size: 11px; padding: 2px 8px; border-radius: 3px; cursor: pointer;
@@ -325,7 +325,7 @@ h4 { margin: 18px 0 8px; font-size: 13px; color: var(--muted); font-weight: 500;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .ghost {
-  background: transparent; border: 1px solid var(--line); border-radius: 8px;
+  background: transparent; border: 1px solid var(--line); border-radius: var(--radius-sm);
   padding: 4px 10px; font-size: 12px; color: var(--muted); cursor: pointer;
 }
 .ghost:hover { color: var(--ink); border-color: var(--accent); }

@@ -65,7 +65,7 @@ function onRefresh() {
 .ws-eyebrow { color: var(--cyan); font: 700 9px/1 var(--mono); letter-spacing: .14em; }
 .ws-title { font-size: 13px; font-weight: 650; color: var(--ink); }
 .btn-tiny {
-  background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: 6px;
+  background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: var(--radius-sm);
   cursor: pointer; font-size: 15px; padding: 0; width: 25px; height: 25px;
   opacity: .8; display: grid; place-items: center;
 }
@@ -74,7 +74,7 @@ function onRefresh() {
 .ws-empty { padding: 20px 12px; text-align: center; color: var(--text2, #666); font-size: 12px; }
 .btn-small {
   margin-top: 8px; padding: 5px 12px; border: 1px solid var(--border, #333);
-  border-radius: 5px; background: none; color: var(--text, #eee); cursor: pointer; font-size: 11px;
+  border-radius: var(--radius-sm); background: none; color: var(--text, #eee); cursor: pointer; font-size: 11px;
 }
 .btn-small:hover { border-color: var(--gold); color: var(--ink); background: color-mix(in oklch, var(--gold) 6%, transparent); }
 

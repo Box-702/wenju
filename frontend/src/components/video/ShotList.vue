@@ -224,7 +224,7 @@ function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + '...' : s }
 .shot-header h4 { margin: 0; font-size: 14px; }
 .section-mark { color: var(--gold); font: 700 9px/1 var(--mono); letter-spacing: .08em; }
 .shot-actions { display: flex; gap: 6px; }
-.btn-small { padding: 5px 12px; background: var(--code-bg, #111); border: 1px solid var(--border, #333); border-radius: 5px; color: var(--text, #eee); cursor: pointer; font-size: 11px; }
+.btn-small { padding: 5px 12px; background: var(--code-bg, #111); border: 1px solid var(--border, #333); border-radius: var(--radius-sm); color: var(--text, #eee); cursor: pointer; font-size: 11px; }
 .btn-small.ok { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
 .btn-tiny { padding: 3px 8px; background: none; border: 1px solid var(--border, #333); border-radius: 4px; color: var(--text2, #999); cursor: pointer; font-size: 10px; }
 .btn-tiny.ok { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
@@ -235,7 +235,7 @@ function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + '...' : s }
 .scene-group { margin-bottom: 8px; }
 .scene-label {
   display: flex; align-items: center; gap: 8px; padding: 8px 10px;
-  background: rgba(255,255,255,.02); border-radius: 6px; cursor: pointer;
+  background: rgba(255,255,255,.02); border-radius: var(--radius-sm); cursor: pointer;
   font-size: 12px; font-weight: 600;
 }
 .scene-label:hover { background: rgba(255,255,255,.04); }
@@ -246,7 +246,7 @@ function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + '...' : s }
 .scene-shots { padding: 4px 0 4px 16px; }
 .shot-card {
   padding: 10px; margin-bottom: 6px; background: rgba(255,255,255,.02);
-  border: 1px solid var(--border, #222); border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--border, #222); border-radius: var(--radius-sm); cursor: pointer;
   transition: border-color .15s;
 }
 .shot-card:hover { border-color: var(--line-strong); background: color-mix(in oklch, var(--ink) 3%, transparent); }

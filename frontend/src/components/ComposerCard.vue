@@ -165,7 +165,7 @@ function autoSize(e) {
 .cc-plus {
   width: 48px;
   height: 48px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   display: grid;
   place-items: center;
   color: rgba(255, 255, 255, 0.82);
@@ -184,7 +184,7 @@ function autoSize(e) {
   left: 0;
   min-width: 200px;
   padding: 6px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: rgba(22, 22, 28, 0.97);
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: var(--shadow-3);
@@ -273,7 +273,7 @@ function autoSize(e) {
   width: 32px;
   height: 32px;
   padding: 0;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   display: grid;
   place-items: center;
   background: transparent;

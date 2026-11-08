@@ -230,7 +230,7 @@ onUnmounted(() => clearTimeout(copiedTimer))
   max-width: min(82%, 620px); padding: 10px 15px;
   background: rgba(255, 255, 255, .08);
   border: 1px solid var(--line);
-  border-radius: 14px; border-bottom-right-radius: 5px;
+  border-radius: var(--radius-lg); border-bottom-right-radius: 5px;
   backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass);
   box-shadow: var(--shadow-2);
 }
@@ -238,7 +238,7 @@ onUnmounted(() => clearTimeout(copiedTimer))
 
 /* 用户消息附带的图片 */
 .cmd-images { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; margin-bottom: 6px; }
-.cmd-image { display: block; border-radius: 9px; overflow: hidden; border: 1px solid var(--line); max-width: min(60%, 280px); }
+.cmd-image { display: block; border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--line); max-width: min(60%, 280px); }
 .cmd-image img { display: block; max-height: 180px; width: auto; max-width: 100%; object-fit: cover; }
 
 /* 工作步骤面板 */
@@ -279,7 +279,7 @@ onUnmounted(() => clearTimeout(copiedTimer))
 .thinking-header {
   display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px;
   cursor: pointer; user-select: none; font-size: 12px;
-  color: var(--dim); border-radius: 8px;
+  color: var(--dim); border-radius: var(--radius-sm);
 }
 .thinking-header:hover { background: color-mix(in oklch, var(--ink) 3%, transparent); }
 .thinking-icon { flex: none; }
@@ -306,7 +306,7 @@ onUnmounted(() => clearTimeout(copiedTimer))
 }
 .meta-spacer { flex: 1; }
 .meta-btn {
-  height: 22px; padding: 0 8px; border-radius: 6px;
+  height: 22px; padding: 0 8px; border-radius: var(--radius-sm);
   background: transparent; border: 1px solid transparent;
   color: var(--dim); font-size: 11px; font-family: inherit; cursor: pointer;
   transition: color 130ms var(--ease), background 130ms var(--ease);

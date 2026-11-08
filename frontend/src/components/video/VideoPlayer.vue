@@ -46,7 +46,7 @@ watch(() => props.url, () => { error.value = '' })
 <style scoped>
 .video-player {
   background: var(--panel, #1a1a2e); border: 1px solid var(--border, #333);
-  border-radius: 10px; overflow: hidden;
+  border-radius: var(--radius-md); overflow: hidden;
 }
 .player-header {
   display: flex; justify-content: space-between; align-items: center;

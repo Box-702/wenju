@@ -577,9 +577,7 @@ onMounted(() => {
 }
 .active-line strong { color: var(--ink); }
 .active-src {
-  margin-left: auto; font-size: var(--fs-xs); padding: 1px 7px;
-  border-radius: var(--radius-full); color: var(--muted);
-  background: rgba(255, 255, 255, .07);
+  margin-left: auto; font-size: var(--fs-xs); color: var(--dim);
 }
 
 .llm-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
@@ -598,9 +596,7 @@ onMounted(() => {
 .llm-name { font-size: var(--fs-md); font-weight: 600; color: var(--ink); }
 .llm-meta { font-size: var(--fs-xs); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .using-badge {
-  align-self: flex-start; font-size: var(--fs-xs); padding: 1px 8px; border-radius: var(--radius-full);
-  color: var(--accent); border: none;
-  background: color-mix(in oklch, var(--accent) 14%, transparent);
+  align-self: flex-start; font-size: var(--fs-xs); color: var(--accent);
 }
 .llm-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .follow-env {

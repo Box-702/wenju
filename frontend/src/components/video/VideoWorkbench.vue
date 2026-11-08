@@ -141,7 +141,7 @@ function formatVersionTime(value) {
         <span class="ctrl-label">资产</span>
         <button
           class="seg-btn"
-          style="padding: 4px 10px; border: 1px solid var(--line); border-radius: 7px; background: transparent; cursor: pointer"
+          style="padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: transparent; cursor: pointer"
           title="角色定妆图、音色、性别与场景图的对照表——配音前先在这里核对"
           @click="showLibrary = true"
         >资产库</button>
@@ -362,7 +362,7 @@ function formatVersionTime(value) {
 .ctrl { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .ctrl-group { display: flex; align-items: center; gap: 8px; }
 .ctrl-label { font-size: 11px; color: var(--dim); font-weight: 600; }
-.seg { display: flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; }
 .seg-btn {
   background: transparent; border: none; color: var(--muted);
   padding: 5px 12px; font-size: 12px; cursor: pointer; transition: all 150ms;
@@ -371,19 +371,19 @@ function formatVersionTime(value) {
 .seg-btn.active { background: var(--select); color: var(--ink); font-weight: 600; }
 .res-select {
   background: var(--panel2); color: var(--ink); border: 1px solid var(--line);
-  border-radius: 8px; padding: 5px 8px; font-size: 12px;
+  border-radius: var(--radius-sm); padding: 5px 8px; font-size: 12px;
 }
 .start-btn {
   background: var(--accent-grad); color: var(--on-accent); border-color: transparent;
   box-shadow: 0 8px 24px rgba(34, 197, 94, .26);
   margin-left: auto; border: none;
-  border-radius: 9px; padding: 8px 16px; font-size: 12.5px; font-weight: 650; cursor: pointer;
+  border-radius: var(--radius-md); padding: 8px 16px; font-size: 12.5px; font-weight: 650; cursor: pointer;
 }
 .start-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .prompt-gate {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md);
   background: color-mix(in oklch, var(--panel2) 70%, transparent);
 }
 .prompt-gate strong { display: block; color: var(--ink); font-size: 12px; }
@@ -392,7 +392,7 @@ function formatVersionTime(value) {
 .prompt-count .approved { color: var(--ok); }
 
 .film {
-  border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px;
   background: var(--panel2); display: flex; flex-direction: column; gap: 10px;
 }
 .film-head { display: flex; align-items: baseline; gap: 10px; }
@@ -406,12 +406,12 @@ function formatVersionTime(value) {
   animation: film-spin 0.9s linear infinite;
 }
 @keyframes film-spin { to { transform: rotate(360deg); } }
-.film-video { width: 100%; max-width: 560px; border-radius: 10px; background: #000; }
+.film-video { width: 100%; max-width: 560px; border-radius: var(--radius-md); background: #000; }
 .film-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .film-warns { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--warn); }
 
 .version-strip {
-  border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: var(--radius-md); padding: 10px 12px;
   background: color-mix(in oklch, var(--panel2) 70%, transparent);
 }
 .version-strip-head {
@@ -422,7 +422,7 @@ function formatVersionTime(value) {
 .version-list { display: flex; flex-direction: column; gap: 4px; }
 .version-row {
   display: grid; grid-template-columns: minmax(120px, 1fr) auto auto auto;
-  gap: 10px; align-items: center; padding: 5px 7px; border-radius: 5px;
+  gap: 10px; align-items: center; padding: 5px 7px; border-radius: var(--radius-sm);
   font-size: 10.5px; color: var(--dim);
 }
 .version-row.current { background: color-mix(in oklch, var(--cyan) 7%, transparent); color: var(--ink); }
@@ -432,7 +432,7 @@ function formatVersionTime(value) {
 .version-status.needs_revision { color: var(--bad); }
 .version-count, .version-time { white-space: nowrap; }
 
-.batch { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--panel2); }
+.batch { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px; background: var(--panel2); }
 .batch-awaiting_approval { border-color: color-mix(in oklch, var(--warn) 45%, var(--line)); }
 .batch-head { display: flex; align-items: center; gap: 12px; }
 .batch-status { font-size: 12.5px; font-weight: 600; color: var(--ink); }
@@ -440,12 +440,12 @@ function formatVersionTime(value) {
 .batch-error { margin-top: 6px; font-size: 11.5px; color: var(--danger, #e5484d); }
 
 .review { margin-top: 10px; }
-.review-video { width: 100%; max-width: 560px; border-radius: 10px; background: #000; }
+.review-video { width: 100%; max-width: 560px; border-radius: var(--radius-md); background: #000; }
 .review-empty { font-size: 12px; color: var(--dim); padding: 8px 0; }
 .review-actions { display: flex; gap: 8px; margin-top: 10px; }
 .rv {
   border: 1px solid var(--line); background: var(--panel2); color: var(--ink);
-  border-radius: 9px; padding: 6px 14px; font-size: 12.5px; cursor: pointer;
+  border-radius: var(--radius-md); padding: 6px 14px; font-size: 12.5px; cursor: pointer;
 }
 .rv.ok {
   background: var(--accent-grad); color: var(--on-accent); border-color: transparent;

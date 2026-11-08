@@ -189,7 +189,7 @@ function cycleResolution() {
   position: relative;
   width: 56px;
   height: 56px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   border: 1px solid var(--line);
 }
@@ -230,7 +230,7 @@ function cycleResolution() {
   text-align: left;
   padding: 9px 12px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: rgba(255, 255, 255, 0.86);
   font-size: 13px;

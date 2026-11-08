@@ -63,7 +63,7 @@ const emit = defineEmits(['close'])
   gap: 6px;
   height: 30px;
   padding: 0 11px;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: transparent;
   border: 1px solid var(--line);
   color: var(--muted);

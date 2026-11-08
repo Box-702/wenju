@@ -87,12 +87,14 @@
             <div class="asset-pic">
               <img v-if="c.image" :src="c.image" :alt="c.name" loading="lazy" />
               <div v-else class="asset-placeholder">缺定妆照</div>
-              <span class="asset-badge" :class="{ miss: !c.image }">{{ c.image ? '定妆照' : '缺图' }}</span>
             </div>
             <div class="asset-meta">
               <div class="asset-line">
                 <span class="asset-name">{{ c.name }}</span>
                 <span class="asset-id">{{ c.char_id }}</span>
+              </div>
+              <div class="asset-line">
+                <span class="asset-badge" :class="{ miss: !c.image }">{{ c.image ? '定妆照' : '缺定妆照' }}</span>
               </div>
               <div class="asset-voice" :class="{ none: !c.voice_label }">
                 <AppIcon name="sound" />
@@ -112,12 +114,14 @@
             <div class="asset-pic scene">
               <img v-if="l.image" :src="l.image" :alt="l.name" loading="lazy" />
               <div v-else class="asset-placeholder">缺场景图</div>
-              <span class="asset-badge" :class="{ miss: !l.image }">{{ l.image ? '场景图' : '缺图' }}</span>
             </div>
             <div class="asset-meta">
               <div class="asset-line">
                 <span class="asset-name">{{ l.name }}</span>
                 <span class="asset-id">{{ l.loc_id }}</span>
+              </div>
+              <div class="asset-line">
+                <span class="asset-badge" :class="{ miss: !l.image }">{{ l.image ? '场景图' : '缺场景图' }}</span>
               </div>
               <p v-if="l.description" class="asset-desc" :title="l.description">{{ l.description }}</p>
               <div class="asset-nums">{{ l.scenes }} 场</div>
@@ -133,11 +137,13 @@
               <video v-if="a.kind === 'video'" :src="a.url" muted playsinline preload="metadata"></video>
               <img v-else-if="a.kind === 'image'" :src="a.url" :alt="a.name" loading="lazy" />
               <div v-else class="asset-placeholder">{{ a.kind === 'audio' ? '音频' : '素材' }}</div>
-              <span class="asset-badge">{{ kindZh(a.kind) }}</span>
             </div>
             <div class="asset-meta">
               <div class="asset-line">
                 <span class="asset-name" :title="a.name">{{ a.name || '未命名' }}</span>
+              </div>
+              <div class="asset-line">
+                <span class="asset-badge">{{ kindZh(a.kind) }}</span>
               </div>
               <div class="asset-nums">{{ sourceZh(a.source) }}</div>
               <a class="asset-dl" :href="a.url" :download="a.name || true" target="_blank" rel="noopener">
@@ -313,7 +319,7 @@ watch(() => store.pid, (pid) => { if (pid) loadLibrary() }, { immediate: true })
   text-transform: uppercase; letter-spacing: .14em;
 }
 .btn-new {
-  width: 28px; height: 28px; border-radius: 7px;
+  width: 28px; height: 28px; border-radius: var(--radius-sm);
   border: 1px solid var(--line); background: transparent;
   color: var(--muted); cursor: pointer; font-size: 12px; line-height: 1;
   display: flex; align-items: center; justify-content: center; padding: 0;
@@ -333,7 +339,7 @@ watch(() => store.pid, (pid) => { if (pid) loadLibrary() }, { immediate: true })
 /* 新任务入口 */
 .new-task {
   display: flex; align-items: center; gap: 9px;
-  width: 100%; padding: 9px 11px; border-radius: 10px;
+  width: 100%; padding: 9px 11px; border-radius: var(--radius-md);
   background: rgba(255, 255, 255, .05); border: 1px solid var(--line);
   color: var(--ink); font-size: 13px; font-family: inherit; cursor: pointer;
   transition: background 130ms var(--ease), border-color 130ms var(--ease);
@@ -346,7 +352,7 @@ watch(() => store.pid, (pid) => { if (pid) loadLibrary() }, { immediate: true })
 /* 技能条目 */
 .skill-item {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  width: 100%; padding: 7px 10px; border-radius: 9px;
+  width: 100%; padding: 7px 10px; border-radius: var(--radius-md);
   background: transparent; border: 1px solid transparent;
   color: var(--muted); font-family: inherit; text-align: left; cursor: pointer;
   transition: background 130ms var(--ease), color 130ms var(--ease);
@@ -371,7 +377,7 @@ watch(() => store.pid, (pid) => { if (pid) loadLibrary() }, { immediate: true })
 .proj-item {
   position: relative;
   display: flex; align-items: center; padding: 10px 12px 10px 14px;
-  margin: 1px 6px; border-radius: 8px;
+  margin: 1px 6px; border-radius: var(--radius-sm);
   cursor: pointer; font-size: 12.5px; color: var(--muted);
   transition: background .14s var(--ease), color .14s var(--ease);
 }
@@ -396,18 +402,19 @@ watch(() => store.pid, (pid) => { if (pid) loadLibrary() }, { immediate: true })
   gap: 10px;
   margin-bottom: 4px;
 }
-/* 概览：角色数 / 场景数 / 缺图数 */
+/* 概览：角色数 / 场景数 / 缺图数 —— 纯文字，用竖线分隔，不做胶囊 */
 .lib-stats {
-  display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 10px;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0;
+  margin: 2px 0 10px; color: var(--muted); font-size: var(--fs-xs);
 }
 .stat {
   display: inline-flex; align-items: baseline; gap: 4px;
-  padding: 3px 9px; border-radius: var(--radius-full);
-  background: rgba(255, 255, 255, .05); border: 1px solid var(--line);
-  color: var(--muted); font-size: var(--fs-xs);
+  padding: 0 10px; color: var(--muted);
 }
+.stat:first-child { padding-left: 0; }
+.stat + .stat { border-left: 1px solid var(--line); }
 .stat b { color: var(--ink); font-weight: 600; font-size: var(--fs-sm); }
-.stat.warn { color: var(--warn); border-color: color-mix(in oklch, var(--warn) 38%, var(--line)); }
+.stat.warn { color: var(--warn); }
 .stat.warn b { color: var(--warn); }
 
 /* 缺图告警：后端算好的事实，直接摊开 */
@@ -441,14 +448,12 @@ watch(() => store.pid, (pid) => { if (pid) loadLibrary() }, { immediate: true })
     45deg, rgba(255, 255, 255, .025) 0 8px, transparent 8px 16px
   );
 }
+/* 徽标从「压在图上的胶囊」改成「图下方的一行字」——压图需要底色，
+   底色正是胶囊感的来源。 */
 .asset-badge {
-  position: absolute; left: 6px; top: 6px;
-  padding: 1px 7px; border-radius: var(--radius-full);
-  background: rgba(0, 0, 0, .55); color: var(--muted);
-  font-size: 10px; letter-spacing: .02em;
-  border: 1px solid var(--line);
+  color: var(--dim); font-size: 10px; letter-spacing: .02em;
 }
-.asset-badge.miss { color: var(--warn); border-color: color-mix(in oklch, var(--warn) 40%, transparent); }
+.asset-badge.miss { color: var(--warn); }
 
 .asset-meta { padding: 8px 9px 9px; display: flex; flex-direction: column; gap: 4px; }
 .asset-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
@@ -465,14 +470,8 @@ watch(() => store.pid, (pid) => { if (pid) loadLibrary() }, { immediate: true })
 .asset-voice .app-ic { width: 12px; height: 12px; flex: none; opacity: .8; }
 .asset-voice span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .asset-voice.none { color: var(--dim); }
-.asset-gender {
-  flex: none; padding: 0 5px; border-radius: var(--radius-full);
-  background: rgba(255, 255, 255, .07); color: var(--muted); font-size: 10px;
-}
-.asset-ok {
-  flex: none; padding: 0 5px; border-radius: var(--radius-full);
-  background: var(--accent-soft); color: var(--accent); font-size: 10px;
-}
+.asset-gender { flex: none; color: var(--dim); font-size: 10px; }
+.asset-ok { flex: none; color: var(--accent); font-size: 10px; }
 .asset-desc {
   margin: 0; font-size: var(--fs-xs); color: var(--dim); line-height: 1.5;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;

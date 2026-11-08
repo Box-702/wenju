@@ -176,7 +176,7 @@ function formatTime(value) {
 <style scoped>
 .prompt-editor {
   background: var(--panel2); border: 1px solid var(--line);
-  border-radius: 10px; padding: 16px;
+  border-radius: var(--radius-md); padding: 16px;
 }
 .editor-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .editor-header h4 { margin: 3px 0 0; font-size: 15px; }
@@ -199,7 +199,7 @@ function formatTime(value) {
   margin: -4px 0 12px; padding: 9px 11px;
   background: color-mix(in oklch, var(--warn, #eab308) 9%, transparent);
   border: 1px solid color-mix(in oklch, var(--warn, #eab308) 35%, var(--line));
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
 }
 .audit-head { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--warn, #eab308); margin-bottom: 5px; }
 .audit-mark { font-size: 12px; }
@@ -207,13 +207,13 @@ function formatTime(value) {
 .audit-foot { margin-top: 6px; font-size: 10px; color: var(--dim); line-height: 1.4; }
 .prompt-textarea {
   width: 100%; padding: 10px; background: var(--code-bg); border: 1px solid var(--line);
-  border-radius: 6px; color: var(--text, #eee); font-size: 13px; font-family: inherit;
+  border-radius: var(--radius-sm); color: var(--text, #eee); font-size: 13px; font-family: inherit;
   resize: vertical; box-sizing: border-box; line-height: 1.5;
 }
 .prompt-textarea:focus { outline: none; border-color: var(--gold); }
 .note-textarea {
   width: 100%; padding: 8px 10px; background: var(--code-bg); border: 1px solid var(--line);
-  border-radius: 6px; color: var(--ink); font-size: 12px; font-family: inherit;
+  border-radius: var(--radius-sm); color: var(--ink); font-size: 12px; font-family: inherit;
   resize: vertical; box-sizing: border-box; line-height: 1.45;
 }
 .note-textarea:focus { outline: none; border-color: var(--gold); }
@@ -226,20 +226,20 @@ function formatTime(value) {
 }
 .ref-input {
   flex: 1; min-width: 0; padding: 7px 9px; background: var(--code-bg);
-  border: 1px solid var(--line); border-radius: 6px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
   color: var(--text, #eee); font-size: 12px; font-family: var(--mono);
 }
 .ref-input:focus { outline: none; border-color: var(--cyan); }
 .ref-input::placeholder { color: var(--dim); }
 .ref-del {
   flex: none; width: 22px; height: 22px; border: 1px solid var(--line);
-  border-radius: 5px; background: transparent; color: var(--muted);
+  border-radius: var(--radius-sm); background: transparent; color: var(--muted);
   cursor: pointer; font-size: 12px; line-height: 1;
 }
 .ref-del:hover { color: var(--bad); border-color: var(--bad); }
 .ref-add {
   align-self: flex-start; padding: 4px 10px; border: 1px dashed var(--line);
-  border-radius: 6px; background: transparent; color: var(--muted);
+  border-radius: var(--radius-sm); background: transparent; color: var(--muted);
   cursor: pointer; font-size: 11px;
 }
 .ref-add:hover { color: var(--ink); border-color: var(--line-strong); }
@@ -247,7 +247,7 @@ function formatTime(value) {
 .history-head { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-bottom: 5px; }
 .history-head span:last-child { color: var(--dim); }
 .history-list { display: flex; flex-direction: column; gap: 4px; }
-.history-list details { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.history-list details { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
 .history-list summary {
   display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px;
   align-items: center; padding: 7px 9px; cursor: pointer; color: var(--muted); font-size: 11px;
@@ -258,7 +258,7 @@ function formatTime(value) {
 .history-status.needs_revision { color: var(--bad); }
 .history-body { padding: 0 9px 9px; }
 .history-note { margin: 4px 0 8px; color: var(--dim); font-size: 11px; }
-.diff { background: var(--code-bg); border-radius: 5px; padding: 7px; }
+.diff { background: var(--code-bg); border-radius: var(--radius-sm); padding: 7px; }
 .diff-title { color: var(--dim); font-size: 10px; margin-bottom: 4px; }
 .diff pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--muted); font: 11px/1.45 var(--mono); }
 .history-unchanged { color: var(--dim); font-size: 10.5px; }
@@ -267,7 +267,7 @@ function formatTime(value) {
 .editor-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .btn {
   padding: 7px 12px; background: var(--code-bg); border: 1px solid var(--line);
-  border-radius: 6px; color: var(--text, #eee); cursor: pointer; font-size: 12px;
+  border-radius: var(--radius-sm); color: var(--text, #eee); cursor: pointer; font-size: 12px;
 }
 .btn.ok { border-color: var(--green, #4ade80); color: var(--green, #4ade80); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }

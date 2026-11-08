@@ -155,7 +155,7 @@ async function submitImport() {
 
 .back {
   display: inline-flex; align-items: center; gap: 6px;
-  height: 30px; padding: 0 10px; border-radius: 8px;
+  height: 30px; padding: 0 10px; border-radius: var(--radius-sm);
   background: transparent; border: 1px solid var(--line);
   color: var(--muted); font-size: 12.5px; font-family: inherit; cursor: pointer;
 }
@@ -178,7 +178,7 @@ async function submitImport() {
 
 .skill-card {
   display: block; width: 100%; text-align: left;
-  padding: 12px 14px; border-radius: 14px;
+  padding: 12px 14px; border-radius: var(--radius-lg);
   background: rgba(255, 255, 255, .05); border: 1px solid var(--line);
   color: inherit; font-family: inherit; cursor: pointer;
   transition: background 130ms var(--ease), border-color 130ms var(--ease);
@@ -196,7 +196,7 @@ async function submitImport() {
 
 .import-box {
   margin-top: 16px; padding: 14px;
-  border-radius: 14px; border: 1px solid var(--line);
+  border-radius: var(--radius-lg); border: 1px solid var(--line);
   background: rgba(255, 255, 255, .04);
 }
 .import-head {
@@ -205,7 +205,7 @@ async function submitImport() {
 }
 .import-text {
   width: 100%; margin-bottom: 10px;
-  background: rgba(0, 0, 0, .32); border: 1px solid var(--line); border-radius: 10px;
+  background: rgba(0, 0, 0, .32); border: 1px solid var(--line); border-radius: var(--radius-md);
   padding: 10px 12px; color: var(--ink); font-family: var(--mono); font-size: 12px;
   resize: vertical;
 }

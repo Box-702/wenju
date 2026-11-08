@@ -83,8 +83,9 @@
   /* ---------- 结构化设计变量 ---------- */
   --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
   --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 64px;
-  /* 圆角：卡片语言 = 柔和大圆角 */
-  --radius-sm: 6px; --radius-md: 9px; --radius-lg: 14px; --radius-card: 20px;
+  /* 圆角：小圆角语言（2026-11-08 定：控件 4px、卡片 8px、面板 12px）。
+     以前的 9/14/20px 属于「胶囊/软糯」观感，用户明确不喜欢。 */
+  --radius-sm: 3px; --radius-md: 4px; --radius-lg: 8px; --radius-card: 12px;
   --radius-full: 999px;
   --shadow-1: 0 1px 4px rgba(0, 0, 0, .3);
   --shadow-2: 0 10px 30px rgba(0, 0, 0, .34);
@@ -205,11 +206,11 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 
 /* ---------- 状态标记：扁平文字标签，不再是胶囊 ---------- */
 .badge {
-  display: inline-block; padding: 1px 6px; border-radius: 3px;
-  font-size: 11px; border: none; color: var(--muted);
-  background: color-mix(in oklch, var(--ink) 5%, transparent);
+  display: inline-block; padding: 0 2px;
+  font-size: 11px; border: none; color: var(--dim);
+  background: none;
 }
-.badge.on { color: var(--ok); background: color-mix(in oklch, var(--ok) 12%, transparent); }
+.badge.on { color: var(--ok); }
 .badge.off { color: var(--dim); }
 .badge.skeleton {
   width: 110px; height: 18px; border: none;
@@ -218,17 +219,18 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 @keyframes sk-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
 
 /* ---------- Pill 标签：扁平小方块，颜色只写在文字上 ---------- */
+/* 语义标签：纯文字 + 颜色，不带底色（胶囊感来源之一） */
 .pill {
-  display: inline-block; padding: 1px 6px; border-radius: 3px;
-  font-size: 11px; border: none; color: var(--muted); margin: 1px 3px 1px 0;
-  background: color-mix(in oklch, var(--ink) 5%, transparent);
+  display: inline-block; padding: 0 2px;
+  font-size: 11px; border: none; color: var(--dim); margin: 1px 4px 1px 0;
+  background: none;
 }
-.pill.act { color: var(--act); background: color-mix(in oklch, var(--act) 10%, transparent); }
-.pill.dlg { color: var(--dlg); background: color-mix(in oklch, var(--dlg) 10%, transparent); }
-.pill.cue { color: var(--cue); background: color-mix(in oklch, var(--cue) 10%, transparent); }
-.pill.ok { color: var(--ok); background: color-mix(in oklch, var(--ok) 10%, transparent); }
-.pill.warn { color: var(--amber); background: color-mix(in oklch, var(--amber) 10%, transparent); }
-.pill.bad { color: var(--bad); background: color-mix(in oklch, var(--bad) 10%, transparent); }
+.pill.act { color: var(--act); }
+.pill.dlg { color: var(--dlg); }
+.pill.cue { color: var(--cue); }
+.pill.ok { color: var(--ok); }
+.pill.warn { color: var(--amber); }
+.pill.bad { color: var(--bad); }
 
 /* ---------- 卡片 ---------- */
 .card {
@@ -302,33 +304,31 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 .md a { color: var(--gold); text-decoration: underline; text-underline-offset: 3px; }
 .md a:hover { color: var(--ink); }
 
-/* ---------- 页签：安静的分段控件 ---------- */
+/* ---------- 分类页签：文字 + 底部亮线 ----------
+   原来是「圆角容器 + 胶囊高亮」（分段控件），用户不喜欢胶囊感；
+   现在是最安静的下划线式：选中项亮起来 + 底部一道亮线。 */
 .seg-tabs {
-  position: relative;
-  display: flex; align-items: stretch; gap: 0;
-  padding: 3px;
-  background: rgba(0, 0, 0, .28);
-  border: 1px solid var(--line);
-  border-radius: 11px;
+  display: flex; align-items: stretch; gap: 2px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto; scrollbar-width: none;
 }
+.seg-tabs::-webkit-scrollbar { display: none; }
 .seg-tab {
   position: relative;
-  background: transparent; border: 0; border-radius: var(--radius-sm);
-  padding: 4px 14px; min-height: 24px;
+  background: transparent; border: 0; border-radius: 0;
+  padding: 8px 12px; min-height: 34px;
   color: var(--muted); font-size: 12.5px; font-weight: 400; letter-spacing: 0;
   cursor: pointer; white-space: nowrap;
-  transition: color 130ms var(--ease), background-color 130ms var(--ease);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 130ms var(--ease), border-color 130ms var(--ease);
 }
 .seg-tab:hover:not(:disabled) { background: transparent; color: var(--ink); }
 .seg-tab:active:not(:disabled) { background: transparent; }
 .seg-tab.active {
   color: var(--ink); font-weight: 500;
-  background: rgba(255, 255, 255, .1);
-  box-shadow: none;
-}
-.seg-tab.active:hover:not(:disabled),
-.seg-tab.active:active:not(:disabled) {
-  background: rgba(255, 255, 255, .13);
+  border-bottom-color: var(--accent);
+  background: transparent;
 }
 
 /* ---------- 字体：全局无衬线（楷书已移除） ---------- */
@@ -395,7 +395,7 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 /* ---------- 参数胶囊（首页与工作区共用） ---------- */
 .chip {
   display: inline-flex; align-items: center; gap: 6px;
-  height: 32px; padding: 0 11px; border-radius: 9px;
+  height: 32px; padding: 0 11px; border-radius: var(--radius-md);
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, .05);
   color: var(--muted); font-size: 12.5px; font-family: inherit;
@@ -408,7 +408,7 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 /* ---------- 主行动 ---------- */
 .cta {
   background: var(--accent-grad); color: var(--on-accent);
-  border: 1px solid transparent; border-radius: 9px;
+  border: 1px solid transparent; border-radius: var(--radius-md);
   font-weight: 600; letter-spacing: .03em;
   box-shadow: 0 8px 24px rgba(34, 197, 94, .28);
   transition: filter 130ms var(--ease), transform 130ms var(--ease), opacity 130ms var(--ease);

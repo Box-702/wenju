@@ -51,6 +51,27 @@ watch(views, (list) => {
 
 const script = computed(() => store.viewerScript || { scenes: [] })
 
+/** 锚图核对总账：多少镜锁了锚、多少镜缺锚 / 没引用。
+    缺锚的镜头，角色与场景跨镜会漂——这是批提示词时最先要看的一件事。 */
+const anchorAudit = computed(() => {
+  const refs = store.assetRefs || {}
+  let locked = 0
+  let missing = 0
+  let none = 0
+  for (const shot of store.shots || []) {
+    const text = String(shot?.video_prompt || '')
+    const ids = []
+    for (const m of text.matchAll(/@[^@\s，。；;、（）()]{0,20}\(([a-z]+_[a-z0-9_]+)\)/gi)) {
+      if (!ids.includes(m[1])) ids.push(m[1])
+    }
+    if (!ids.length) { none += 1; continue }
+    const missingImg = ids.some((id) => !refs[id]?.image)
+    if (missingImg) missing += 1
+    else locked += 1
+  }
+  return { locked, missing, none, total: (store.shots || []).length }
+})
+
 const skills = computed(() => store.skills || [])
 
 /** 分类编号：01 / 02 / 03 */
@@ -251,6 +272,12 @@ watch(() => store.videoBatch?.status, (st) => {
         <span class="cp-subtitle">镜头与提示词（{{ (store.shots || []).length }}）</span>
         <button class="cp-link" type="button" @click="emit('open-output')">打开产出页 →</button>
       </div>
+      <!-- 锚图核对总账：缺锚的镜头角色跨镜会漂 -->
+      <div v-if="anchorAudit.total" class="cp-audit">
+        <span class="ok">已锁锚 {{ anchorAudit.locked }}</span>
+        <span v-if="anchorAudit.missing" class="warn">缺图 {{ anchorAudit.missing }}</span>
+        <span v-if="anchorAudit.none" class="warn">未引用 {{ anchorAudit.none }}</span>
+      </div>
       <ShotList
         class="cp-shots"
         compact
@@ -393,6 +420,14 @@ watch(() => store.videoBatch?.status, (st) => {
   font-size: var(--fs-xs); color: var(--dim); line-height: 1.5;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
+
+/* 锚图核对总账 */
+.cp-audit {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  padding: 2px 0 8px; font-size: var(--fs-xs);
+}
+.cp-audit .ok { color: var(--ok); }
+.cp-audit .warn { color: var(--warn); }
 
 .cp-link {
   background: transparent;

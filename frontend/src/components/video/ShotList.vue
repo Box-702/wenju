@@ -56,6 +56,23 @@
             </div>
             <div class="shot-subject">{{ shot.subject }}</div>
             <!-- 紧凑模式：提示词只露第一句，点「详情」才展开全文（窄栏里要能读） -->
+            <!-- 锚图核对：这一镜锁了谁 -->
+            <div v-if="compact" class="shot-anchors" :class="'sa-' + anchorState(shot).kind">
+              <template v-if="anchorState(shot).list.length">
+                <span
+                  v-for="a in anchorState(shot).list"
+                  :key="a.id"
+                  class="anchor-chip"
+                  :class="{ missing: a.missing }"
+                  :title="a.missing ? `${a.name} 还没有图` : `${a.name} 的定妆照`"
+                >
+                  <img v-if="a.image" class="anchor-thumb" :src="a.image" :alt="a.name" />
+                  <span v-else class="anchor-thumb anchor-none" aria-hidden="true">◻</span>
+                  <span class="anchor-name">{{ a.name }}</span>
+                </span>
+              </template>
+              <span v-else class="anchor-none-tip">未锁锚（这一镜没有角色/场景引用）</span>
+            </div>
             <div v-if="compact && shot.video_prompt" class="shot-prompt">
               <span :class="['prompt-label', shot.prompt_status]">
                 {{ promptStatusLabel(shot) }}
@@ -129,6 +146,7 @@
 import { ref, computed, reactive, watch } from 'vue'
 import AppIcon from '../AppIcon.vue'
 import AssetRefText from '../AssetRefText.vue'
+import { store } from '../../stores/app'
 
 const props = defineProps({
   shots: { type: Array, default: () => [] },
@@ -242,6 +260,29 @@ function promptStatusLabel(shot) {
   return shot.prompt_status === 'approved' ? '已批准' : shot.prompt_status === 'needs_revision' ? '需修改' : '待审阅'
 }
 
+/** 这一镜用到的锚：提示词里 @引用的实体 → 资产（定妆照/场景图）。
+    没图的锚（缺图）会被标出来——那些镜头的角色跨镜会漂。 */
+function anchorsOf(shot) {
+  const text = String(shot?.video_prompt || '')
+  const ids = []
+  for (const m of text.matchAll(/@[^@\s，。；;、（）()]{0,20}\(([a-z]+_[a-z0-9_]+)\)/gi)) {
+    if (!ids.includes(m[1])) ids.push(m[1])
+  }
+  const refs = store.assetRefs || {}
+  return ids.map((id) => {
+    const a = refs[id]
+    return { id, name: a?.name || id, image: a?.image || '', missing: !a?.image }
+  })
+}
+
+/** 这一镜的锚齐不齐：没有 @引用，或有引用但缺图。 */
+function anchorState(shot) {
+  const list = anchorsOf(shot)
+  if (!list.length) return { list, kind: 'none' }
+  if (list.some((a) => a.missing)) return { list, kind: 'missing' }
+  return { list, kind: 'ok' }
+}
+
 /** 提示词的第一句（紧凑模式用：够看出这条镜头在拍什么）。 */
 function firstSentence(text) {
   const t = String(text || '').trim()
@@ -321,6 +362,25 @@ function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + '...' : s }
 }
 
 /* 紧凑模式：提示词首句 + 详情按钮；展开后是可读的正文 */
+/* 锚图核对：这一镜锁了谁 */
+.shot-anchors { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
+.anchor-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 6px 1px 2px; border-radius: var(--radius-sm);
+  border: 1px solid var(--line); background: rgba(255, 255, 255, .04);
+  font-size: 10px; color: var(--muted);
+}
+.anchor-chip.missing { border-color: color-mix(in oklch, var(--warn) 45%, transparent); color: var(--warn); }
+.anchor-thumb {
+  width: 15px; height: 15px; border-radius: 3px; object-fit: cover; flex: none;
+  background: rgba(0, 0, 0, .3);
+}
+.anchor-none {
+  display: inline-grid; place-items: center; font-size: 9px; color: var(--warn);
+}
+.anchor-name { white-space: nowrap; max-width: 72px; overflow: hidden; text-overflow: ellipsis; }
+.anchor-none-tip { font-size: 10px; color: var(--warn); }
+
 .shot-more {
   flex: none; margin-left: 6px; padding: 0 6px;
   border: 1px solid var(--line); border-radius: var(--radius-sm);

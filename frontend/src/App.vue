@@ -21,8 +21,9 @@ import NewProjectModal from './components/NewProjectModal.vue'
 import SettingsModal from './components/settings/SettingsModal.vue'
 import PatchDrawer from './components/PatchDrawer.vue'
 import PromptEditor from './components/video/PromptEditor.vue'
+import AssetPreview from './components/AssetPreview.vue'
 import Toast from './components/Toast.vue'
-import { loadTree, loadWorkspace, loadWorkspaceTree, restorePanelPrefs, toggleRightPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, closePromptEditor, saveShotPrompt } from './stores/app'
+import { loadTree, loadWorkspace, loadWorkspaceTree, restorePanelPrefs, toggleRightPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, loadAssetRefs, closePromptEditor, saveShotPrompt } from './stores/app'
 import { importProject } from './api'
 
 // ---- 侧边栏自动弹出（通用上下文侧边栏的核心行为） ----
@@ -195,8 +196,9 @@ function onResize() {
 }
 // 窄屏下选中项目 / 对话 → 收起抽屉（内容已切到中间列，面板挡视线）
 watch(() => [store.pid, store.convId], () => {
-  // 进入作品 → 拉一份可 @ 引用的资产清单（角色 / 场景 / 成片）
+  // 进入作品 → 拉一份可 @ 引用的资产清单（角色 / 场景 / 成片）与引用索引（编号 → 定妆照）
   loadAssetIndex()
+  loadAssetRefs()
   if (!isNarrow.value) return
   store.leftOpen = false
   store.rightOpen = false
@@ -316,7 +318,10 @@ onUnmounted(() => {
     :open="store.showSettings"
     @close="store.showSettings = false; loadModelStatus()"
   />
-    <!-- 提示词编辑器：提到 App 层，右侧栏与产出页都能打开同一份 -->
+    <!-- 资产大图预览：点提示词里的 @引用 打开 -->
+  <AssetPreview />
+
+  <!-- 提示词编辑器：提到 App 层，右侧栏与产出页都能打开同一份 -->
   <PromptEditor
     v-if="store.editingPrompt"
     :shot="store.editingPrompt"

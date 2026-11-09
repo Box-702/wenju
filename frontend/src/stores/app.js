@@ -30,6 +30,9 @@ export const store = reactive({
   // 对话与版本
   messages: [],        // 当前对话消息 [{ role, content, events, payloads, streaming }]
   assetIndex: [],      // 可被 @ 引用的资产清单 [{ kind, id, name, sub }]
+  assetRefs: {},       // 资产引用索引 { char_xxx / loc_xxx → { name, image, kind } }
+                       // 提示词里的 @引用 要显示成「小图 + 名字」，靠它
+  assetPreview: null,  // 正在预览的资产（点提示词里的 @引用 打开）
   versions: [],        // 当前项目的版本列表
 
   // 左侧面板开关（默认展开，记忆在 localStorage）
@@ -497,6 +500,23 @@ export async function loadChatPref() {
     store.chatPref = null
   }
   return store.chatPref
+}
+
+/** 拉一份「资产引用索引」：编号 → { name, image, kind }。
+    提示词里的 @林然(char_005) 要渲染成小图，靠它把编号对上定妆照。 */
+export async function loadAssetRefs(pid = store.pid) {
+  if (!pid) { store.assetRefs = {}; return }
+  const map = {}
+  try {
+    const lib = await api(`/projects/${pid}/library`)
+    for (const c of lib.characters || []) {
+      if (c.char_id) map[c.char_id] = { name: c.name, image: c.image || '', kind: 'character' }
+    }
+    for (const l of lib.locations || []) {
+      if (l.loc_id) map[l.loc_id] = { name: l.name, image: l.image || '', kind: 'location' }
+    }
+  } catch { /* 没有剧本时索引为空，不影响显示 */ }
+  store.assetRefs = map
 }
 
 /** 加载项目资产（侧边栏「资产」视图 / 资产库页共用）。 */

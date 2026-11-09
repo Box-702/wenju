@@ -60,7 +60,7 @@
               <span :class="['prompt-label', shot.prompt_status]">
                 {{ promptStatusLabel(shot) }}
               </span>
-              <span class="prompt-text">{{ firstSentence(shot.video_prompt) }}</span>
+              <AssetRefText :text="firstSentence(shot.video_prompt)" />
               <button class="shot-more" type="button" @click.stop="openShot[shot.id] = !openShot[shot.id]">
                 {{ openShot[shot.id] ? '收起' : '详情' }}
               </button>
@@ -89,11 +89,13 @@
               <span v-if="shot.prompt_audit?.length" class="audit-tag" title="提示词自动审计提醒，在审阅面板查看详情">
                 <AppIcon name="warning" /> {{ shot.prompt_audit.length }}
               </span>
-              <span class="prompt-text">{{ truncate(shot.video_prompt, 100) }}</span>
+              <AssetRefText :text="truncate(shot.video_prompt, 100)" />
             </div>
             <!-- 紧凑模式展开：全文提示词 + 运镜/空间等细节（可读优先） -->
             <div v-if="compact && openShot[shot.id]" class="shot-detail">
-              <p v-if="shot.video_prompt" class="detail-prompt">{{ shot.video_prompt }}</p>
+              <p v-if="shot.video_prompt" class="detail-prompt">
+                <AssetRefText :text="shot.video_prompt" />
+              </p>
               <p v-if="shot.camera?.path" class="detail-line">运动：{{ shot.camera.path }}</p>
               <p v-if="shot.spatial" class="detail-line">空间：{{ shot.spatial }}</p>
               <p v-if="shot.background_action" class="detail-line">背景：{{ shot.background_action }}</p>
@@ -126,6 +128,7 @@
 <script setup>
 import { ref, computed, reactive, watch } from 'vue'
 import AppIcon from '../AppIcon.vue'
+import AssetRefText from '../AssetRefText.vue'
 
 const props = defineProps({
   shots: { type: Array, default: () => [] },

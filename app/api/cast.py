@@ -16,10 +16,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Response, UploadFile, File, Form
 from pydantic import BaseModel, Field
 
 from . import common, deps
+from ..config import get_settings
 from ..media.library import normalize_visual_style, apply_library_patch, build_library, voice_options
 from ..media.casting import VOICE_LABELS
 
@@ -193,6 +194,102 @@ def list_voices(project_id: str) -> list[dict[str, str]]:
     project = common.get_project(project_id)
     style = deps.store().get_video_style(project.id) or {}
     return voice_options(style.get("visual_style"))
+
+
+@router.post("/projects/{project_id}/voices/clone")
+async def clone_voice(
+    project_id: str,
+    file: UploadFile = File(...),
+    character: str = Form(...),
+    voice_name: str = Form(""),
+) -> dict[str, Any]:
+    """用一段样本音频克隆出这个角色的专属音色。
+
+    「角色音色」之前只能从固定音色池里选——那是空缺：角色要一个只属于他的声音时，
+    只能拿真人样本去克隆。这里把样本交给 MiniMax 克隆，拿到新 voice_id 后
+    绑到该角色上（与内置音色同一套机制：写进 video_style.voice_casting）。
+    """
+    store = deps.store()
+    project = common.get_project(project_id)
+    if not project.raw_text:
+        raise HTTPException(400, "这个作品还没有原文")
+
+    sample = await file.read()
+    if len(sample) < 1024:
+        raise HTTPException(400, "样本音频太小（至少 1KB）")
+    if len(sample) > 20 * 1024 * 1024:
+        raise HTTPException(400, "样本音频超过 20MB")
+
+    from ..llm.registry import resolve_tts
+    from ..llm.tts import build_tts_client
+
+    client = build_tts_client(resolve_tts(get_settings()))
+    if client is None or not client.available:
+        raise HTTPException(503, "没有配置语音合成（需要 MINIMAX_API_KEY），无法克隆音色")
+
+    preview_text = ""
+    version = store.latest_version(project)
+    if version is not None:
+        for sc in version.script.scenes:
+            for d in sc.dialogue or []:
+                if d.text:
+                    preview_text = d.text
+                    break
+            if preview_text:
+                break
+
+    try:
+        voice_id = client.clone_voice(
+            sample,
+            filename=file.filename or "sample.mp3",
+            preview_text=preview_text,
+        )
+    except NotImplementedError as e:
+        raise HTTPException(501, str(e)) from None
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"音色克隆失败：{e}") from None
+
+    name = (voice_name or "").strip() or f"{character} 的专属音色"
+    store.save_user_voice(
+        voice_id=voice_id,
+        name=name,
+        project_id=project_id,
+        character_id=character,
+        sample_name=file.filename or "",
+    )
+
+    # 绑到角色上：voice_casting（角色 → voice_id）+ voice_labels（角色 → 显示名）
+    style = dict(store.get_video_style(project_id) or {})
+    casting = dict(style.get("voice_casting") or {})
+    labels = dict(style.get("voice_labels") or {})
+    casting[character] = voice_id
+    labels[character] = name
+    style["voice_casting"] = casting
+    style["voice_labels"] = labels
+    store.merge_video_style(project_id, style)
+
+    return {
+        "voice_id": voice_id,
+        "name": name,
+        "character": character,
+        "detail": "音色已克隆并绑定到该角色。",
+    }
+
+
+@router.get("/projects/{project_id}/voices")
+def list_cloned_voices(project_id: str) -> list[dict[str, Any]]:
+    """这个作品里克隆出来的音色。"""
+    store = deps.store()
+    return [
+        {
+            "voice_id": v.voice_id,
+            "name": v.name,
+            "character_id": v.character_id,
+            "sample_name": v.sample_name,
+            "created_at": v.created_at.isoformat() if v.created_at else "",
+        }
+        for v in store.list_user_voices(project_id)
+    ]
 
 
 @router.post("/projects/{project_id}/library/preview")

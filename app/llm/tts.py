@@ -36,6 +36,13 @@ from .base import ModelConfig
 log = logging.getLogger(__name__)
 
 
+def gen_voice_id() -> str:
+    """克隆音色的 id：MiniMax 要求 8~256 位、字母数字下划线。"""
+    import uuid
+
+    return uuid.uuid4().hex[:16]
+
+
 class TTSClient(ABC):
     """语音合成客户端抽象。"""
 
@@ -61,6 +68,21 @@ class TTSClient(ABC):
     ) -> bytes:
         """合成一段语音，返回音频字节（mp3）。失败抛异常。"""
         ...
+
+    def clone_voice(
+        self,
+        sample: bytes,
+        *,
+        filename: str = "sample.mp3",
+        voice_id: str = "",
+        preview_text: str = "",
+        timeout: float = 180.0,
+    ) -> str:
+        """用一段样本音频克隆出专属音色，返回新的 voice_id。
+
+        默认不支持（只有 MiniMax 实现了）；不支持的厂商抛异常，前端据此提示。
+        """
+        raise NotImplementedError(f"{self.label} 不支持音色克隆")
 
 
 class MiniMaxTTSClient(TTSClient):
@@ -124,6 +146,63 @@ class MiniMaxTTSClient(TTSClient):
                 return self._parse_audio(data)
 
         raise RuntimeError(f"MiniMax TTS 失败：所有 key 都不可用（{'；'.join(failures)}）")
+
+    def clone_voice(
+        self,
+        sample: bytes,
+        *,
+        filename: str = "sample.mp3",
+        voice_id: str = "",
+        preview_text: str = "",
+        timeout: float = 180.0,
+    ) -> str:
+        """MiniMax 音色克隆：上传样本 → 克隆 → 返回新 voice_id。"""
+        ring = ring_for("minimax", minimax_keys(self.config.api_key))
+        candidates = ring.candidates()
+        if not candidates:
+            raise RuntimeError("音色克隆失败：没有配置 MiniMax API Key")
+        failures: list[str] = []
+        for key in candidates:
+            try:
+                with httpx.Client(trust_env=False, timeout=timeout) as client:
+                    up = client.post(
+                        self.config.endpoint("files/upload"),
+                        headers={"Authorization": f"Bearer {key}"},
+                        files={"file": (filename, sample, "application/octet-stream")},
+                        data={"purpose": "voice_clone"},
+                    )
+                    up.raise_for_status()
+                    file_id = str((up.json() or {}).get("file_id") or "")
+                    if not file_id:
+                        raise RuntimeError("上传样本后没拿到 file_id")
+
+                    body = {
+                        "file_id": int(file_id),
+                        "voice_id": voice_id or f"wenju_voice_{gen_voice_id()}",
+                        # 克隆时要给一段文本，厂商用它对齐音色
+                        "text": (preview_text or "这是我的声音，用来给角色配音。")[:200],
+                    }
+                    resp = client.post(
+                        self.config.endpoint("voice_clone"),
+                        headers={
+                            "Authorization": f"Bearer {key}",
+                            "Content-Type": "application/json",
+                        },
+                        json=body,
+                    )
+                    data = resp.json()
+                    if key_failure(resp.status_code, data):
+                        reason = error_message(data, resp.status_code)
+                        ring.mark_bad(key, reason)
+                        failures.append(f"{mask(key)} {reason}")
+                        continue
+                    resp.raise_for_status()
+                    new_id = str((data or {}).get("voice_id") or body["voice_id"])
+                    ring.mark_ok(key)
+                    return new_id
+            except Exception as e:  # noqa: BLE001
+                failures.append(f"{mask(key)} {e}")
+        raise RuntimeError(f"音色克隆失败：{'；'.join(failures)}")
 
     @staticmethod
     def _parse_audio(data: object) -> bytes:

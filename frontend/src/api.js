@@ -11,10 +11,12 @@ const BASE = '/api'
 
 /** 通用 JSON 请求。path 形如 '/projects'；失败时抛出带 detail 的 Error。 */
 export async function api(path, method = 'GET', body) {
+  // FormData 直接给 fetch（浏览器自己带 multipart 头），其余按 JSON 发。
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData
   const res = await fetch(BASE + path, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
+    headers: body && !isForm ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? (isForm ? body : JSON.stringify(body)) : undefined,
   })
   if (!res.ok) {
     let msg = res.statusText

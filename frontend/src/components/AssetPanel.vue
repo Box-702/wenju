@@ -121,12 +121,19 @@
                   <span v-if="c.gender" class="asset-gender">{{ genderZh(c.gender) }}</span>
                   <span v-if="c.confirmed" class="asset-ok" title="音色已人工确认">已确认</span>
                   <button
-                    class="small ghost"
+                    class="voice-act"
                     type="button"
                     title="试听这一句"
                     :disabled="previewing === c.char_id"
                     @click.stop="previewVoice(c)"
                   >{{ previewing === c.char_id ? '…' : '试听' }}</button>
+                  <button
+                    class="voice-act"
+                    type="button"
+                    title="用一段样本音频克隆这个角色的专属音色"
+                    :disabled="cloningVoice === c.char_id"
+                    @click.stop="openVoiceClone(c)"
+                  >{{ cloningVoice === c.char_id ? '…' : '生成音色' }}</button>
 
                   <!-- 音色选择浮层 -->
                   <Transition name="ccpop">
@@ -277,6 +284,29 @@
       </template>
     </div>
 
+    <!-- 生成音色：用样本音频克隆这个角色的专属声音 -->
+    <div v-if="voiceClone.open" class="modal-backdrop" @click.self="voiceClone.open = false">
+      <div class="modal-card" role="dialog" aria-label="生成音色">
+        <div class="modal-head">
+          <div>
+            <h3 class="modal-title">生成音色</h3>
+            <p class="modal-sub">给「{{ voiceClone.character }}」克隆一个只属于他的声音</p>
+          </div>
+        </div>
+        <label class="modal-label">音色名字</label>
+        <input v-model.trim="voiceClone.name" class="modal-input" placeholder="例如 孔乙己的嗓音" />
+        <label class="modal-label">样本音频（mp3 / wav / m4a，10 秒左右清晰人声）</label>
+        <input ref="voiceFileInput" type="file" accept="audio/*" class="modal-input" @change="onVoiceFile" />
+        <p v-if="voiceClone.error" class="err">{{ voiceClone.error }}</p>
+        <div class="modal-foot">
+          <button class="ghost" type="button" @click="voiceClone.open = false">取消</button>
+          <button class="primary" type="button" :disabled="cloningVoice" @click="submitVoiceClone">
+            {{ cloningVoice ? '克隆中…' : '开始生成' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- 未选中作品：提示进入 -->
     <div v-else class="lib-empty" style="padding: 18px 14px;">
       左侧选择一部作品进入工作区；资产库会显示这部作品的人物与场景。
@@ -387,6 +417,47 @@ const allGroups = computed(() =>
     }
   }),
 )
+
+// ---- 生成音色：上传样本 → MiniMax 克隆 → 绑到角色 ----
+const voiceFileInput = ref(null)
+const cloningVoice = ref('')
+const voiceClone = reactive({ open: false, character: '', charId: '', name: '', file: null, error: '' })
+
+function openVoiceClone(c) {
+  voiceClone.open = true
+  voiceClone.character = c.name
+  voiceClone.charId = c.char_id
+  voiceClone.name = `${c.name} 的专属音色`
+  voiceClone.file = null
+  voiceClone.error = ''
+  if (voiceFileInput.value) voiceFileInput.value.value = ''
+}
+
+function onVoiceFile(e) {
+  const f = (e.target.files || [])[0]
+  voiceClone.file = f || null
+  voiceClone.error = ''
+}
+
+async function submitVoiceClone() {
+  if (!voiceClone.file) { voiceClone.error = '先选一段样本音频'; return }
+  cloningVoice.value = voiceClone.charId
+  voiceClone.error = ''
+  try {
+    const fd = new FormData()
+    fd.append('file', voiceClone.file)
+    fd.append('character', voiceClone.charId)
+    fd.append('voice_name', voiceClone.name)
+    const r = await api(`/projects/${store.pid}/voices/clone`, 'POST', { body: fd })
+    notify(`已生成音色「${r.name || voiceClone.name}」`, 'ok')
+    voiceClone.open = false
+    await loadLibrary()
+  } catch (e) {
+    voiceClone.error = e.message || '生成失败'
+  } finally {
+    cloningVoice.value = ''
+  }
+}
 
 /** 缺图数量：角色缺定妆照 + 场景缺场景图。这是出片能不能锁住一致性的前提。 */
 const missingCount = computed(
@@ -716,6 +787,15 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 .asset-voice .app-ic { width: 12px; height: 12px; flex: none; opacity: .8; }
 .asset-voice span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .asset-voice.none { color: var(--dim); }
+/* 音色行上的两个小动作：试听 / 生成音色 */
+.voice-act {
+  flex: none; padding: 1px 7px; font-size: 10px; border-radius: var(--radius-sm);
+  background: transparent; border: 1px solid var(--line); color: var(--dim);
+  cursor: pointer; white-space: nowrap;
+}
+.voice-act:hover { color: var(--ink); border-color: var(--line-strong); }
+.voice-act:disabled { opacity: .5; cursor: default; }
+
 .voice-btn {
   padding: 0; background: none; border: none;
   color: inherit; font: inherit; font-size: var(--fs-xs);

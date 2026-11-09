@@ -19,6 +19,7 @@ const emit = defineEmits(['pick-library', 'open-skills'])
 
 const text = ref('')
 const fileInput = ref(null)
+const card = ref(null)
 const attachedImages = ref([])
 const uploadingCount = ref(0)
 
@@ -31,12 +32,7 @@ const GOALS = [
 // 「+」菜单：只留当前模型里真实存在的东西。
 // 旧模型那套「主体库（支持音色）」「音色库」已删——它们跟「资产库」是同一个面板，
 // 点了也只是打开左栏，属于名不副实的重复入口。
-const MENU = [
-  { id: 'new', label: '新建作品' },
-  { id: 'upload', label: '上传图片' },
-  { id: 'assets', label: '资产库' },
-  { id: 'gen-assets', label: '生成资产图' },
-]
+
 
 const SPEC_RESOLUTIONS = ['768P', '1080P']
 
@@ -56,26 +52,13 @@ onMounted(() => {
   loadProviders()
 })
 
-function pick(item) {
-  if (item.id === 'new') {
-    store.showNewProject = true
-    return
-  }
-  if (item.id === 'upload') {
-    fileInput.value?.click()
-    return
-  }
-  if (item.id === 'gen-assets') {
-    generateAssetImages()
-    return
-  }
-  // 资产要落到具体作品上，没有作品就先去建一个
-  if (!store.pid) {
-    store.showNewProject = true
-    setHint('先新建作品，再挂载素材')
-    return
-  }
-  emit('pick-library', item.id)
+/** 「＋」= 往这条消息里加什么：图片 / 资产引用。 */
+function pickImages() {
+  fileInput.value?.click()
+}
+
+function openMention() {
+  card.value?.openMention?.()
 }
 
 function onFileChosen(e) {
@@ -145,6 +128,7 @@ function cycleResolution() {
 
 <template>
   <ComposerCard
+    ref="card"
     v-model:text="text"
     :goal-label="goalLabel"
     :spec-label="specLabel"
@@ -168,14 +152,20 @@ function cycleResolution() {
         hidden
         @change="onFileChosen"
       />
+      <!-- 「＋」= 往这条消息里加什么 -->
+      <button class="menu-item" type="button" role="menuitem" @click.stop="close(); pickImages()">
+        上传图片
+      </button>
+      <button class="menu-item" type="button" role="menuitem" @click.stop="close(); openMention()">
+        引用资产
+      </button>
       <button
-        v-for="item in MENU"
-        :key="item.id"
+        v-if="!store.pid"
         class="menu-item"
         type="button"
         role="menuitem"
-        @click.stop="close(); pick(item)"
-      >{{ item.label }}</button>
+        @click.stop="close(); store.showNewProject = true"
+      >新建作品</button>
     </template>
 
     <template #attachments>

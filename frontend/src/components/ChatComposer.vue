@@ -62,6 +62,11 @@ async function addImageFiles(files) {
   }
 }
 
+/** 「＋」里的「引用资产」：直接打开输入框的 @ 候选。 */
+function openMention() {
+  card.value?.openMention?.()
+}
+
 function pickImages() {
   fileInput.value?.click()
 }
@@ -167,21 +172,22 @@ watch(() => store.draftSeq, () => {
       @asset-picked="onAssetPicked"
       @new-project="store.showNewProject = true"
     >
-      <!-- 「＋」菜单：与首页同一套（上传图片 / 资产库 / 生成资产图） -->
+      <!-- 「＋」= 往这条消息里加什么：图片 / 资产引用。
+           「打开资产库」「生成资产图」是应用的动作，在顶栏与右栏，不在这里。 -->
       <template #menu="{ close }">
         <button class="menu-item" type="button" role="menuitem" @click.stop="close(); pickImages()">
           上传图片
         </button>
-        <button class="menu-item" type="button" role="menuitem" @click.stop="close(); store.leftOpen = true">
-          资产库
+        <button class="menu-item" type="button" role="menuitem" @click.stop="close(); openMention()">
+          引用资产
         </button>
         <button
+          v-if="!store.pid"
           class="menu-item"
           type="button"
           role="menuitem"
-          :disabled="generatingAssets"
-          @click.stop="close(); generateAssets()"
-        >{{ generatingAssets ? '生成中…' : '生成资产图' }}</button>
+          @click.stop="close(); store.showNewProject = true"
+        >新建作品</button>
       </template>
 
       <template #attachments>

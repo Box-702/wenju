@@ -80,6 +80,8 @@ def build_library(
     images = dict(style.get("reference_images") or {})
     casting = dict(style.get(VOICE_KEY) or {})
     genders = dict(style.get(GENDER_KEY) or {})
+    # 用户克隆出来的音色没有内置名字，显示自己起的那个
+    voice_labels = dict(style.get("voice_labels") or {})
 
     cast = cast_script(
         script, casting=casting, genders=genders,
@@ -92,14 +94,20 @@ def build_library(
     for m in cast.members:
         c = next((x for x in script.characters if x.id == m.char_id), None)
         st = stats.get(m.char_id, {"lines": 0, "scenes": 0})
-        characters.append({
+        item = {
             **m.to_dict(),
             "role": (c.role if c else None) or "other",
             "speech_chars": st["lines"],
             "scenes": st["scenes"],
             "confirmed": bool(m.char_id and m.char_id in casting),   # 音色是否经人工确认
             "has_image": bool(m.image),
-        })
+        }
+        # 克隆音色的显示名（内置音色由 VOICE_LABELS 提供，这里只覆盖自定义的）
+        label = voice_labels.get(m.char_id) if m.char_id else ""
+        if label:
+            item["voice_label"] = label
+            item["voice_custom"] = True
+        characters.append(item)
     # 台词量降序，方便一眼看出谁是主要角色（资产库是给人看的，不是给程序）。
     characters.sort(key=lambda x: (-x["speech_chars"], x["name"]))
 

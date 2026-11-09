@@ -40,6 +40,12 @@ const emit = defineEmits([
   'send', 'pick-menu', 'open-settings', 'open-skills', 'asset-picked', 'new-project',
 ])
 
+/** 让外层（比如「＋」菜单）能直接打开 @ 候选。 */
+function openMention() {
+  mentionOpen.value = true
+}
+defineExpose({ openMention })
+
 // ---- 模型胶囊 + 下拉：当前供应商在「模型设置」里配好的模型清单 ----
 const modelOpen = ref(false)
 

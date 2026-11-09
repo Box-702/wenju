@@ -355,6 +355,24 @@ class ApiProvider(Base):
         return _json_load(self.config_json, {})
 
 
+class UserVoice(Base):
+    """用户克隆出来的专属音色。
+
+    内置音色是厂商的固定池（voice_id + 中文名）；克隆出来的音色是我们自己
+    生成的 voice_id，需要自己记下它属于哪个角色、叫什么。
+    """
+
+    __tablename__ = "user_voices"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    voice_id: Mapped[str] = mapped_column(index=True, unique=True)
+    name: Mapped[str] = mapped_column(default="")
+    project_id: Mapped[str | None] = mapped_column(index=True, default=None)
+    character_id: Mapped[str | None] = mapped_column(default=None)
+    sample_name: Mapped[str] = mapped_column(default="")
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+
+
 class UserSkill(Base):
     """用户导入的技能（一份带 frontmatter 的 Markdown）。
 
@@ -1263,6 +1281,36 @@ class Store:
     # ---- ModelPreference ----
 
     # ---- UserSkill ----
+
+    def save_user_voice(
+        self,
+        *,
+        voice_id: str,
+        name: str,
+        project_id: str | None = None,
+        character_id: str | None = None,
+        sample_name: str = "",
+    ) -> UserVoice:
+        """保存（或覆盖）一个克隆出来的音色。"""
+        with self.session() as s:
+            row = s.query(UserVoice).filter_by(voice_id=voice_id).first()
+            if row is None:
+                row = UserVoice(id=gen_id("uvoice"), voice_id=voice_id)
+                s.add(row)
+            row.name = name
+            row.project_id = project_id
+            row.character_id = character_id
+            row.sample_name = sample_name
+            s.commit()
+            s.refresh(row)
+            return row
+
+    def list_user_voices(self, project_id: str | None = None) -> list[UserVoice]:
+        with self.session() as s:
+            q = s.query(UserVoice)
+            if project_id:
+                q = q.filter_by(project_id=project_id)
+            return q.order_by(UserVoice.created_at.desc()).all()
 
     def save_user_skill(
         self,

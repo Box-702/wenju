@@ -54,7 +54,7 @@ export const store = reactive({
   showNewProject: false,        // 新建作品弹窗开关
   showSettings: false,
   overlay: null,   // 全屏页面：assets | skills | output | tasks（null=关闭）
-  sideView: 'assets',  // 侧边栏视图：outline（大纲）| shots（镜头）| assets（资产）
+  sideView: 'assets',  // 侧栏视图：outline（大纲）| shots（镜头/提示词）| assets（资产）| skills（技能）
   assets: [],          // 当前项目的资产（角色/场景/素材/成片）——最终归宿
   providers: [],       // 可用模型列表（输入区「模型」胶囊下拉用）
   chatPref: null,       // 对话模型偏好 {provider_id, model_name} —— 下拉里标出当前选中

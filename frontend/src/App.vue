@@ -60,6 +60,17 @@ watch(
   },
 )
 
+/** 顶栏按钮 = 右侧栏视图开关：点一下右栏展开并切到对应视图；
+    再点同一个则收起（侧栏收起时按钮也回到无边框的样子）。 */
+function switchSideView(view) {
+  if (store.rightOpen && store.sideView === view) {
+    store.rightOpen = false
+    return
+  }
+  store.sideView = view
+  store.rightOpen = true
+}
+
 /** 保存提示词审阅结果（编辑器在 App 层，产出页与右侧栏共用同一份）。 */
 async function onPromptReview(payload) {
   await saveShotPrompt(payload, payload.decision, payload.prompt_review_note)
@@ -238,9 +249,7 @@ onUnmounted(() => {
       <span class="grain"></span>
     </div>
     <HeaderBar
-      @open-assets="store.overlay = 'assets'"
-      @open-skills="store.overlay = 'skills'"
-      @open-output="store.overlay = 'output'"
+      @switch-view="switchSideView"
       @open-tasks="store.overlay = 'tasks'"
     />
     <!-- 拖拽导入覆盖层 -->
@@ -260,7 +269,11 @@ onUnmounted(() => {
         <ChatComposer @open-skills="store.overlay = 'skills'" />
       </main>
       <div class="ctx-wrap" :class="{ closed: !store.rightOpen }">
-        <ContextPanel @open-assets="store.overlay = 'assets'" />
+        <ContextPanel
+          @open-assets="store.overlay = 'assets'"
+          @open-skills="store.overlay = 'skills'"
+          @open-output="store.overlay = 'output'"
+        />
       </div>
     </div>
   </template>

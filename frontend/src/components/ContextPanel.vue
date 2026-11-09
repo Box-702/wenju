@@ -18,7 +18,7 @@ import { computed, ref, watch, onMounted } from 'vue'
 import { store, loadShots, loadVideoJobs, loadAssets, notify } from '../stores/app'
 import AppIcon from './AppIcon.vue'
 import ShotList from './video/ShotList.vue'
-import { openPromptEditor, loadPromptHistory } from '../stores/app'
+import { openPromptEditor, loadPromptHistory, loadSkills, useSkill } from '../stores/app'
 import VideoPlayer from './video/VideoPlayer.vue'
 
 const props = defineProps({
@@ -26,7 +26,7 @@ const props = defineProps({
   collapsed: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['open-assets'])
+const emit = defineEmits(['open-assets', 'open-skills', 'open-output'])
 
 // ---- 可用视图（由上下文决定） ----
 const hasScript = computed(() => !!store.viewerScript && (store.viewerScript.scenes || []).length > 0)
@@ -36,8 +36,9 @@ const hasVideo = computed(() => (store.videoJobs || []).some((j) => j.status ===
 const views = computed(() => {
   const list = []
   if (hasScript.value) list.push({ key: 'outline', label: '大纲' })
-  if (hasShots.value) list.push({ key: 'shots', label: '镜头' })
+  list.push({ key: 'shots', label: '镜头' })
   list.push({ key: 'assets', label: '资产' })
+  list.push({ key: 'skills', label: '技能' })
   return list
 })
 
@@ -49,6 +50,8 @@ watch(views, (list) => {
 }, { immediate: true })
 
 const script = computed(() => store.viewerScript || { scenes: [] })
+
+const skills = computed(() => store.skills || [])
 
 /** 分类编号：01 / 02 / 03 */
 const pad2 = (n) => String(n).padStart(2, '0')
@@ -149,7 +152,10 @@ async function copyUrl(a) {
   }
 }
 
-onMounted(refresh)
+onMounted(() => {
+  refresh()
+  loadSkills()
+})
 watch(() => store.pid, refresh)
 watch(() => store.videoBatch?.status, (st) => {
   if (st === 'succeeded' || st === 'running') refresh()
@@ -241,13 +247,39 @@ watch(() => store.videoBatch?.status, (st) => {
         </div>
       </div>
 
-      <div class="cp-subtitle">镜头（{{ (store.shots || []).length }}）</div>
+      <div class="cp-subtitle-row">
+        <span class="cp-subtitle">镜头与提示词（{{ (store.shots || []).length }}）</span>
+        <button class="cp-link" type="button" @click="emit('open-output')">打开产出页 →</button>
+      </div>
       <ShotList
         class="cp-shots"
+        compact
         :shots="store.shots || []"
         :scenes="store.scenes || []"
         @edit-prompt="onEditPrompt"
       />
+    </div>
+
+    <!-- 技能：主 Agent 能按需加载的技能 -->
+    <div v-else-if="store.sideView === 'skills'" class="cp-body">
+      <div class="cp-subtitle-row">
+        <span class="cp-subtitle">技能</span>
+        <button class="cp-link" type="button" @click="emit('open-skills')">打开技能页 →</button>
+      </div>
+      <div v-if="!skills.length" class="cp-empty">还没有技能。导入一个 .md 开始。</div>
+      <div v-else class="skill-list">
+        <button
+          v-for="sk in skills"
+          :key="sk.name"
+          class="skill-row"
+          type="button"
+          :title="sk.description"
+          @click="useSkill(sk)"
+        >
+          <span class="sk-name">{{ sk.name }}</span>
+          <span class="sk-desc">{{ sk.description }}</span>
+        </button>
+      </div>
     </div>
 
     <!-- 资产：从资产库调出任何东西 -->
@@ -344,6 +376,22 @@ watch(() => store.videoBatch?.status, (st) => {
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
+}
+
+/* 技能行：文字行，不做方框（与菜单行一致） */
+.skill-list { display: flex; flex-direction: column; gap: 2px; }
+.skill-row {
+  display: flex; flex-direction: column; gap: 2px; width: 100%;
+  padding: 7px 9px; border: none; border-radius: var(--radius-sm);
+  background: transparent; color: var(--muted);
+  font-family: inherit; text-align: left; cursor: pointer;
+  transition: background 130ms var(--ease), color 130ms var(--ease);
+}
+.skill-row:hover { background: rgba(255, 255, 255, .08); color: var(--ink); }
+.sk-name { font-size: var(--fs-sm); color: var(--ink); font-weight: 500; }
+.sk-desc {
+  font-size: var(--fs-xs); color: var(--dim); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 
 .cp-link {

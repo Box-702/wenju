@@ -1,6 +1,6 @@
 <script setup>
 
-const emit = defineEmits(['open-assets', 'open-skills', 'open-output', 'open-tasks'])
+const emit = defineEmits(['switch-view', 'open-tasks'])
 // =====================================================================
 // HeaderBar.vue —— 顶栏
 //
@@ -53,26 +53,28 @@ function openWorkbench() {
       <span class="dot" aria-hidden="true"></span>{{ batchBadge.text }}
     </button>
 
+    <!-- 顶栏按钮 = 右侧栏的视图开关：默认不显式（无边框），
+         正显示这个视图时才有边框；右侧栏收起就没有边框。 -->
     <button
-      class="ghost page-btn"
+      :class="['ghost', 'page-btn', { on: store.rightOpen && store.sideView === 'assets' }]"
       title="资产库（角色 / 场景 / 素材）"
-      @click="emit('open-assets')"
+      @click="emit('switch-view', 'assets')"
     >
       <AppIcon name="folder" /> <span>资产库</span>
     </button>
 
     <button
-      class="ghost page-btn"
+      :class="['ghost', 'page-btn', { on: store.rightOpen && store.sideView === 'skills' }]"
       title="技能"
-      @click="emit('open-skills')"
+      @click="emit('switch-view', 'skills')"
     >
       <AppIcon name="sparkle" /> <span>技能</span>
     </button>
 
     <button
-      class="ghost page-btn"
-      title="产出（剧本 / 场景 / 视频）"
-      @click="emit('open-output')"
+      :class="['ghost', 'page-btn', { on: store.rightOpen && store.sideView === 'shots' }]"
+      title="产出（镜头与提示词）"
+      @click="emit('switch-view', 'shots')"
     >
       <AppIcon name="film" /> <span>产出</span>
     </button>
@@ -123,12 +125,27 @@ header button::after { content: ''; position: absolute; inset: -4px -6px; }
 .nav-toggle .app-ic { width: 14px; height: 14px; }
 .nav-toggle.on { color: var(--ink); }
 
+/* 顶栏按钮：平时不显式（透明底、无边框），右侧栏正显示它时才有边框；
+   右侧栏收起 → 又回到无边框的样子。 */
 .page-btn {
   display: inline-flex; align-items: center; gap: 5px;
   height: var(--control-h); padding: 0 10px;
   color: var(--muted); font-size: 12.5px;
+  border-color: transparent;
+  background: transparent;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease),
+              background var(--dur) var(--ease);
 }
-.page-btn:hover { color: var(--ink); background: rgba(255, 255, 255, .07); }
+.page-btn:hover {
+  color: var(--ink);
+  border-color: var(--line);
+  background: rgba(255, 255, 255, .06);
+}
+.page-btn.on {
+  color: var(--ink);
+  border-color: var(--line-strong);
+  background: rgba(255, 255, 255, .09);
+}
 .page-btn .app-ic { width: 13px; height: 13px; }
 
 .panel-toggle { margin-left: auto; }

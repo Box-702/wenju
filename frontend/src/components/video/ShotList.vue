@@ -55,8 +55,18 @@
               <span :class="['video-status', videoStatusClass(shot)]">{{ videoStatusLabel(shot) }}</span>
             </div>
             <div class="shot-subject">{{ shot.subject }}</div>
-            <div class="shot-action">{{ shot.action }}</div>
-            <div class="shot-meta">
+            <!-- 紧凑模式：提示词只露第一句，点「详情」才展开全文（窄栏里要能读） -->
+            <div v-if="compact && shot.video_prompt" class="shot-prompt">
+              <span :class="['prompt-label', shot.prompt_status]">
+                {{ promptStatusLabel(shot) }}
+              </span>
+              <span class="prompt-text">{{ firstSentence(shot.video_prompt) }}</span>
+              <button class="shot-more" type="button" @click.stop="openShot[shot.id] = !openShot[shot.id]">
+                {{ openShot[shot.id] ? '收起' : '详情' }}
+              </button>
+            </div>
+            <div v-else class="shot-action">{{ shot.action }}</div>
+            <div v-if="!compact" class="shot-meta">
               <span v-if="shot.camera?.type !== 'static'" class="meta-tag">
                 {{ cameraLabel(shot.camera) }}
               </span>
@@ -66,13 +76,13 @@
                 参考视频 ×{{ shot.reference_videos.length }}
               </span>
             </div>
-            <div v-if="shot.camera?.path" class="shot-path">运动 {{ truncate(shot.camera.path, 80) }}</div>
-            <div v-if="shot.spatial" class="shot-path">空间 {{ truncate(shot.spatial, 80) }}</div>
-            <div v-if="shot.background_action" class="shot-path">
+            <div v-if="!compact && shot.camera?.path" class="shot-path">运动 {{ truncate(shot.camera.path, 80) }}</div>
+            <div v-if="!compact && shot.spatial" class="shot-path">空间 {{ truncate(shot.spatial, 80) }}</div>
+            <div v-if="!compact && shot.background_action" class="shot-path">
               背景 {{ truncate(shot.background_action, 80) }}
             </div>
-            <div v-if="shot.final_frame" class="shot-path">终帧 {{ truncate(shot.final_frame, 80) }}</div>
-            <div v-if="shot.video_prompt" class="shot-prompt">
+            <div v-if="!compact && shot.final_frame" class="shot-path">终帧 {{ truncate(shot.final_frame, 80) }}</div>
+            <div v-if="shot.video_prompt && !compact" class="shot-prompt">
               <span :class="['prompt-label', shot.prompt_status]">
                 {{ promptStatusLabel(shot) }}
               </span>
@@ -80,6 +90,15 @@
                 <AppIcon name="warning" /> {{ shot.prompt_audit.length }}
               </span>
               <span class="prompt-text">{{ truncate(shot.video_prompt, 100) }}</span>
+            </div>
+            <!-- 紧凑模式展开：全文提示词 + 运镜/空间等细节（可读优先） -->
+            <div v-if="compact && openShot[shot.id]" class="shot-detail">
+              <p v-if="shot.video_prompt" class="detail-prompt">{{ shot.video_prompt }}</p>
+              <p v-if="shot.camera?.path" class="detail-line">运动：{{ shot.camera.path }}</p>
+              <p v-if="shot.spatial" class="detail-line">空间：{{ shot.spatial }}</p>
+              <p v-if="shot.background_action" class="detail-line">背景：{{ shot.background_action }}</p>
+              <p v-if="shot.final_frame" class="detail-line">终帧：{{ shot.final_frame }}</p>
+              <p v-if="shot.action" class="detail-line">动作：{{ shot.action }}</p>
             </div>
             <div class="shot-actions-row">
               <button
@@ -112,11 +131,16 @@ const props = defineProps({
   shots: { type: Array, default: () => [] },
   scenes: { type: Array, default: () => [] },
   selectedShot: { type: String, default: null },
+  /** 紧凑模式：侧栏里用——窄栏铺满运镜/空间/背景/终帧会淹掉内容，
+      收紧成「主体 + 状态 + 提示词首句」，点开才看全文。 */
+  compact: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['select-shot', 'generate-video', 'generate-all', 'play-video', 'edit-prompt', 'bulk-approve', 'refresh'])
 
 const expanded = reactive({})
+/** 紧凑模式下，单条镜头的详情展开状态 */
+const openShot = reactive({})
 const selectedIds = ref([])
 
 const groupedShots = computed(() => {
@@ -215,6 +239,13 @@ function promptStatusLabel(shot) {
   return shot.prompt_status === 'approved' ? '已批准' : shot.prompt_status === 'needs_revision' ? '需修改' : '待审阅'
 }
 
+/** 提示词的第一句（紧凑模式用：够看出这条镜头在拍什么）。 */
+function firstSentence(text) {
+  const t = String(text || '').trim()
+  const cut = t.split(/[。！？.!?]/)[0] || t
+  return cut.slice(0, 60).trim()
+}
+
 function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + '...' : s }
 </script>
 
@@ -285,6 +316,26 @@ function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + '...' : s }
   color: var(--cyan);
   background: color-mix(in oklch, var(--cyan) 10%, transparent);
 }
+
+/* 紧凑模式：提示词首句 + 详情按钮；展开后是可读的正文 */
+.shot-more {
+  flex: none; margin-left: 6px; padding: 0 6px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: transparent; color: var(--dim);
+  font-size: 10px; cursor: pointer;
+}
+.shot-more:hover { color: var(--ink); border-color: var(--line-strong); }
+.shot-detail {
+  margin: 6px 0 2px; padding: 8px 10px;
+  border-left: 2px solid var(--line-strong);
+  background: rgba(255, 255, 255, .03);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+.detail-prompt {
+  margin: 0 0 6px; font-size: var(--fs-sm); line-height: 1.75; color: var(--ink);
+  word-break: break-word;
+}
+.detail-line { margin: 0 0 3px; font-size: var(--fs-xs); line-height: 1.6; color: var(--muted); }
 
 .shot-actions-row { display: flex; gap: 4px; }
 </style>

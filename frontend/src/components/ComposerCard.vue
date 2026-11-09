@@ -332,7 +332,7 @@ function onInput(e) {
               <button
                 v-for="(it, i) in mentionItems"
                 :key="it.kind + ':' + it.id"
-                :class="['cc-mention-item', { active: i === mentionIndex }]"
+                :class="['menu-item', { on: i === mentionIndex }]"
                 type="button"
                 role="option"
                 :aria-selected="i === mentionIndex"
@@ -369,7 +369,7 @@ function onInput(e) {
                 <button
                   v-for="p in recentProjects"
                   :key="p.id"
-                  :class="['cc-menu-item', { on: p.id === store.pid }]"
+                  :class="['menu-item', { on: p.id === store.pid }]"
                   type="button"
                   role="menuitem"
                   @click.stop="pickProject(p)"
@@ -380,7 +380,7 @@ function onInput(e) {
                 <div v-if="!recentProjects.length" class="cc-menu-empty">还没有作品</div>
                 <div class="cc-menu-sep"></div>
                 <button
-                  class="cc-menu-item"
+                  class="menu-item"
                   type="button"
                   role="menuitem"
                   @click.stop="projectOpen = false; emit('new-project')"
@@ -616,15 +616,6 @@ function onInput(e) {
   padding: 5px 9px 6px; font-size: 10px; color: var(--dim);
   letter-spacing: .04em; border-bottom: 1px solid var(--line); margin-bottom: 3px;
 }
-.cc-mention-item {
-  display: flex; align-items: baseline; gap: 7px; width: 100%;
-  padding: 6px 9px; border-radius: var(--radius-md);
-  background: transparent; border: none; color: var(--muted);
-  font-size: var(--fs-sm); font-family: inherit; text-align: left; cursor: pointer;
-}
-.cc-mention-item:hover, .cc-mention-item.active {
-  background: rgba(255, 255, 255, .08); color: var(--ink);
-}
 .mi-name { color: var(--ink); font-weight: 500; flex: none; }
 .mi-sub { font-size: 10px; color: var(--dim); flex: none; }
 .mi-id { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--dim); }
@@ -693,7 +684,6 @@ function onInput(e) {
 .pi-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pi-meta { margin-left: auto; font-size: 10px; color: var(--dim); flex: none; }
 .pi-chev { width: 13px; height: 13px; flex: none; opacity: .5; }
-.cc-menu-item.on { color: var(--ink); background: rgba(255, 255, 255, .07); }
 .cc-menu-sep { height: 1px; background: var(--line); margin: 4px 2px; }
 .cc-gear .app-ic { width: 15px; height: 15px; }
 

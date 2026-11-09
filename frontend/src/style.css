@@ -453,6 +453,20 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 .chip:hover { background: rgba(255, 255, 255, .1); color: var(--ink); border-color: var(--line-strong); }
 .chip .app-ic { opacity: .72; }
 
+/* ---------- 菜单行：全站统一（样板 = 输入区的模型下拉） ----------
+   下拉里的条目是**文字行**，不是按钮：不带底色、不带描边，
+   悬停时才浮起一层很淡的底。全局 button 的底色+描边会让它们变成「方框」，
+   所以菜单里的每一项都要显式清掉。 */
+.menu-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 9px; border: none; border-radius: var(--radius-sm);
+  background: transparent; color: var(--muted);
+  font-size: 12.5px; font-family: inherit; text-align: left; cursor: pointer;
+  transition: background 130ms var(--ease), color 130ms var(--ease);
+}
+.menu-item:hover { background: rgba(255, 255, 255, .08); color: var(--ink); }
+.menu-item.on { color: var(--ink); background: rgba(255, 255, 255, .08); }
+
 /* ---------- 主行动 ---------- */
 .cta {
   background: var(--accent-grad); color: var(--on-accent);

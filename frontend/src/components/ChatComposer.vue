@@ -167,6 +167,23 @@ watch(() => store.draftSeq, () => {
       @asset-picked="onAssetPicked"
       @new-project="store.showNewProject = true"
     >
+      <!-- 「＋」菜单：与首页同一套（上传图片 / 资产库 / 生成资产图） -->
+      <template #menu="{ close }">
+        <button class="menu-item" type="button" role="menuitem" @click.stop="close(); pickImages()">
+          上传图片
+        </button>
+        <button class="menu-item" type="button" role="menuitem" @click.stop="close(); store.leftOpen = true">
+          资产库
+        </button>
+        <button
+          class="menu-item"
+          type="button"
+          role="menuitem"
+          :disabled="generatingAssets"
+          @click.stop="close(); generateAssets()"
+        >{{ generatingAssets ? '生成中…' : '生成资产图' }}</button>
+      </template>
+
       <template #attachments>
         <div v-if="attachedImages.length" class="image-strip" aria-label="待发送图片">
           <div v-for="item in attachedImages" :key="item.preview" class="image-thumb" :class="{ uploading: item.uploading }">
@@ -239,22 +256,5 @@ watch(() => store.draftSeq, () => {
 .pop-empty { padding: 12px; font-size: 11.5px; color: var(--dim); }
 
 /* 菜单条目（挂在 ComposerCard 的插槽里） */
-.cc-menu-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 9px 12px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: rgba(255, 255, 255, 0.86);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-}
 
-.cc-menu-item:hover {
-  background: rgba(255, 255, 255, 0.09);
-  color: #fff;
-}
 </style>

@@ -171,7 +171,7 @@ function cycleResolution() {
       <button
         v-for="item in MENU"
         :key="item.id"
-        class="cc-menu-item"
+        class="menu-item"
         type="button"
         role="menuitem"
         @click.stop="close(); pick(item)"
@@ -239,22 +239,5 @@ function cycleResolution() {
 }
 
 /* 菜单条目：挂在 ComposerCard 的插槽里，样式跟着卡片走 */
-.cc-menu-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 9px 12px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: rgba(255, 255, 255, 0.86);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-}
 
-.cc-menu-item:hover {
-  background: rgba(255, 255, 255, 0.09);
-  color: #fff;
-}
 </style>

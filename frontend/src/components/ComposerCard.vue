@@ -70,33 +70,52 @@ const providerModels = computed(() => modelsOf(currentProvider.value))
 
 /** 所有已配置厂商的模型，按厂商分组。
     用户配了多个厂商时，下拉里能一次看到每家的模型（选中即切到那家）。 */
-const modelGroups = computed(() =>
-  (store.providers || [])
-    .filter((p) => p.configured)
-    .map((p) => ({ provider: p, label: p.label || p.name, models: modelsOf(p) }))
-    .filter((g) => g.models.length),
-)
-
-/** 当前真正生效的那一条（厂商 + 模型），用来在下拉里打勾。
-    优先用对话偏好；没有偏好时按「实际在用的模型名」反查是哪家。 */
-const activeKey = computed(() => {
+/** 当前生效的模型名（对话偏好优先，否则就是实际在用的那个）。
+    偏好如果指向一个已经不存在的厂商（删过厂商又留了偏好），当作没有偏好。 */
+const livePref = computed(() => {
   const pref = store.chatPref
-  if (pref?.provider_id && pref?.model_name) return pref.provider_id + '|' + pref.model_name
-  const name = store.modelInfo?.name
-  if (!name) return ''
-  const hit = (store.providers || []).find(
-    (p) => modelsOf(p).some((m) => m.model === name),
-  )
-  return hit ? hit.id + '|' + name : ''
+  if (!pref?.provider_id) return null
+  const exists = (store.providers || []).some((p) => p.id === pref.provider_id)
+  return exists ? pref : null
 })
 
-/** 生效中的模型来自 .env（界面没指定过）且不在任何厂商的清单里 → 单独列一行，
-    让用户看得见「现在用的是哪个」。 */
-const envModelName = computed(() => {
-  if (activeKey.value) return ''
-  const info = store.modelInfo
-  if (info?.available && info?.name && info.source === 'env') return info.name
-  return ''
+const activeModelName = computed(
+  () => livePref.value?.model_name || store.modelInfo?.name || '',
+)
+
+/** 当前生效的模型来自 .env、且不在厂商配置的清单里 —— 这时要在下拉里补一行，
+    否则用户看到的「当前模型」在下拉里根本找不到。 */
+const activeFromEnv = computed(
+  () => !livePref.value?.model_name && store.modelInfo?.source === 'env',
+)
+
+/** 下拉按厂商分组；**当前生效的模型一定在列表里**并打勾。 */
+const modelGroups = computed(() => {
+  const groups = (store.providers || [])
+    .filter((p) => p.configured)
+    .map((p) => ({ provider: p, label: p.label || p.name, models: [...modelsOf(p)] }))
+
+  const name = activeModelName.value
+  if (name && !groups.some((g) => g.models.some((m) => m.model === name))) {
+    // 当前模型没被任何厂商列出：挂到它所属的那家（偏好指定 or 名字对得上），
+    // 都没有就单开一组。
+    const owner = groups.find(
+      (g) => g.provider.id === livePref.value?.provider_id
+        || modelsOf(g.provider).some((m) => m.model === name)
+        // .env 里的模型没有 provider_id，用厂商名对一下（大小写不敏感）
+        || String(g.provider.name || '').toLowerCase()
+           === String(store.modelInfo?.provider || '').toLowerCase(),
+    )
+    const item = {
+      name,
+      model: name,
+      enabled: true,
+      fromEnv: activeFromEnv.value,
+    }
+    if (owner) owner.models = [...owner.models, item]
+    else groups.push({ provider: { id: '', name: '', label: '当前使用' }, label: '当前使用', models: [item] })
+  }
+  return groups.filter((g) => g.models.length)
 })
 
 async function chooseModel(provider, m) {
@@ -355,12 +374,6 @@ function onInput(e) {
                   role="menuitem"
                   @click.stop="projectOpen = false; emit('new-project')"
                 ><span class="pi-title">新建作品</span></button>
-                <button
-                  class="cc-menu-item"
-                  type="button"
-                  role="menuitem"
-                  @click.stop="projectOpen = false; store.overlay = 'tasks'"
-                ><span class="pi-title">全部作品</span><AppIcon name="chevron-right" class="pi-chev" /></button>
               </div>
             </Transition>
           </div>
@@ -385,15 +398,7 @@ function onInput(e) {
                   <span class="mp-provider">对话模型</span>
                   <span class="mp-hint">模型设置里配好的</span>
                 </div>
-                <template v-if="envModelName">
-                  <div class="mp-label">当前使用</div>
-                  <div class="mp-item static">
-                    <span class="mi-name">{{ envModelName }}</span>
-                    <span class="mi-model">来自 .env</span>
-                    <span class="mi-check">✓</span>
-                  </div>
-                </template>
-                <template v-for="g in modelGroups" :key="g.provider.id">
+                <template v-for="g in modelGroups" :key="g.provider.id || g.label">
                   <div class="mp-label">{{ g.label }}</div>
                   <button
                     v-for="m in g.models"
@@ -401,15 +406,13 @@ function onInput(e) {
                     class="mp-item"
                     type="button"
                     role="menuitemradio"
-                    :aria-checked="g.provider.id + '|' + m.model === activeKey"
+                    :aria-checked="m.model === activeModelName"
                     @click.stop="chooseModel(g.provider, m)"
                   >
                     <span class="mi-name">{{ m.name }}</span>
                     <span class="mi-model">{{ m.model }}</span>
-                    <span
-                      v-if="g.provider.id + '|' + m.model === activeKey"
-                      class="mi-check"
-                    >✓</span>
+                    <span v-if="m.fromEnv" class="mi-src">来自 .env</span>
+                    <span v-if="m.model === activeModelName" class="mi-check">✓</span>
                   </button>
                 </template>
                 <div v-if="!modelGroups.length" class="mp-empty">
@@ -659,6 +662,7 @@ function onInput(e) {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .mp-item .mi-check { color: var(--accent); flex: none; font-size: 12px; }
+.mp-item .mi-src { flex: none; font-size: 10px; color: var(--dim); }
 .mp-empty { padding: 9px; font-size: var(--fs-xs); color: var(--dim); line-height: 1.6; }
 .cc-project { max-width: 190px; }
 /* 作品名超长就截断：不给它撑破胶囊的宽度 */

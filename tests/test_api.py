@@ -480,9 +480,18 @@ def test_clear_model_preference_falls_back_to_env(client):
     背景：界面选的模型优先级高于 .env，一旦选过就一直生效。用户改了 .env
     的模型名却不生效时，没有清除入口只能删库。
     """
-    # 先写一条界面偏好（模拟「用户在设置里选过模型」）
+    # 先建一个真实厂商（偏好不能指向不存在的厂商——那会变成「看着选了、其实没选」）
+    prov = client.post("/api/providers", json={
+        "kind": "llm", "name": "demo", "label": "演示厂商",
+        "base_url": "https://example.invalid/v1", "api_key": "sk-demo",
+        "config": {"model": "demo-model"},
+    })
+    assert prov.status_code == 200, prov.text
+    provider_id = prov.json()["id"]
+
+    # 再写一条界面偏好（模拟「用户在设置里选过模型」）
     resp = client.put("/api/models/preferences", json={
-        "task_type": "chat", "provider_id": "prov_demo", "model_name": "demo-model",
+        "task_type": "chat", "provider_id": provider_id, "model_name": "demo-model",
         "is_default": True,
     })
     assert resp.status_code == 200, resp.text
@@ -495,6 +504,20 @@ def test_clear_model_preference_falls_back_to_env(client):
     assert resp.json()["removed"] >= 1
     prefs = client.get("/api/models/preferences").json()
     assert not any(p["task_type"] == "chat" for p in prefs)
+
+
+def test_preference_cannot_point_to_missing_provider(client):
+    """偏好指向不存在的厂商要被拒。
+
+    否则它会变成「默认对话模型」，而真正生效的其实回落到 .env——
+    界面上看着像选了、其实没选，是最难查的一类状态。
+    """
+    resp = client.put("/api/models/preferences", json={
+        "task_type": "chat", "provider_id": "prov_does_not_exist", "model_name": "ghost",
+        "is_default": True,
+    })
+    assert resp.status_code == 400, resp.text
+    assert "厂商不存在" in resp.json()["detail"]
 
 
 def test_clear_model_preference_is_idempotent(client):

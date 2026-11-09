@@ -281,13 +281,16 @@ def list_preferences() -> list[dict[str, Any]]:
 @router.put("/models/preferences")
 def set_preference(payload: ModelPreferenceSet) -> dict[str, Any]:
     """设置模型偏好。"""
-    pref = deps.store().set_model_preference(
-        task_type=payload.task_type,
-        provider_id=payload.provider_id,
-        model_name=payload.model_name,
-        params=payload.params,
-        is_default=payload.is_default,
-    )
+    try:
+        pref = deps.store().set_model_preference(
+            task_type=payload.task_type,
+            provider_id=payload.provider_id,
+            model_name=payload.model_name,
+            params=payload.params,
+            is_default=payload.is_default,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
     deps.reset_llm()
     return {"id": pref.id, "task_type": pref.task_type, "ok": True}
 

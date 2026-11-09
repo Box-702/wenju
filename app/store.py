@@ -1346,6 +1346,10 @@ class Store:
         is_default: bool = True,
     ) -> ModelPreference:
         with self.session() as s:
+            # 偏好不能指向不存在的厂商：否则它会变成「默认对话模型」，
+            # 而真正生效的其实回落到 .env —— 界面上看着像选了、其实没选。
+            if provider_id and s.get(ApiProvider, provider_id) is None:
+                raise ValueError(f"厂商不存在：{provider_id}")
             # 先清除同类型的旧默认
             if is_default:
                 s.query(ModelPreference).filter_by(task_type=task_type, is_default=True).update({"is_default": False})

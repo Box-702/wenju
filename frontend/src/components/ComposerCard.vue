@@ -89,6 +89,17 @@ const activeFromEnv = computed(
   () => !livePref.value?.model_name && store.modelInfo?.source === 'env',
 )
 
+/** 当前模型的厂商（下拉顶部右侧那行小字）。
+    厂商 = 模型归属的那家；界面指定过就取那家，否则取 .env 里的那个。 */
+const activeVendor = computed(() => {
+  const pref = livePref.value
+  if (pref) {
+    const row = (store.providers || []).find((p) => p.id === pref.provider_id)
+    if (row) return row.label || row.name
+  }
+  return store.modelInfo?.provider || ''
+})
+
 /** 下拉按厂商分组；**当前生效的模型一定在列表里**并打勾。 */
 const modelGroups = computed(() => {
   const groups = (store.providers || [])
@@ -396,7 +407,7 @@ function onInput(e) {
               <div v-if="modelOpen" class="cc-model-pop" role="menu">
                 <div class="mp-head">
                   <span class="mp-provider">对话模型</span>
-                  <span class="mp-hint">模型设置里配好的</span>
+                  <span class="mp-hint">{{ activeVendor }}</span>
                 </div>
                 <template v-for="g in modelGroups" :key="g.provider.id || g.label">
                   <div class="mp-label">{{ g.label }}</div>

@@ -50,12 +50,13 @@ const turnMeta = computed(() => {
   return m || null
 })
 
+// 消息头的小字写**厂商**（谁答的）——模型名在下拉里能看到，不必每条重复。
 const metaLabel = computed(() => {
   const t = turnMeta.value
   if (!t) return ''
   const ms = Number(t.ms || 0)
   const dur = ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`
-  return `${t.model || t.provider || ''} · 处理 ${dur}`.trim()
+  return `${t.provider || t.model || ''} · 处理 ${dur}`.trim()
 })
 
 const visibleSteps = computed(() => {

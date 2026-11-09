@@ -74,6 +74,8 @@ SYSTEM_PROMPT_TEMPLATE = (
     "· 拆镜头（拆解 / 分镜 / 设计镜头 / 场景拆解）→ breakdown_scenes\n"
     "· 风格指南（视觉风格 / 角色造型 / 画面风格）→ generate_style_guide\n"
     "· 定妆图（参考图 / 人物形象图 / 视觉参考）→ generate_reference_assets\n"
+    "· 生成资产（定妆照 / 角色画像 / 场景图 / 音色）→ 先 load_skill 'asset-generation'："
+    "问清给谁生成与画面/声音要求，列清单让用户逐项确认后再生成\n"
     "· 视频 prompt（生成 prompt / 镜头描述）→ generate_video_prompts\n"
     "· 开始制作（一键制作 / 跑完整流程 / 出一版提示词）→ start_production，"
     "五阶段（剧本→拆解→风格→资产图→提示词）自动跑完，已完成的阶段自动复用\n"

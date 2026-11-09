@@ -40,6 +40,20 @@ const emit = defineEmits([
   'send', 'pick-menu', 'open-settings', 'open-skills', 'asset-picked', 'new-project',
 ])
 
+/** 「生成资产」：放一句触发语到输入框，让用户接着写具体要求。 */
+function startAssetGen() {
+  const el = textEl.value
+  const lead = '帮我生成资产：'
+  if (!text.value || !text.value.includes(lead)) {
+    text.value = text.value ? `${text.value} ${lead}` : lead
+  }
+  nextTick(() => {
+    el?.focus()
+    const end = el?.value.length || 0
+    el?.setSelectionRange(end, end)
+  })
+}
+
 /** 让外层（比如「＋」菜单）能直接打开 @ 候选。 */
 function openMention() {
   mentionOpen.value = true
@@ -442,6 +456,11 @@ function onInput(e) {
           <button class="chip" type="button" @click.stop="emit('open-skills')">
             <AppIcon name="folder" />
             <span>Skill</span>
+          </button>
+          <!-- 生成资产：放进输入框里一句触发语，剩下的由用户写、agent 按技能走流程 -->
+          <button class="chip cc-gen" type="button" title="生成定妆照 / 场景图 / 音色" @click.stop="startAssetGen">
+            <AppIcon name="sparkle" />
+            <span>生成资产</span>
           </button>
           <span v-if="hintText" class="cc-hint">{{ hintText }}</span>
         </div>

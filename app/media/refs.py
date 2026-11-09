@@ -94,6 +94,7 @@ def build_reference_assets(
     vision_client: VisionClient | None = None,
     max_retry: int = 2,
     on_progress: Any = None,
+    notes: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """为角色与场景生成定妆图并质检，返回 {名称: 图片URL}。
 
@@ -133,9 +134,14 @@ def build_reference_assets(
     char_ids = [c.id for c in script.characters]
     if appearances:
         char_ids = [cid for cid in char_ids if cid in appearances]
+    # 用户写的画面要求（按角色 id 或名字都能命中）追加在锚之后
+    extra = _notes_by_entity(notes, idx)
     for cid in char_ids:
         name = idx.display(cid)
         appearance = appearances.get(cid, "")
+        add = extra.get(cid, "")
+        if add:
+            appearance = (appearance + "；" + add).strip("； ")
         prompt = character_prompt(name, appearance, visual_style)
         refs[cid] = _generate_with_qa(
             provider, prompt, _QA_CHARACTER.format(expect=appearance or name),
@@ -149,6 +155,9 @@ def build_reference_assets(
     for lid in loc_ids:
         name = idx.display(lid)
         desc = environments.get(lid, "")
+        add = extra.get(lid, "")
+        if add:
+            desc = (desc + "；" + add).strip("； ")
         prompt = environment_prompt(name, desc, visual_style)
         refs[lid] = _generate_with_qa(
             provider, prompt, _QA_ENVIRONMENT.format(expect=desc or name),
@@ -156,6 +165,18 @@ def build_reference_assets(
         )
 
     return refs
+
+
+def _notes_by_entity(notes: dict[str, str] | None, idx: Any) -> dict[str, str]:
+    """把「名字 → 要求」的备注对齐到实体 id（名字键也要能用）。"""
+    out: dict[str, str] = {}
+    for key, text in (notes or {}).items():
+        t = str(text or "").strip()
+        if not t:
+            continue
+        eid = idx.resolve(str(key)) or str(key)
+        out[eid] = t
+    return out
 
 
 def _generate_with_qa(

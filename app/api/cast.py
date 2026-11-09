@@ -36,11 +36,14 @@ class CharacterChange(BaseModel):
     voice_id: str | None = None
     appearance: str | None = None
     image: str | None = None
+    note: str | None = None        # 画面要求（拼进定妆照 prompt）
+    voice_note: str | None = None   # 声音描述（克隆音色时的参考文本）
 
 
 class LocationChange(BaseModel):
     description: str | None = None
     image: str | None = None
+    note: str | None = None         # 画面要求（拼进场景图 prompt）
 
 
 class LibraryPatch(BaseModel):

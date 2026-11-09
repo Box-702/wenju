@@ -82,6 +82,8 @@ def build_library(
     genders = dict(style.get(GENDER_KEY) or {})
     # 用户克隆出来的音色没有内置名字，显示自己起的那个
     voice_labels = dict(style.get("voice_labels") or {})
+    # 用户写的画面要求 / 声音描述
+    art_notes, voice_notes = user_notes(style)
 
     cast = cast_script(
         script, casting=casting, genders=genders,
@@ -107,6 +109,9 @@ def build_library(
         if label:
             item["voice_label"] = label
             item["voice_custom"] = True
+        if m.char_id:
+            item["note"] = art_notes.get(m.char_id, "")
+            item["voice_note"] = voice_notes.get(m.char_id, "")
         characters.append(item)
     # 台词量降序，方便一眼看出谁是主要角色（资产库是给人看的，不是给程序）。
     characters.sort(key=lambda x: (-x["speech_chars"], x["name"]))
@@ -121,6 +126,7 @@ def build_library(
             "image": lookup(images, loc.id, idx),
             "scenes": st["scenes"],
             "has_image": bool(lookup(images, loc.id, idx)),
+            "note": art_notes.get(loc.id, ""),
         })
     locations.sort(key=lambda x: (-x["scenes"], x["name"]))
 
@@ -158,6 +164,17 @@ def voice_options(visual_style: str | None = None) -> list[dict[str, str]]:
     return out
 
 
+def user_notes(style: dict[str, Any] | None) -> tuple[dict[str, str], dict[str, str]]:
+    """取用户写的两份要求：画面要求（asset_notes）与声音描述（voice_notes）。
+
+    键是**实体 id**（跟其它资产一样按 id 索引，改名不会丢）。
+    """
+    st = style or {}
+    art = {str(k): str(v) for k, v in (st.get("asset_notes") or {}).items() if str(v).strip()}
+    voice = {str(k): str(v) for k, v in (st.get("voice_notes") or {}).items() if str(v).strip()}
+    return art, voice
+
+
 def apply_library_patch(
     style: dict[str, Any],
     patch: dict[str, Any],
@@ -188,6 +205,9 @@ def apply_library_patch(
     images = dict(merged.get("reference_images") or {})
     casting = dict(merged.get(VOICE_KEY) or {})
     genders = dict(merged.get(GENDER_KEY) or {})
+    # 用户写的两份要求
+    art_notes = dict(merged.get("asset_notes") or {})
+    voice_notes = dict(merged.get("voice_notes") or {})
 
     for name, change in (patch.get("characters") or {}).items():
         if not isinstance(change, dict):
@@ -217,6 +237,18 @@ def apply_library_patch(
                 images[k] = img
             else:
                 images.pop(k, None)
+        if "note" in change:
+            n = str(change.get("note") or "").strip()
+            if n:
+                art_notes[k] = n
+            else:
+                art_notes.pop(k, None)
+        if "voice_note" in change:
+            n = str(change.get("voice_note") or "").strip()
+            if n:
+                voice_notes[k] = n
+            else:
+                voice_notes.pop(k, None)
 
     descs = dict(merged.get("environment_descriptions") or {})
     for name, change in (patch.get("locations") or {}).items():
@@ -242,4 +274,6 @@ def apply_library_patch(
     merged["reference_images"] = images
     merged[VOICE_KEY] = casting
     merged[GENDER_KEY] = genders
+    merged["asset_notes"] = art_notes
+    merged["voice_notes"] = voice_notes
     return merged

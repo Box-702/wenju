@@ -17,6 +17,29 @@ from langchain_core.tools import tool
 from .context import ToolContext
 
 
+def _parse_notes(notes: str) -> dict[str, str]:
+    """把多行「名字: 要求」解析成 {名字: 要求}。
+
+    例：
+        林然: 三十五岁男性，深灰风衣，眼神疲惫
+        咸亨酒店: 暖黄油灯，木柜台
+    """
+    out: dict[str, str] = {}
+    for line in str(notes or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        sep = "：" if "：" in line else (":" if ":" in line else "")
+        if not sep:
+            continue
+        name, _, text = line.partition(sep)
+        name = name.strip()
+        text = text.strip()
+        if name and text:
+            out[name] = text
+    return out
+
+
 def build(ctx: ToolContext) -> list:
     """装配剧组域工具。"""
     store, llm, runner = ctx.store, ctx.llm, ctx.runner
@@ -189,8 +212,13 @@ def build(ctx: ToolContext) -> list:
         )
 
     @tool
-    def generate_reference_assets(project_id: str) -> str:
-        """启动参考资产流水线：为角色与场景生成定妆图，用视觉模型质检合格后注册为全局视觉参考，供视频生成锁住跨镜一致性。在后台运行。参数：project_id=项目 id。"""
+    def generate_reference_assets(project_id: str, notes: str = "") -> str:
+        """启动参考资产流水线：为角色与场景生成定妆图，用视觉模型质检合格后注册为全局视觉参考，供视频生成锁住跨镜一致性。在后台运行。
+
+        参数：project_id=项目 id；notes=用户写的画面要求，多行，每行「角色名或场景名: 要求」
+        （例如「林然: 三十五岁男性，深灰风衣，眼神疲惫」）。notes 会拼进对应角色的 prompt，
+        没写到的角色按风格指南里的锚生成。
+        """
         p = ctx.project(project_id)
         version = store.latest_version(p)
         if version is None:
@@ -211,6 +239,7 @@ def build(ctx: ToolContext) -> list:
             refs = build_reference_assets(
                 script, guide,
                 on_progress=_progress,
+                notes=_parse_notes(notes),
             )
             # 写回风格指南：reference_images 与风格锚一起持久化（无需改数据库表）
             store.merge_video_style(p.id, {"reference_images": refs})

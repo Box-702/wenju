@@ -26,6 +26,8 @@ router = APIRouter()
 log = logging.getLogger(__name__)
 
 _ALLOWED_EXTS = {".mp4", ".mov", ".webm", ".m4v", ".mkv", ".avi"}
+# 音频：音色克隆的样本（角色专属音色的来源）
+_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 _MAX_BYTES = 200 * 1024 * 1024  # 200MB
 
 # 白模/定妆照等静态图片：用户自己导入的参考图
@@ -75,8 +77,11 @@ async def upload_asset(project_id: str, file: UploadFile = File(...)) -> dict[st
     common.get_project(project_id)
     original = file.filename or "video.mp4"
     ext = Path(original).suffix.lower()
-    if ext not in _ALLOWED_EXTS:
-        raise HTTPException(400, f"不支持的格式 {ext}，可用：{' '.join(sorted(_ALLOWED_EXTS))}")
+    if ext not in _ALLOWED_EXTS and ext not in _AUDIO_EXTS:
+        raise HTTPException(
+            400,
+            f"不支持的格式 {ext}，可用：{' '.join(sorted(_ALLOWED_EXTS | _AUDIO_EXTS))}",
+        )
 
     data = bytearray()
     while chunk := await file.read(1024 * 1024):
@@ -85,8 +90,9 @@ async def upload_asset(project_id: str, file: UploadFile = File(...)) -> dict[st
             raise HTTPException(400, "文件超过 200MB 上限")
 
     asset_id = gen_id("asset")
+    kind = "audio" if ext in _AUDIO_EXTS else "video"
     asset = deps.store().add_asset(
-        project_id, kind="video", name=original, source="upload",
+        project_id, kind=kind, name=original, source="upload",
         url=f"/api/assets/file/{asset_id}", id=asset_id, content=bytes(data),
     )
     return _asset_dict(asset)

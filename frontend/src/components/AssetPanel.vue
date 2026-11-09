@@ -52,7 +52,7 @@
           <input
             ref="importInput"
             type="file"
-            accept="image/*,video/*"
+            accept="image/*,video/*,audio/*"
             multiple
             hidden
             @change="onImportChosen"
@@ -150,6 +150,20 @@
                   </Transition>
                 </div>
                 <p v-if="c.appearance" class="asset-desc" :title="c.appearance">{{ c.appearance }}</p>
+                <!-- 用户写的画面要求：会拼进这个角色的定妆照 prompt -->
+                <input
+                  v-model="c.note"
+                  class="asset-note"
+                  placeholder="画面要求（如：三十五岁，深灰长衫，眼神疲惫）"
+                  @change="saveNote(c)"
+                />
+                <!-- 声音描述：克隆音色时作为参考文本 -->
+                <input
+                  v-model="c.voice_note"
+                  class="asset-note"
+                  placeholder="声音描述（如：低沉沙哑，语速偏慢）"
+                  @change="saveNote(c)"
+                />
                 <div class="asset-nums">台词 {{ c.speech_chars }} 字 · {{ c.scenes }} 场</div>
               </div>
             </div>
@@ -417,6 +431,20 @@ const allGroups = computed(() =>
     }
   }),
 )
+
+/** 保存角色上的用户要求（画面要求 / 声音描述）。 */
+async function saveNote(c) {
+  try {
+    await api(`/projects/${store.pid}/library`, 'PATCH', {
+      characters: {
+        [c.name]: { note: c.note || '', voice_note: c.voice_note || '' },
+      },
+    })
+    notify(`已保存「${c.name}」的要求`, 'ok')
+  } catch (e) {
+    notify('保存失败：' + (e.detail || e.message))
+  }
+}
 
 // ---- 生成音色：上传样本 → MiniMax 克隆 → 绑到角色 ----
 const voiceFileInput = ref(null)
@@ -828,6 +856,16 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
   overflow: hidden;
 }
 .asset-nums { font-size: 10px; color: var(--dim); font-variant-numeric: tabular-nums; }
+/* 用户写的画面要求 / 声音描述：像备注一样轻，但真的进生成 */
+.asset-note {
+  width: 100%; box-sizing: border-box;
+  padding: 4px 7px; font-size: 10.5px; font-family: inherit;
+  color: var(--muted); background: rgba(0, 0, 0, .22);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  outline: none;
+}
+.asset-note::placeholder { color: var(--dim); }
+.asset-note:focus { color: var(--ink); border-color: var(--line-strong); background: rgba(0, 0, 0, .3); }
 .asset-pic video { display: block; width: 100%; height: 100%; object-fit: cover; }
 .asset-dl {
   display: inline-flex; align-items: center; gap: 4px; align-self: flex-start;

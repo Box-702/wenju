@@ -15,7 +15,7 @@
 # 跨域共享的小件（项目上下文、状态标签、文本截断）收在 context.py。
 # =====================================================================
 
-from . import crew, memory_tools, production, screenplay, source, video
+from . import asset, crew, memory_tools, production, screenplay, source, video
 from .context import Collector, ToolContext, short
 
 
@@ -38,6 +38,7 @@ def build_chat_tools(
         *memory_tools.build(ctx),
         *screenplay.build(ctx),
         *source.build_source_tools(ctx),
+        *asset.build_asset_tools(ctx),
         *production.build(ctx),
         *crew.build(ctx),
         *video.build(ctx),

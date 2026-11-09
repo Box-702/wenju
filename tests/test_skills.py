@@ -146,7 +146,13 @@ def test_audience_splits_crew_and_main():
     crew = {s.name for s in list_skills("crew")}
     main = {s.name for s in list_skills("main")}
     assert crew == {"director-breakdown", "video-prompt-zh", "video-prompt-en", "style-guide"}
-    assert main == {"novel-serial", "crew-pipeline", "production-delivery", "script-review"}
+    assert main == {
+        "novel-serial",
+        "crew-pipeline",
+        "production-delivery",
+        "script-review",
+        "asset-generation",
+    }
     assert not (crew & main)
 
 
@@ -157,7 +163,13 @@ def test_every_skill_declares_a_known_audience():
 
 def test_main_skill_index_lists_only_main_skills():
     idx = skill_index("main")
-    for name in ("novel-serial", "crew-pipeline", "production-delivery", "script-review"):
+    for name in (
+        "novel-serial",
+        "crew-pipeline",
+        "production-delivery",
+        "script-review",
+        "asset-generation",
+    ):
         assert name in idx
     # 主 Agent 不执行分镜，把导演方法论列进它的目录只会诱导它越位
     assert "director-breakdown" not in idx

@@ -14,7 +14,7 @@
 //   #/output                 产出
 //   #/tasks                  我的作品
 // =====================================================================
-import { store } from './stores/app'
+import { store, selectProject } from './stores/app'
 
 const OVERLAYS = ['assets', 'skills', 'output', 'tasks']
 
@@ -45,7 +45,6 @@ async function applyView(view) {
   if (view.startsWith('works/')) {
     const pid = view.slice('works/'.length)
     if (pid && pid !== store.pid) {
-      const { selectProject } = await import('./stores/app')
       await selectProject(pid)
     } else if (store.mode !== 'workspace') {
       store.mode = 'workspace'

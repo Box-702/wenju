@@ -12,6 +12,7 @@
 
 import { ref, computed, watch, nextTick } from 'vue'
 import MessageItem from './MessageItem.vue'
+import StatusStrip from './StatusStrip.vue'
 import WelcomeHero from './WelcomeHero.vue'
 import { store, focusComposer } from '../stores/app'
 import AppIcon from './AppIcon.vue'
@@ -63,6 +64,13 @@ watch(() => store.messages.length, () => { nearBottom.value = true; toBottom() }
   <div class="thread-wrap">
     <div ref="thread" class="thread" @scroll.passive="onScroll">
       <div class="thread-inner">
+        <!-- 最前面：这一轮 Agent 正在做什么（思考 / 调工具 / 写回复） -->
+        <StatusStrip
+          :phase="store.statusPhase"
+          :active="store.statusActive"
+          :elapsed="store.statusElapsed"
+        />
+
         <!-- 首次创作态：品牌开始页 -->
         <WelcomeHero v-if="isFirstRun" />
 

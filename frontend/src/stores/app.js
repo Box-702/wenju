@@ -51,7 +51,13 @@ export const store = reactive({
 
   // 杂项标记
   streaming: false,            // 是否正在流式生成
+  statusPhase: '',             // 顶部状态条：这一轮正在做什么
+  statusActive: false,         // 是否正在工作（结束后条子淡出）
+  statusElapsed: 0,            // 本轮已用时长（毫秒）
   streamingStage: '',          // 当前生成阶段（来自工具事件的用户可读文案，如「拆解镜头方案」）
+  statusPhase: '',             // 顶部状态条的文案（思考 / 正在做什么 / 正在写）
+  statusActive: false,         // 是否正在工作（结束后条子会淡出）
+  statusElapsed: 0,            // 本轮已用时长（毫秒）
   focusSeq: 0,                 // 「聚焦输入框」信号：开始页主按钮等递增它，输入区 watch 后 focus
   checked: reactive(new Map()), // runId -> Set(已勾选 patch 下标)
   showNewProject: false,        // 新建作品弹窗开关
@@ -719,6 +725,8 @@ export async function loadAssetIndex(pid = store.pid) {
   store.assetIndex = out
 }
 
+let _statusTimer = null
+
 export async function sendMessage(text, imageIds = [], refs = []) {
   if (store.streaming || (!text && !imageIds.length)) return
   // 先渲染用户气泡 + 一个「打字中」的 assistant 气泡
@@ -730,6 +738,10 @@ export async function sendMessage(text, imageIds = [], refs = []) {
 
   store.streaming = true
   store.streamingStage = ''
+  store.statusActive = true
+  store.statusPhase = '正在思考'
+  store.statusElapsed = 0
+  _statusTimer = setInterval(() => { store.statusElapsed += 100 }, 100)
   _streamAbort = new AbortController()
   try {
     await streamChat(
@@ -747,9 +759,14 @@ export async function sendMessage(text, imageIds = [], refs = []) {
     if (e && e.name !== 'AbortError') reply.content = `请求失败：${e.message}`
   } finally {
     _streamAbort = null
+    if (_statusTimer) { clearInterval(_statusTimer); _statusTimer = null }
     reply.streaming = false
     store.streaming = false
     store.streamingStage = ''
+    store.statusActive = false
+    setTimeout(() => {
+      if (!store.streaming) { store.statusPhase = ''; store.statusElapsed = 0 }
+    }, 2600)
     await loadTree()
   }
 }
@@ -764,12 +781,15 @@ function handleStreamEvent(ev, reply) {
     // 阶段状态：工具开始即更新文案，供输入区状态条实时展示。
     if (ev.event === 'tool_call') {
       store.streamingStage = STAGE_LABELS[ev.data.name] || '正在处理'
+      store.statusPhase = `正在${store.streamingStage}`
     }
   } else if (ev.event === 'token') {
     reply.content += ev.data.delta
+    if (!store.statusPhase || store.statusPhase === '正在思考') store.statusPhase = '正在写回复'
   } else if (ev.event === 'thinking') {
     // 推理模型的思考增量：实时展示，流结束后折叠；不进正文。
     reply.thinking = (reply.thinking || '') + ev.data.delta
+    if (!store.statusPhase) store.statusPhase = '正在思考'
   } else if (ev.event === 'done') {
     reply.content = ev.data.reply || reply.content
     reply.payloads = ev.data.payloads || []

@@ -235,7 +235,7 @@ onUnmounted(() => clearTimeout(copiedTimer))
   backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass);
   box-shadow: var(--shadow-2);
 }
-.cmd-text { font-size: 13.5px; color: var(--ink); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.cmd-text { font-size: 15px; color: var(--ink); line-height: 1.7; font-weight: 400; white-space: pre-wrap; word-break: break-word; }
 
 /* 用户消息附带的图片 */
 .cmd-images { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; margin-bottom: 6px; }
@@ -295,7 +295,12 @@ onUnmounted(() => clearTimeout(copiedTimer))
 
 /* Agent 正文 */
 .agent-body { display: flex; flex-direction: column; min-width: 0; max-width: 100%; position: relative; }
-.content { display: block; min-width: 0; max-width: 78ch; word-break: break-word; text-align: left; font-size: 14px; line-height: 1.78; }
+/* 聊天正文：字号比一般 UI 大一档（阅读为主），行距宽松，字重用常规。
+   太小的字在中文下会发糊，太粗的字压行——长段落尤其明显。 */
+.content {
+  display: block; min-width: 0; max-width: 74ch; word-break: break-word; text-align: left;
+  font-size: 15.5px; line-height: 1.85; font-weight: 400; color: var(--ink);
+}
 /* 消息头：模型徽标 · 处理耗时 · 操作 */
 .msg-meta {
   display: flex; align-items: center; gap: 10px;

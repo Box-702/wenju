@@ -24,6 +24,7 @@ import PromptEditor from './components/video/PromptEditor.vue'
 import AssetPreview from './components/AssetPreview.vue'
 import Toast from './components/Toast.vue'
 import { loadTree, loadWorkspace, loadWorkspaceTree, restorePanelPrefs, toggleRightPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, loadAssetRefs, closePromptEditor, saveShotPrompt } from './stores/app'
+import { initNav, pushNav } from './nav'
 import { importProject } from './api'
 
 // ---- 侧边栏自动弹出（通用上下文侧边栏的核心行为） ----
@@ -195,6 +196,11 @@ function onResize() {
   clampAll()
 }
 // 窄屏下选中项目 / 对话 → 收起抽屉（内容已切到中间列，面板挡视线）
+// 视图变化（首页 / 工作区 / 各个页面）写进浏览器历史，返回键就能退回去
+watch(() => [store.mode, store.pid, store.overlay], () => {
+  pushNav()
+})
+
 watch(() => [store.pid, store.convId], () => {
   // 进入作品 → 拉一份可 @ 引用的资产清单（角色 / 场景 / 成片）与引用索引（编号 → 定妆照）
   loadAssetIndex()
@@ -213,6 +219,7 @@ watch(() => store.view, () => {
 watch(() => store.rightOpen, () => clampAll())
 
 onMounted(async () => {
+  initNav()
   restorePanelPrefs()
   // 窄屏首屏：抽屉默认收起（覆盖 restorePanelPrefs 的桌面默认值）
   if (isNarrow.value) {

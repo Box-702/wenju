@@ -268,6 +268,8 @@ export async function reorderScenes(fromId, toId) {
 export async function selectProject(pid) {
   const token = ++_navSeq
   store.mode = 'workspace'
+  // 从「我的作品」这类整页进来时，把整页关掉——否则工作区被盖在下面
+  store.overlay = null
   // 中止进行中的流式回复：流属于旧会话，继续写只会产生孤儿数据。
   if (_streamAbort) _streamAbort.abort()
   store.pid = pid

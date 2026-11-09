@@ -336,6 +336,18 @@ onUnmounted(() => {
 
 <style scoped>
 /* 舞台 + 右侧上下文栏 */
+/* 进入工作区的入场动效：自上而下渐入。
+   幅度刻意小（12px）——太大会像「弹出来」，不像「打开」。 */
+@keyframes ctx-slide-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes stage-drop-in {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: none; }
+}
+
 .stage-wrap {
   display: flex;
   height: calc(100dvh - var(--header-h));
@@ -349,6 +361,8 @@ onUnmounted(() => {
   flex: none;
   width: 50%;
   min-height: 0;
+  /* 右栏展开：自右侧轻微滑入（它本来就是从右边来的） */
+  animation: ctx-slide-in 240ms var(--ease) backwards;
   transition: width 200ms var(--ease), opacity 200ms var(--ease);
   overflow: hidden;
 }
@@ -364,6 +378,8 @@ onUnmounted(() => {
   display: flex;
   flex: 1;
   flex-direction: column;
+  /* 进入工作区：从上方渐入（配合 rightOpen 的收起 → 展开也有同样的入场感） */
+  animation: stage-drop-in 280ms var(--ease) backwards;
   height: calc(100dvh - var(--header-h));
   min-width: 0;
   min-height: 0;

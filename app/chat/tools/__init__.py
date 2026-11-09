@@ -24,9 +24,16 @@ def build_chat_tools(
     llm,
     collector: Collector,
     runner=None,
+    project_id: str | None = None,
 ) -> list:
-    """构造对话 conductor 的工具集。conductor.build_chat_tools 只转调这里。"""
-    ctx = ToolContext(store=store, llm=llm, collector=collector, runner=runner)
+    """构造对话 conductor 的工具集。conductor.build_chat_tools 只转调这里。
+
+    project_id：本轮对话所属的作品——工具里 project_id 漏传时的兜底。
+    """
+    ctx = ToolContext(
+        store=store, llm=llm, collector=collector, runner=runner,
+        current_project_id=project_id,
+    )
     return [
         *memory_tools.build(ctx),
         *screenplay.build(ctx),

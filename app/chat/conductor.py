@@ -130,9 +130,13 @@ def build_chat_tools(
     llm: LLM,
     collector: _Collector,
     runner: SubAgentRunner | None = None,
+    project_id: str | None = None,
 ) -> list[Any]:
-    """构造对话 conductor 的工具集（实现在 ./tools/ 按域拆分）。"""
-    return _assemble_tools(store, llm, collector, runner=runner)
+    """构造对话 conductor 的工具集（实现在 ./tools/ 按域拆分）。
+
+    project_id：本轮对话所属的作品——工具漏传 project_id 时的兜底。
+    """
+    return _assemble_tools(store, llm, collector, runner=runner, project_id=project_id)
 
 
 # ---------- 对话内核 ----------
@@ -145,14 +149,16 @@ def build_agent_loop(
     runner: SubAgentRunner | None = None,
     *,
     has_images: bool = False,
+    project_id: str | None = None,
 ) -> AgentLoop:
     """构建（单轮）对话内核：显式工具循环。
 
     has_images：本轮用户消息带图——循环换用多模态模型解析
     （llm.chat_multimodal()：不支持视觉的对话厂商自动换到同厂视觉型号）。
+    project_id：本轮对话所属的作品——工具漏传 project_id 时的兜底。
     """
-    tools = build_chat_tools(store, llm, collector, runner=runner)
-    return AgentLoop(llm, tools, has_images=has_images)
+    tools = build_chat_tools(store, llm, collector, runner=runner, project_id=project_id)
+    return AgentLoop(llm, tools, has_images=has_images, current_project_id=project_id)
 
 
 # ---------- 历史 ----------
@@ -314,7 +320,10 @@ def _prepare_turn(
     collector: _Collector = {"project_id": project_id, "payloads": []}
     thread = conversation_id or GLOBAL_THREAD
     collector["conversation_id"] = thread if conversation_id else None
-    loop = build_agent_loop(store, llm, collector, runner=runner, has_images=bool(images))
+    loop = build_agent_loop(
+        store, llm, collector, runner=runner,
+        has_images=bool(images), project_id=project_id,
+    )
     note = _current_project_note(store, project_id)
     memory_note = memory.format_memory_note(store, project_id=project_id, conversation_id=thread)
     summary, recent = memory.compress_history_if_needed(store, llm, thread)
@@ -667,12 +676,13 @@ def chat_once(
     meta: dict[str, Any] | None = None,
     runner: SubAgentRunner | None = None,
     images: list[str] | None = None,
+    refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """非流式对话：执行一轮并返回完整结果。"""
     return _run_turn(
         store, llm, settings,
         conversation_id=conversation_id, project_id=project_id, message=message, meta=meta,
-        runner=runner, images=images,
+        runner=runner, images=images, refs=refs,
     )
 
 

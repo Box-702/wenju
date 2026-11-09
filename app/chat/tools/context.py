@@ -46,6 +46,9 @@ class ToolContext:
     llm: LLM
     collector: Collector
     runner: SubAgentRunner | None = None
+    # 本轮对话所属的作品（对话层知道）。工具的 project_id 缺省就用它——
+    # 模型偶尔会漏传 project_id（只给关键词），直接失败会让它放弃并反问用户。
+    current_project_id: str | None = None
 
     # ---- 取数助手 ----
 

@@ -24,16 +24,26 @@ HIT_WINDOW = 160
 
 
 def _source_text(ctx: ToolContext, project_id: str) -> tuple[Any, str]:
-    p = ctx.project(project_id)
+    """取作品与它的原文。
+
+    project_id 允许为空：缺省用「本轮对话所属的作品」。模型调这两个工具时
+    经常只给关键词、漏掉 id（实测发生过），直接失败会让它放弃并反问用户。
+    """
+    pid = (project_id or "").strip() or (ctx.current_project_id or "")
+    if not pid:
+        raise ValueError(
+            "不知道要看哪部作品的原文：请在对话里先打开一部作品，或把 project_id 传给我。"
+        )
+    p = ctx.project(pid)
     text = (getattr(p, "raw_text", "") or "").strip()
     return p, text
 
 
 def build_source_tools(ctx: ToolContext) -> list[Any]:
     @tool
-    def read_source(project_id: str, start: int = 0, chars: int = MAX_CHARS) -> str:
-        """读这部作品的原著原文（分段读）。参数：project_id=项目 id，start=从第几个字开始（默认 0），
-        chars=读多少字（默认 4000，最多 4000）。
+    def read_source(project_id: str = "", start: int = 0, chars: int = MAX_CHARS) -> str:
+        """读这部作品的原著原文（分段读）。参数：project_id=项目 id（**可省略，默认当前作品**），
+        start=从第几个字开始（默认 0），chars=读多少字（默认 4000，最多 4000）。
 
         用途：核对初稿与原文是否对得上、回答「原文里第几段写了什么」。
         原文很长时按 start 往下翻；工具会告诉你总字数和还剩多少。
@@ -56,9 +66,9 @@ def build_source_tools(ctx: ToolContext) -> list[Any]:
         )
 
     @tool
-    def search_source(project_id: str, keyword: str, window: int = HIT_WINDOW) -> str:
-        """在原著原文里按关键词定位（找出某段话出现在原文哪里）。参数：project_id=项目 id，
-        keyword=要找的关键词或短语，window=每条命中带多少字上下文（默认 160）。
+    def search_source(project_id: str = "", keyword: str = "", window: int = HIT_WINDOW) -> str:
+        """在原著原文里按关键词定位（找出某段话出现在原文哪里）。参数：project_id=项目 id
+        （**可省略，默认当前作品**），keyword=要找的关键词或短语，window=每条命中带多少字上下文（默认 160）。
 
         用途：用户问「原文里怎么写的 XXX」时，直接定位原文出处；
         也用来核对初稿有没有偏离原文。

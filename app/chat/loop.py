@@ -163,11 +163,14 @@ class AgentLoop:
         *,
         max_steps: int = MAX_TOOL_STEPS,
         has_images: bool = False,
+        current_project_id: str | None = None,
     ) -> None:
         self.llm = llm
         self.tools = list(tools)
         self.max_steps = max_steps
         self.has_images = has_images
+        # 本轮对话所属的作品：模型漏传/传空 project_id 时用它兜底。
+        self.current_project_id = current_project_id or ""
         self._by_name = {getattr(t, "name", ""): t for t in self.tools if getattr(t, "name", "")}
 
     # ---- 对外 ----
@@ -296,6 +299,12 @@ class AgentLoop:
         tool = self._by_name.get(name)
         if tool is None:
             return f"未知工具：{name}。可用工具：{', '.join(sorted(self._by_name)) or '无'}"
+        # 模型常把 project_id 漏掉或传空（实测：get_status("") 会答「还没有剧本版本」）。
+        # 这里是唯一的收口处：所有作品级工具统一补上当前作品。
+        if self.current_project_id:
+            args = dict(args or {})
+            if "project_id" in args and not str(args.get("project_id") or "").strip():
+                args["project_id"] = self.current_project_id
         try:
             result = tool.invoke(args)
         except Exception as e:  # noqa: BLE001

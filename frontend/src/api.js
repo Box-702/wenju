@@ -36,7 +36,13 @@ export async function importProject(formData) {
 
 /** 上传素材文件（参考视频等）。 */
 export async function uploadAsset(projectId, file) {
-  const res = await fetch(`${BASE}/projects/${projectId}/assets/upload`, {
+  // 图片与视频走**不同的后端端点**：/assets/upload 只收视频，
+  // /images/upload 只收图片。混着发会得到「不支持的格式」。
+  const isImage = (file.type || '').startsWith('image/')
+  const path = isImage
+    ? `projects/${projectId}/images/upload`
+    : `projects/${projectId}/assets/upload`
+  const res = await fetch(`${BASE}/${path}`, {
     method: 'POST',
     body: (() => { const fd = new FormData(); fd.append('file', file); return fd })(),
   })

@@ -667,7 +667,6 @@ export const STAGE_LABELS = {
   get_status: '查看项目状态',
   start_production: '启动制作流水线',
   load_skill: '读取技能细则',
-  add_asset: '登记素材',
   remember: '记住这条偏好',
   recall: '回忆你的偏好',
 }
@@ -978,7 +977,6 @@ export async function submitVideoJob(shot) {
       prompt: shot.video_prompt,
       version_id: store.videoVersionId,
       params: { aspect_ratio: store.videoAspect || null },
-      reference_videos: (shot.reference_videos || []).map(s => (s || '').trim()).filter(Boolean),
     })
     notify(`视频任务已提交：${shot.subject || shot.id}`, 'ok')
     await loadVideoJobs()
@@ -1212,8 +1210,8 @@ export async function saveShotPrompt(shot, decision = 'save', note = '') {
         prompt: shot.video_prompt,
         decision,
         note,
-        // 用户自备参考视频（白模/previz 等 URL，≤3）；无则传空数组清空
-        reference_videos: (shot.reference_videos || []).map(s => (s || '').trim()).filter(Boolean),
+        // 用户从参考素材里挑的参考视频（素材 id，≤3）；无则传空数组清空
+        reference_asset_ids: [...(shot.reference_asset_ids || [])],
       },
     )
     await loadShots()

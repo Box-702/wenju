@@ -78,14 +78,48 @@ def test_asset_upload_rejects_bad_ext(store, settings, monkeypatch, tmp_path):
     assert resp.status_code == 400
 
 
-def test_asset_url_requires_http(store, settings, monkeypatch, tmp_path):
+def test_asset_url_endpoint_is_gone(store, settings, monkeypatch, tmp_path):
+    """公网直链那条路整条拆掉了：素材只能上传进来，不能再登记外部链接。
+
+    理由见 app/media/inline.py 的注释——服务商只认 http(s) 或 data:base64，
+    而本机回放地址它是拉不到的，所以「登记一条公网直链」这个概念没有存在必要。
+    """
     settings.workspace_root = str(tmp_path)
     client = _client(store, settings, monkeypatch)
     pid = _project(client)
-    assert client.post(f"/api/projects/{pid}/assets/url", json={"url": "ftp://x"}).status_code == 400
-    ok = client.post(f"/api/projects/{pid}/assets/url", json={"url": "https://cdn.example.com/a.mp4"})
-    assert ok.status_code == 200
-    assert ok.json()["source"] == "url"
+    assert client.post(f"/api/projects/{pid}/assets/url", json={"url": "https://cdn.example.com/a.mp4"}).status_code == 404
+
+
+def test_asset_upload_records_media_properties(store, settings, monkeypatch, tmp_path):
+    """入库时量出时长/尺寸：用户选参考素材时就能当场看见这段片子能不能用。"""
+    import subprocess
+
+    from app.video.qa import _ffmpeg
+
+    ffmpeg = _ffmpeg()
+    if not ffmpeg:
+        pytest.skip("本机无 ffmpeg，跳过媒体属性测量测试")
+
+    clip_path = tmp_path / "clip.mp4"
+    subprocess.run(
+        [ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi",
+         "-i", "testsrc=size=320x240:rate=10:duration=3",
+         "-pix_fmt", "yuv420p", str(clip_path)],
+        check=True, capture_output=True,
+    )
+
+    settings.workspace_root = str(tmp_path)
+    client = _client(store, settings, monkeypatch)
+    pid = _project(client)
+    resp = client.post(
+        f"/api/projects/{pid}/assets/upload",
+        files={"file": ("clip.mp4", io.BytesIO(clip_path.read_bytes()), "video/mp4")},
+    )
+    assert resp.status_code == 200, resp.text
+    asset = resp.json()
+    assert asset["source"] == "upload"
+    assert asset["duration_sec"] is not None
+    assert 2.0 <= asset["duration_sec"] <= 4.0
 
 
 # ---------- 删 provider 清偏好 ----------

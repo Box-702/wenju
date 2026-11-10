@@ -41,29 +41,44 @@
     </div>
 
     <div class="editor-field">
-      <label>参考视频 <span>可选，≤3 条公网 URL（白模 / previz / 前镜成片）</span></label>
+      <label>参考视频 <span>可选，≤3 条（从参考素材里选）</span></label>
       <div class="ref-video-list">
-        <div v-for="(_, i) in refVideos" :key="i" class="ref-row">
+        <div v-for="(id, i) in refAssetIds" :key="id" class="ref-row">
           <span class="ref-idx">{{ i + 1 }}</span>
-          <input
-            v-model.trim="refVideos[i]"
-            class="ref-input"
-            type="url"
-            inputmode="url"
-            placeholder="https://…（mp4 直链）"
-            @keydown.enter.prevent
-          />
+          <span class="ref-name">{{ assetName(id) }}</span>
           <button
-            v-if="refVideos.length > 1"
             class="ref-del"
             title="移除这条参考视频"
             aria-label="移除参考视频"
-            @click="refVideos.splice(i, 1)"
+            @click="refAssetIds.splice(i, 1)"
           ><AppIcon name="close" /></button>
         </div>
-        <button v-if="refVideos.length < 3" class="ref-add" @click="refVideos.push('')">
-          ＋ 添加参考视频
+        <p v-if="!refAssetIds.length" class="ref-hint">
+          参考素材里的白模 / previz 可以挂在这里，锁住这一镜的画风。
+        </p>
+        <button
+          v-if="refAssetIds.length < 3"
+          class="ref-add"
+          @click="pickerOpen = !pickerOpen"
+        >
+          {{ pickerOpen ? '收起' : '＋ 从参考素材里选' }}
         </button>
+      </div>
+      <div v-if="pickerOpen" class="ref-picker">
+        <button
+          v-for="a in videoAssets"
+          :key="a.id"
+          class="ref-pick"
+          :class="{ on: refAssetIds.includes(a.id) }"
+          :disabled="!refAssetIds.includes(a.id) && refAssetIds.length >= 3"
+          @click="toggleAsset(a.id)"
+        >
+          <span class="rp-name">{{ a.name }}</span>
+          <span class="rp-meta">{{ assetMeta(a) }}</span>
+        </button>
+        <p v-if="!videoAssets.length" class="ref-empty">
+          参考素材里还没有视频。到「资产库 → 参考素材」导入后再回来选。
+        </p>
       </div>
       <div class="field-foot">
         <span>随任务作为 reference_video 提交；自动接力的前镜成片不会被它覆盖。</span>
@@ -121,6 +136,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import AppIcon from '../AppIcon.vue'
+import { store, loadAssets } from '../../stores/app.js'
 
 const props = defineProps({
   shot: { type: Object, default: null },
@@ -132,14 +148,39 @@ const emit = defineEmits(['close', 'review'])
 
 const editedPrompt = ref('')
 const note = ref('')
-const refVideos = ref([''])
+// 参考视频：选参考素材（资产库里的本地文件），存的是素材 id。
+const refAssetIds = ref([])
+const pickerOpen = ref(false)
 
 watch(() => props.shot, (s) => {
   editedPrompt.value = s?.video_prompt || ''
   note.value = s?.prompt_review_note || ''
-  const saved = (s?.reference_videos || []).map(v => (v || '').trim()).filter(Boolean)
-  refVideos.value = saved.length ? [...saved] : ['']
+  refAssetIds.value = [...(s?.reference_asset_ids || [])]
 }, { immediate: true })
+
+// 参考素材随作品变：打开审阅器时拉一次最新的。
+watch(() => store.pid, (pid) => { if (pid) loadAssets(pid) }, { immediate: true })
+
+/** 参考素材里可当参考视频的条目：本地导入的视频。 */
+const videoAssets = computed(() =>
+  (store.assets || []).filter(a => a.kind === 'video' && a.source === 'upload'),
+)
+
+function assetName(id) {
+  const hit = (store.assets || []).find(a => a.id === id)
+  return hit ? hit.name : '（素材已删除）'
+}
+
+function assetMeta(a) {
+  if (a.duration_sec) return `${a.duration_sec.toFixed(1)}s`
+  return ''
+}
+
+function toggleAsset(id) {
+  const i = refAssetIds.value.indexOf(id)
+  if (i >= 0) refAssetIds.value.splice(i, 1)
+  else if (refAssetIds.value.length < 3) refAssetIds.value.push(id)
+}
 
 const statusLabel = computed(() => ({
   approved: '已批准',
@@ -159,7 +200,7 @@ function review(decision) {
     ...props.shot,
     video_prompt: editedPrompt.value.trim(),
     prompt_review_note: note.value.trim(),
-    reference_videos: refVideos.value.map(v => (v || '').trim()).filter(Boolean),
+    reference_asset_ids: [...refAssetIds.value],
     decision,
   })
 }
@@ -234,13 +275,12 @@ function formatTime(value) {
   border-radius: 4px; border: 1px solid var(--line);
   color: var(--cyan); font: 600 10px/1 var(--mono);
 }
-.ref-input {
-  flex: 1; min-width: 0; padding: 7px 9px; background: var(--code-bg);
-  border: 1px solid var(--line); border-radius: var(--radius-sm);
-  color: var(--text, #eee); font-size: 12px; font-family: var(--mono);
+.ref-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: 12px; color: var(--ink);
 }
-.ref-input:focus { outline: none; border-color: var(--cyan); }
-.ref-input::placeholder { color: var(--dim); }
+.ref-empty { font-size: 11.5px; line-height: 1.6; color: var(--dim); }
+.ref-hint { margin: 0; font-size: 11.5px; line-height: 1.6; color: var(--dim); }
 .ref-del {
   flex: none; width: 22px; height: 22px; border: 1px solid var(--line);
   border-radius: var(--radius-sm); background: transparent; color: var(--muted);
@@ -253,6 +293,25 @@ function formatTime(value) {
   cursor: pointer; font-size: 11px;
 }
 .ref-add:hover { color: var(--ink); border-color: var(--line-strong); }
+/* 参考素材选择面板 */
+.ref-picker {
+  display: flex; flex-direction: column; gap: 4px;
+  margin: 6px 0 2px; padding: 6px;
+  background: var(--code-bg); border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  max-height: 168px; overflow-y: auto;
+}
+.ref-pick {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  padding: 5px 7px; border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: transparent; color: var(--muted);
+  cursor: pointer; font-size: 12px; text-align: left;
+}
+.ref-pick:hover:not(:disabled) { background: rgba(255, 255, 255, .05); color: var(--ink); }
+.ref-pick.on { border-color: var(--cyan); color: var(--ink); }
+.ref-pick:disabled { opacity: .45; cursor: default; }
+.rp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-meta { flex: none; font: 10px/1 var(--mono); color: var(--dim); }
 .history { margin: 4px 0 14px; border-top: 1px solid var(--line); padding-top: 10px; }
 .history-head { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-bottom: 5px; }
 .history-head span:last-child { color: var(--dim); }

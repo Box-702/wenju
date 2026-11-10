@@ -239,7 +239,9 @@ class MediaAsset(Base):
 
     source=upload / finalize：文件本体存数据库（content bytea），url 为本服务回放
     地址，本地不落盘；历史记录可能仍带 file_path（相对 workspace_root 的磁盘文件，
-    回放端点向下兼容）。source=url：直接登记外部公网链接（MiniMax 等服务商要求公网可访问）。
+    回放端点向下兼容）。
+
+    素材只有「上传」一条入库通道：公网直链那条路已拆掉（见 D-37）。
     """
 
     __tablename__ = "media_assets"
@@ -248,10 +250,14 @@ class MediaAsset(Base):
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
     kind: Mapped[str] = mapped_column(default="video")          # video | image | audio
     name: Mapped[str] = mapped_column(default="")
-    source: Mapped[str] = mapped_column(default="upload")        # upload | url | finalize
+    source: Mapped[str] = mapped_column(default="upload")        # upload | finalize
     url: Mapped[str] = mapped_column(default="")
     file_path: Mapped[str | None] = mapped_column(default=None)  # 兼容历史：相对 workspace_root
     content: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)  # 文件本体（DB 存储）
+    # 入库时量出来的媒体属性：选参考素材时要当场告诉用户「这段 21 秒，用不了」。
+    duration_sec: Mapped[float | None] = mapped_column(default=None)
+    width: Mapped[int | None] = mapped_column(default=None)
+    height: Mapped[int | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(default=_now)
 
 
@@ -552,12 +558,18 @@ class Store:
                 if "breakdown_json" not in cols_ver:
                     conn.execute(text("ALTER TABLE script_versions ADD COLUMN breakdown_json VARCHAR DEFAULT '{}'"))
 
-            # ---- media_assets 表：content bytea（文件本体入库）----
+            # ---- media_assets 表：content bytea（文件本体入库）+ 媒体属性 ----
             if "media_assets" in tables:
                 cols_asset = {c["name"] for c in insp.get_columns("media_assets")}
-                if "content" not in cols_asset:
-                    with self.engine.begin() as conn:
+                with self.engine.begin() as conn:
+                    if "content" not in cols_asset:
                         conn.execute(text("ALTER TABLE media_assets ADD COLUMN content BYTEA"))
+                    if "duration_sec" not in cols_asset:
+                        conn.execute(text("ALTER TABLE media_assets ADD COLUMN duration_sec FLOAT"))
+                    if "width" not in cols_asset:
+                        conn.execute(text("ALTER TABLE media_assets ADD COLUMN width INTEGER"))
+                    if "height" not in cols_asset:
+                        conn.execute(text("ALTER TABLE media_assets ADD COLUMN height INTEGER"))
 
             # ---- conversations 表：滚动摘要列（老库补列）----
             if "conversations" in tables:
@@ -1044,11 +1056,13 @@ class Store:
     # ---- Media assets ----
     def add_asset(self, project_id: str, *, kind: str, name: str, source: str,
                   url: str, file_path: str | None = None, id: str | None = None,
-                  content: bytes | None = None) -> MediaAsset:
+                  content: bytes | None = None, duration_sec: float | None = None,
+                  width: int | None = None, height: int | None = None) -> MediaAsset:
         with self.session() as s:
             a = MediaAsset(id=id or gen_id("asset"), project_id=project_id, kind=kind,
                            name=name, source=source, url=url, file_path=file_path,
-                           content=content)
+                           content=content, duration_sec=duration_sec,
+                           width=width, height=height)
             s.add(a)
             s.commit()
             s.refresh(a)

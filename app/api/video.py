@@ -387,15 +387,35 @@ def get_video_version(version_id: str) -> dict[str, Any]:
     }
 
 
-def _normalize_reference_videos(urls: list[str] | None) -> list[str]:
-    """清洗用户自备参考视频 URL：去空白、去重、只留 http(s)、上限 3 条。"""
+def _normalize_reference_assets(asset_ids: list[str] | None, project_id: str) -> list[str]:
+    """校验用户挑的参考素材：必须是本作品的视频素材，且时长在服务商能收的范围内。
+
+    返回通过校验的素材 id（去重、上限 3 条）。不合格的直接抛 400 —— 与其让用户
+    提交后白跑一次生成，不如在保存提示词时就告诉他这段片子为什么不能用。
+    """
+    from ..media.probe import duration_seconds
+    from ..video.base import REFERENCE_VIDEO_MAX_SEC, REFERENCE_VIDEO_MIN_SEC
+
+    store = deps.store()
     cleaned: list[str] = []
-    for raw in urls or []:
-        url = str(raw or "").strip()
-        if not url.startswith(("http://", "https://")):
+    for raw in asset_ids or []:
+        asset_id = str(raw or "").strip()
+        if not asset_id or asset_id in cleaned:
             continue
-        if url not in cleaned:
-            cleaned.append(url)
+        asset = store.get_asset(asset_id)
+        if asset is None or asset.project_id != project_id:
+            raise HTTPException(404, f"参考素材不存在：{asset_id}")
+        if asset.kind != "video":
+            raise HTTPException(400, f"参考素材《{asset.name or asset_id}》不是视频")
+        data = getattr(asset, "content", None)
+        seconds = duration_seconds(bytes(data), asset.name or "") if data else None
+        if seconds is not None and not (REFERENCE_VIDEO_MIN_SEC <= seconds <= REFERENCE_VIDEO_MAX_SEC):
+            raise HTTPException(
+                400,
+                f"参考素材《{asset.name or asset_id}》时长 {seconds:.1f} 秒，"
+                f"视频模型只接受 {REFERENCE_VIDEO_MIN_SEC:.0f}–{REFERENCE_VIDEO_MAX_SEC:.0f} 秒的片段",
+            )
+        cleaned.append(asset_id)
         if len(cleaned) >= 3:
             break
     return cleaned
@@ -441,8 +461,8 @@ def review_video_prompt(
         "needs_review"
     )
     target["prompt_review_note"] = payload.note.strip()
-    if payload.reference_videos is not None:
-        target["reference_videos"] = _normalize_reference_videos(payload.reference_videos)
+    if payload.reference_asset_ids is not None:
+        target["reference_asset_ids"] = _normalize_reference_assets(payload.reference_asset_ids, project_id)
     # 人工改完 prompt 后重跑确定性审计，结论随新版本落库（出厂前双重审计的人工侧）。
     # 传入风格指南的 camera_style，排除「本镜没有的运镜」——风格段每个镜头都带一遍。
     refresh_prompt_audits(shots, style_context=_style_context(current))
@@ -601,7 +621,12 @@ def set_video_milestone(version_id: str, milestone: str | None = None) -> dict[s
 
 
 def _job_params(payload: dict[str, Any]) -> Any:
-    """把落库的 params 映射成 Provider 统一入参（多余键进 extra）。"""
+    """把落库的 params 映射成 Provider 统一入参（多余键进 extra）。
+
+    参考素材是本机文件（回放地址 /api/assets/file/xxx），服务商拉不到这种相对
+    地址（实测 MiniMax 判 invalid param），所以在这里统一内联成 data URI。
+    """
+    from ..media.inline import inline_media_urls
     from ..video.base import VideoJobParams
 
     # 这些键有专门的归处：既不要重复塞进 extra，也不要当作未知字段透传给 provider。
@@ -619,9 +644,9 @@ def _job_params(payload: dict[str, Any]) -> Any:
         negative_prompt=payload.get("negative_prompt"),
         image_url=payload.get("first_frame_image"),
         last_frame_image=payload.get("last_frame_image"),
-        reference_images=payload.get("reference_images") or [],
-        reference_videos=payload.get("reference_videos") or [],
-        reference_audios=payload.get("reference_audios") or [],
+        reference_images=inline_media_urls(deps.store(), payload.get("reference_images") or []),
+        reference_videos=inline_media_urls(deps.store(), payload.get("reference_videos") or []),
+        reference_audios=inline_media_urls(deps.store(), payload.get("reference_audios") or []),
         content=payload.get("content"),
         extra={k: v for k, v in payload.items() if k not in handled_keys},
     )
@@ -693,7 +718,7 @@ def _create_and_submit_job(project_id: str, payload: VideoJobCreate) -> Any:
     stored_params["duration_sec"] = duration
     stored_params.setdefault("resolution", default_resolution())
     for key in ("first_frame_image", "last_frame_image", "reference_images",
-                "reference_videos", "reference_audios", "content"):
+                "reference_audios", "content"):
         value = getattr(payload, key)
         if value:
             stored_params[key] = value
@@ -744,6 +769,24 @@ def _job_dict(j: Any) -> dict[str, Any]:
     }
 
 
+def _manual_reference_videos(project_id: str, shot: dict[str, Any]) -> list[str]:
+    """镜头里用户挑的参考素材 → 本机回放地址列表。
+
+    存的是素材 id（库里 id 才是真相，名字只是显示用的别名），提交给服务商前
+    由 _job_params 内联成 data URI；这里先还原成回放地址，好和自动接力的公网
+    直链放在同一个列表里统一排序、截断。
+    """
+    store = deps.store()
+    urls: list[str] = []
+    for asset_id in shot.get("reference_asset_ids") or []:
+        asset = store.get_asset(str(asset_id))
+        if asset is None or asset.project_id != project_id:
+            continue
+        if asset.url and asset.url not in urls:
+            urls.append(asset.url)
+    return urls
+
+
 def _auto_references(project_id: str, shot_id: str | None, version_id: str | None, stored_params: dict[str, Any]) -> None:
     """提交时自动补齐多模态一致性输入（调用方显式提供的键优先，不覆盖）。
 
@@ -788,7 +831,20 @@ def _auto_references(project_id: str, shot_id: str | None, version_id: str | Non
         image_registry=registry,
         script=script,
     )
-    for key in ("reference_images", "reference_videos"):
+    # 参考视频：用户挑的参考素材（本地文件）+ 自动接力的前镜成片（公网直链）合并。
+    # 服务商最多收 3 条（实测超了报「参考视频最多 3 个」），按「显式 > 接力」填满。
+    shot = next((s for s in version.shots if isinstance(s, dict) and s.get("id") == shot_id), {})
+    manual = _manual_reference_videos(project_id, shot)
+    merged: list[str] = []
+    for url in (
+        list(stored_params.get("reference_videos") or [])
+        + manual
+        + list(refs.get("reference_videos") or [])
+    ):
+        if url and url not in merged:
+            merged.append(url)
+    stored_params["reference_videos"] = merged[:3]
+    for key in ("reference_images",):
         if refs.get(key) and not stored_params.get(key):
             stored_params[key] = refs[key]
 
@@ -897,9 +953,8 @@ def _batch_submit(
                     **({"resolution": resolution} if resolution else {}),
                     **({"aspect_ratio": aspect_ratio} if aspect_ratio else {}),
                 },
-                # 镜头级用户自备参考素材随镜头计划透传；
-                # 与自动接力（_auto_references）不冲突：显式给的键优先。
-                reference_videos=[u for u in shot.get("reference_videos") or [] if u],
+                # 镜头级参考图随镜头计划透传；
+                # 参考视频由 _auto_references 统一合并（用户挑的参考素材 + 自动接力）。
                 reference_images=[u for u in shot.get("reference_images") or [] if u],
             ))
             return job.id

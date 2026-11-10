@@ -524,18 +524,14 @@ def test_guard_flags_claims_without_tool_results():
     assert _guard_unverified_claims(chat, events=[]) == chat
 
 
-def test_add_asset_tool_registers_url(store, llm):
-    """对话里发链接 → add_asset 工具登记进项目素材库。"""
-    tools, collector = _make_tools(store, llm)
-    tools["create_project"].invoke({"title": "素材测试", "adaptation_type": "short_drama", "raw_text": "一段足够具体的原文，讲一个雨夜的故事。" * 3})
-    pid = collector["project_id"]
-    r = tools["add_asset"].invoke({"project_id": pid, "url": "https://cdn.example.com/ref.mp4"})
-    assert "已登记" in r
-    assets = store.list_assets(pid, kind="video")
-    assert len(assets) == 1 and assets[0].source == "url"
-    # 非法链接拒绝
-    r2 = tools["add_asset"].invoke({"project_id": pid, "url": "不是链接"})
-    assert "http" in r2
+def test_no_add_asset_tool_anymore(store, llm):
+    """对话里不再有「登记公网直链」这条路。
+
+    参考视频只能来自参考素材（本地文件），提交给服务商时内联成 data URI；
+    公网直链这条路整条拆掉了——服务商拉不到本机回放地址，留着只会让人踩空。
+    """
+    tools, _ = _make_tools(store, llm)
+    assert "add_asset" not in tools
 
 
 # ---------- 主 Agent 的按需技能加载 ----------

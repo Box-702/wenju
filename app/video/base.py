@@ -39,6 +39,12 @@ def default_resolution() -> str:
 # ---- 请求 / 响应数据结构 ----
 
 
+# 服务商对「参考视频」的硬约束（MiniMax H3 V2 实测）：
+# 参考视频时长必须落在 2–15 秒，超了整次生成直接被拒。
+REFERENCE_VIDEO_MIN_SEC = 2.0
+REFERENCE_VIDEO_MAX_SEC = 15.0
+
+
 @dataclass
 class VideoJobParams:
     """视频生成请求参数（统一格式）。

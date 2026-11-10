@@ -68,11 +68,6 @@ export async function uploadChatImage(file) {
   return res.json()
 }
 
-/** 登记一个外部素材 URL。 */
-export async function addAssetUrl(projectId, url, name = '') {
-  return api(`/projects/${projectId}/assets/url`, 'POST', { url, name })
-}
-
 /** 列出项目素材。 */
 export async function listAssets(projectId, kind) {
   const q = kind ? `?kind=${encodeURIComponent(kind)}` : ''

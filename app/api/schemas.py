@@ -160,9 +160,9 @@ class VideoPromptReview(BaseModel):
     prompt: str = Field(min_length=1, max_length=8000)
     decision: Literal["save", "approve", "needs_revision"] = "save"
     note: str = Field(default="", max_length=2000)
-    # 用户自备参考视频（白模/previz/前镜成片等公网 URL）。
+    # 用户从参考素材里挑的参考视频（资产 id）。
     # None=本次不改动；列表=整体替换（空列表即清空），最多 3 条。
-    reference_videos: list[str] | None = Field(default=None, max_length=3)
+    reference_asset_ids: list[str] | None = Field(default=None, max_length=3)
 
 
 class VideoPromptBulkReview(BaseModel):
@@ -178,7 +178,12 @@ class VideoJobCreate(BaseModel):
 
     除文本 prompt 外，开放多模态输入入口（对应 MiniMax H3 等
     多模态模型的 content 数组）：首帧图 / 尾帧图 / 参考图 /
-    参考视频 / 参考音频，以及原生 content 数组直通。
+    参考音频，以及原生 content 数组直通。
+
+    参考视频**不在这里传**：它由镜头自己带的「参考素材」决定
+    （见 app/api/video.py 的 _auto_references）。对外不再留
+    「手填一条公网 URL 当参考视频」的口子——服务商只认 http(s) 或
+    data:base64，而本机回放地址它拉不到（见 app/media/inline.py）。
     """
 
     shot_id: str = Field(min_length=1)
@@ -191,6 +196,5 @@ class VideoJobCreate(BaseModel):
     first_frame_image: str | None = None       # 首帧图 URL（图生视频）
     last_frame_image: str | None = None        # 尾帧图（首尾帧控制）
     reference_images: list[str] = Field(default_factory=list)  # 参考图（≤9）
-    reference_videos: list[str] = Field(default_factory=list)  # 参考视频（≤3）
     reference_audios: list[str] = Field(default_factory=list)  # 参考音频（≤3）
     content: list[dict[str, Any]] | None = None  # 原生多模态数组直通（优先级最高）

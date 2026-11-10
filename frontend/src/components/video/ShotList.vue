@@ -89,8 +89,8 @@
               </span>
               <span v-if="shot.lighting" class="meta-tag">光线 {{ shot.lighting }}</span>
               <span v-if="shot.mood" class="meta-tag">情绪 {{ shot.mood }}</span>
-              <span v-if="shot.reference_videos?.length" class="meta-tag ref-tag">
-                参考视频 ×{{ shot.reference_videos.length }}
+              <span v-if="shot.reference_asset_ids?.length" class="meta-tag ref-tag">
+                参考视频 ×{{ shot.reference_asset_ids.length }}
               </span>
             </div>
             <div v-if="!compact && shot.camera?.path" class="shot-path">运动 {{ truncate(shot.camera.path, 80) }}</div>

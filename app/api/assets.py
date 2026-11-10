@@ -1,11 +1,12 @@
 # =====================================================================
-# assets.py —— 项目媒体素材（参考视频等）
+# assets.py —— 项目媒体素材（参考视频 / 参考图等）
 #
-# 两条入库通道：
-#   - upload：文件本体直接存数据库（media_assets.content bytea），本地不落盘，
-#     本服务提供回放；适合预览、归档。注意 MiniMax 等服务商拉取参考素材
-#     要求公网可访问 URL，本机回放地址对他们不可达——那类素材请走 url 登记。
-#   - url：直接登记外部公网链接（对象存储 / 图床 / 已生成成片的 CDN 地址）。
+# 入库只有一条通道：upload —— 文件本体存数据库（media_assets.content bytea），
+# 本地不落盘，本服务提供回放。
+#
+# 为什么不再留「登记外部公网直链」：素材只有进了库才谈得上一致（角色定妆照、
+# 场景图、参考视频都是本地文件）。服务商拉不到本机回放地址，提交前会统一内联成
+# data URI（见 app/media/inline.py），公网直链这条路因此没有存在必要。
 # =====================================================================
 
 from __future__ import annotations
@@ -17,9 +18,8 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel, Field
-
 from . import common, deps
+from ..media import probe
 from ..store import gen_id
 
 router = APIRouter()
@@ -43,13 +43,8 @@ _IMAGE_TYPES = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
     ".webp": "image/webp", ".gif": "image/gif",
 }
-
-
-class AssetUrlCreate(BaseModel):
-    """登记一个外部素材链接。"""
-
-    url: str = Field(min_length=1, max_length=2000)
-    name: str = Field(default="", max_length=200)
+# 参考图的每边像素下限（服务商要求，实测每边 256–5760）。
+_MIN_IMAGE_SIDE = 256
 
 
 def _asset_dict(a: Any) -> dict[str, Any]:
@@ -60,6 +55,9 @@ def _asset_dict(a: Any) -> dict[str, Any]:
         "name": a.name,
         "source": a.source,
         "url": a.url,
+        "duration_sec": a.duration_sec,
+        "width": a.width,
+        "height": a.height,
         "created_at": a.created_at.isoformat(),
     }
 
@@ -91,9 +89,11 @@ async def upload_asset(project_id: str, file: UploadFile = File(...)) -> dict[st
 
     asset_id = gen_id("asset")
     kind = "audio" if ext in _AUDIO_EXTS else "video"
+    payload = bytes(data)
     asset = deps.store().add_asset(
         project_id, kind=kind, name=original, source="upload",
-        url=f"/api/assets/file/{asset_id}", id=asset_id, content=bytes(data),
+        url=f"/api/assets/file/{asset_id}", id=asset_id, content=payload,
+        duration_sec=probe.duration_seconds(payload, original) if kind == "video" else None,
     )
     return _asset_dict(asset)
 
@@ -118,22 +118,19 @@ async def upload_image(project_id: str, file: UploadFile = File(...)) -> dict[st
             raise HTTPException(400, "图片超过 20MB 上限")
 
     asset_id = gen_id("asset")
+    payload = bytes(data)
+    size = probe.image_size(payload, original)
+    if size and min(size) < _MIN_IMAGE_SIDE:
+        raise HTTPException(
+            400,
+            f"图片尺寸太小（{size[0]}×{size[1]}），视频模型要求每边至少 {_MIN_IMAGE_SIDE} 像素",
+        )
     asset = deps.store().add_asset(
         project_id, kind="image", name=original, source="upload",
-        url=f"/api/assets/file/{asset_id}", id=asset_id, content=bytes(data),
+        url=f"/api/assets/file/{asset_id}", id=asset_id, content=payload,
+        width=size[0] if size else None,
+        height=size[1] if size else None,
     )
-    return _asset_dict(asset)
-
-
-@router.post("/projects/{project_id}/assets/url")
-def add_asset_url(project_id: str, payload: AssetUrlCreate) -> dict[str, Any]:
-    """登记一个外部素材 URL（公网直链，可直接喂给视频服务商）。"""
-    common.get_project(project_id)
-    url = payload.url.strip()
-    if not url.startswith(("http://", "https://")):
-        raise HTTPException(400, "URL 必须以 http(s) 开头")
-    name = payload.name.strip() or url.rsplit("/", 1)[-1] or "外部视频"
-    asset = deps.store().add_asset(project_id, kind="video", name=name, source="url", url=url)
     return _asset_dict(asset)
 
 

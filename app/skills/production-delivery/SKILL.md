@@ -57,4 +57,4 @@ audience: main
 # 相关工具
 
 `get_status` · `approve_video_prompts` · `submit_videos` ·
-`rerun_video` · `finalize_film` · `add_asset`
+`rerun_video` · `finalize_film`

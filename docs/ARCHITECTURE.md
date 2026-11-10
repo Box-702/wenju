@@ -11,7 +11,7 @@
 资产与版本全部落库。
 
 ```
-用户 ←→ 对话 Agent（手写工具循环，23 个工具）
+用户 ←→ 对话 Agent（手写工具循环，22 个工具）
           ├── 改编工作流（LangGraph 7 节点 + interrupt 人审）→ 剧本版本
           ├── 剧组三函数（导演 → 美术 → 摄影）→ 分镜 / 视觉锚 / 视频提示词
           ├── 出片（Provider 抽象 → 队列 → 巡检 → 拼接 → 配音字幕）
@@ -39,7 +39,7 @@
 | 想改 | 去哪 |
 |---|---|
 | 写作 / 分镜规则 | `app/skills/*/SKILL.md`（不用动代码，改完跑 `python -m evals.run`） |
-| 对话行为与工具 | `app/chat/loop.py`（内核）+ `app/chat/tools/*`（23 个工具按域拆） |
+| 对话行为与工具 | `app/chat/loop.py`（内核）+ `app/chat/tools/*`（22 个工具按域拆） |
 | 改编流程 | `app/agent/graph.py` + `nodes.py` |
 | 模型厂商 | `app/llm/providers.py` 加一条 `ProviderSpec` |
 | 出片供应商 | `app/video/providers/` + `registry.py` |
@@ -77,7 +77,7 @@ app/
 | `api/` | 2646 | 9 个域模块（+ common/schemas/deps），83 条路由 |
 | `video/` | 2518 | Provider 适配 + 队列 + 巡检 + 拼接 + 合成 |
 | `crew/` | 2262 | 三个剧组角色的编排（提示词正文已外置到 `skills/`） |
-| `chat/` | 2166 | 内核 323 行 + 编排 718 行 + 23 个工具实现 |
+| `chat/` | 2166 | 内核 323 行 + 编排 718 行 + 22 个工具实现 |
 | `media/` | 1846 | 参考资产 / 配音 / 字幕 / 资产实体层 |
 | `agent/` | 1678 | 7 节点图 + 后台任务运行器 |
 | `llm/` | 1302 | 门面 + 厂商表 + 视觉/文生图/TTS 客户端 |
@@ -100,7 +100,7 @@ api/
 ├── chat.py        对话式 Agent 与会话管理（含图片上传/回放）
 ├── production.py  生产工作流（一键跑「剧本→拆解→风格→资产图→提示词」）
 ├── cast.py        资产库：角色形象 / 声音 / 图片 / 场景的唯一入口
-├── assets.py      项目媒体素材入库（上传字节 or 公网直链）
+├── assets.py      项目媒体素材入库（只有「上传」一条通道，见 D-37）
 └── video.py       Provider / 模型偏好 / 视频版本 / 生成任务
 ```
 
@@ -223,7 +223,7 @@ OpenAI 兼容服务都支持它——**MiniMax 实测报 `2013 unknown response_
 
 先给结论，因为这块最容易想歪：
 
-> **只有一个 LLM Agent（对话编排层），调度 23 个工具。剧组三个「角色」是函数，不是进程。**
+> **只有一个 LLM Agent（对话编排层），调度 22 个工具。剧组三个「角色」是函数，不是进程。**
 > **「按需加载」只发生在主 Agent 那一层；剧组三个角色的技能是每次全量拼进系统提示的。**
 
 为什么不做进程级多 Agent（每个角色独立上下文、独立工具集、互相通信）：它们各自只做
@@ -235,7 +235,7 @@ OpenAI 兼容服务都支持它——**MiniMax 实测报 `2013 unknown response_
 
 | Agent | 角色 | 职责 |
 |---|---|---|
-| **ChatConductor** | 前厅 / 调度 | 绑定 23 个工具理解用户意图，把请求路由到确定性流水线或后台剧组任务 |
+| **ChatConductor** | 前厅 / 调度 | 绑定 22 个工具理解用户意图，把请求路由到确定性流水线或后台剧组任务 |
 
 **内核是手写的显式循环**（`app/chat/loop.py`，2026-11-05 替换掉 LangGraph 的 StateGraph + ToolNode）：
 
@@ -257,14 +257,14 @@ for step in range(max_steps):        # 上限 8 轮，防止无限工具调用
 系统提示分两层：**触发器留在提示词**（决定该调哪个工具，每轮都要用），**执行细则进技能**
 （`audience: main` 的四个 SKILL.md，由 `load_skill` 工具按需拉）。见 [`DECISIONS.md` D-14](DECISIONS.md)。
 
-23 个工具的实现按域拆在 `app/chat/tools/`（conductor 只留编排，`build_chat_tools` 是装配壳）：
+22 个工具的实现按域拆在 `app/chat/tools/`（conductor 只留编排，`build_chat_tools` 是装配壳）：
 `screenplay.py`（项目与改编）/ `crew.py`（剧组）/ `video.py`（出片与素材）/ `memory_tools.py`（记忆与技能），
-跨域小件（ToolContext、状态标签、文本截断）收在 `context.py`。分组（2026-11-01 由 26 个合到 19 个，此后随新增工具回到 23 个）：
+跨域小件（ToolContext、状态标签、文本截断）收在 `context.py`。分组（2026-11-01 由 26 个合到 19 个，此后随新增工具回到 22 个）：
 
 | 组 | 工具 |
 |---|---|
 | 项目与改编 | `create_project` `map_novel` `propose_arcs` `generate_script` `run_adaptation` `ask` |
-| 剧组与素材 | `breakdown_scenes` `generate_style_guide` `generate_video_prompts` `generate_reference_assets` `add_asset` |
+| 剧组与素材 | `breakdown_scenes` `generate_style_guide` `generate_video_prompts` `generate_reference_assets` |
 | 出片 | `approve_video_prompts` `submit_videos` `rerun_video` `finalize_film` |
 | 状态与记忆 | `get_status` `remember` `recall` |
 | 技能 | `load_skill` |
@@ -532,7 +532,7 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
 | `app/chat/tools/context.py` | `ToolContext`（store / llm / collector / runner 一轮一份）+ 跨域取数助手（`project` / `latest_video_version` / `latest_job_by_shot`）+ 状态标签 + `short()` |
 | `app/chat/tools/screenplay.py` | 剧本域：建项目 / 章节地图 / 选段 / 初稿 / 改编 / 咨询 |
 | `app/chat/tools/crew.py` | 剧组域：拆解 / 风格指南 / 定妆图 / 提示词（都是「启动后台任务」） |
-| `app/chat/tools/video.py` | 出片域：批准 / 提交 / 重跑 / 素材 / 合成 / 查进度 |
+| `app/chat/tools/video.py` | 出片域：批准 / 提交 / 重跑 / 合成（查进度在状态域） |
 | `app/chat/tools/memory_tools.py` | 轻件域：remember / recall / load_skill |
 | `conductor.py`（745 行） | 只剩编排：系统提示、对话图、轮次服务、审阅确定性路径 |
 

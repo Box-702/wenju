@@ -508,6 +508,7 @@ class Shot(BaseModel):
     # ---- 一致性锚定（多模态输入，对接 VideoJobParams）----
     reference_images: list[str] = Field(default_factory=list)  # 共享环境/人物参考图 URL
     reference_videos: list[str] = Field(default_factory=list)  # 参考上一镜成片 URL，锁风格/运镜/光影
+    reference_asset_ids: list[str] = Field(default_factory=list)  # 用户从参考素材里挑的参考视频 id
     first_frame_image: str | None = None  # 首帧图（接上一镜尾帧）
     last_frame_image: str | None = None   # 尾帧图（供下一镜接力）
     # ---- 视频生成状态 ----

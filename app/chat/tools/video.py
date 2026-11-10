@@ -135,17 +135,6 @@ def build(ctx: ToolContext) -> list:
             return f"重跑失败：{detail}"
 
     @tool
-    def add_asset(project_id: str, url: str, name: str = "") -> str:
-        """把一个公网素材直链（参考视频等，http/https）登记进项目素材库，供视频生成挂参考。用户在对话里发来链接并说「当参考/加进素材」时调用。参数：project_id=项目 id，url=公网直链，name=可选的名字。"""
-        p = ctx.project(project_id)
-        url = (url or "").strip()
-        if not url.startswith(("http://", "https://")):
-            return "需要 http(s) 开头的公网直链；本地文件请用左上角「＋」上传。"
-        name = (name or "").strip() or url.rsplit("/", 1)[-1] or "外部视频"
-        asset = store.add_asset(p.id, kind="video", name=name, source="url", url=url)
-        return f"已登记素材「{asset.name}」，生成视频时可以在镜头提示词里把它挂为参考视频。"
-
-    @tool
     def finalize_film(project_id: str, subtitles: bool = True, dubbing: bool = True) -> str:
         """把已生成成功的镜头合成为完整成片（拼装 + 台词配音 + 台词字幕，后台执行）。用户说「合成成片 / 拼成片 / 出完整视频」时调用。参数：project_id=项目 id，subtitles=是否烧台词字幕（默认开），dubbing=是否配台词语音（默认开，无台词或未配语音 key 时自动跳过）。"""
         from ...deps import finalize_manager as _manager
@@ -260,6 +249,5 @@ def build(ctx: ToolContext) -> list:
         approve_video_prompts,
         submit_videos,
         rerun_video,
-        add_asset,
         finalize_film,
     ]

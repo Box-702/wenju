@@ -96,7 +96,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     "\n"
     "【硬规矩】\n"
     "0. 用户用 @ 引用资产（@林然 / @滨江路）：被 @ 到的就是本轮要处理的对象——"
-    "回答里直接用这个称呼，改它要走资产相关工具（改写定妆图 / 登记素材 / 重新生成该角色资产），"
+    "回答里直接用这个称呼，改它要走资产相关工具（改写定妆图 / 重新生成该角色资产），"
     "不要凭空描述、也不要换成别的角色；本轮上下文里的「本轮引用的资产」列的就是它们。\n"
     "1. 汇报以工具返回为准：说「已生成 / 已建成 / 已挑出 / 已提交 / 已出片」之前，本轮必须真的调用过对应工具；"
     "严禁凭对话历史编造版本号（ver_xxx）、场次、进度或任务结果。没调工具就直说还没做，或者先做再说。\n"
@@ -274,7 +274,7 @@ _TOOL_ACTION_LABELS = {
     "generate_video_prompts": "撰写镜头提示词", "generate_reference_assets": "生成定妆图",
     "get_status": "查询进度", "approve_video_prompts": "批准提示词",
     "submit_videos": "提交出片",
-    "rerun_video": "重roll镜头", "add_asset": "登记素材", "finalize_film": "合成成片",
+    "rerun_video": "重roll镜头", "finalize_film": "合成成片",
     "map_novel": "建立章节地图", "propose_arcs": "挑选改编段落",
 }
 

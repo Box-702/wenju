@@ -70,11 +70,25 @@ jobs:
       - name: 跑离线 eval
         run: uv run pytest evals -q
 
+  eval-gate:
+    name: 探测 eval 密钥（job 级 if 不能读 secrets，先转成 output）
+    runs-on: ubuntu-latest
+    outputs:
+      has-key: ${{ steps.check.outputs.has-key }}
+    steps:
+      - id: check
+        env:
+          EVAL_API_KEY: ${{ secrets.EVAL_API_KEY }}
+        run: echo "has-key=$([ -n "$EVAL_API_KEY" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
   eval-llm:
     name: 提示词 eval（真实链路）
     runs-on: ubuntu-latest
-    # 需要 secret 才跑；没配时整个 job 跳过，不阻塞 CI。
-    if: ${{ github.event_name == 'push' || secrets.EVAL_API_KEY != '' }}
+    needs: eval-gate
+    # 只在 push 且配了 EVAL_API_KEY 时跑；没配就跳过，不阻塞 CI。
+    # （以前写成 `if: … || secrets.EVAL_API_KEY != ''`：job 级 if 读不到
+    #   secrets 上下文，整份工作流从 10-29 起每次 push 都在编译期直接红。）
+    if: github.event_name == 'push' && needs.eval-gate.outputs.has-key == 'true'
     steps:
       - uses: actions/checkout@v4
 

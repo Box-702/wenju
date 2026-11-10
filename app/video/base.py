@@ -40,9 +40,13 @@ def default_resolution() -> str:
 
 
 # 服务商对「参考视频」的硬约束（MiniMax H3 V2 实测）：
-# 参考视频时长必须落在 2–15 秒，超了整次生成直接被拒。
+# 时长必须落在 2–15 秒、帧率必须落在 23.976–60，超了整次生成直接被拒。
+# 帧率这条是 2026-11-10 完整跑时撞出来的：15fps 的屏幕录制素材任务建得好，
+# 生成阶段才报 2013 —— 白等两分钟才知道。所以入库/挂载时就要量出来。
 REFERENCE_VIDEO_MIN_SEC = 2.0
 REFERENCE_VIDEO_MAX_SEC = 15.0
+REFERENCE_VIDEO_MIN_FPS = 23.976
+REFERENCE_VIDEO_MAX_FPS = 60.0
 
 
 @dataclass

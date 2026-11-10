@@ -388,13 +388,18 @@ def get_video_version(version_id: str) -> dict[str, Any]:
 
 
 def _normalize_reference_assets(asset_ids: list[str] | None, project_id: str) -> list[str]:
-    """校验用户挑的参考素材：必须是本作品的视频素材，且时长在服务商能收的范围内。
+    """校验用户挑的参考素材：必须是本作品的视频素材，且时长/帧率在服务商能收的范围内。
 
     返回通过校验的素材 id（去重、上限 3 条）。不合格的直接抛 400 —— 与其让用户
     提交后白跑一次生成，不如在保存提示词时就告诉他这段片子为什么不能用。
     """
-    from ..media.probe import duration_seconds
-    from ..video.base import REFERENCE_VIDEO_MAX_SEC, REFERENCE_VIDEO_MIN_SEC
+    from ..media.probe import duration_seconds, video_fps
+    from ..video.base import (
+        REFERENCE_VIDEO_MAX_FPS,
+        REFERENCE_VIDEO_MAX_SEC,
+        REFERENCE_VIDEO_MIN_FPS,
+        REFERENCE_VIDEO_MIN_SEC,
+    )
 
     store = deps.store()
     cleaned: list[str] = []
@@ -408,13 +413,21 @@ def _normalize_reference_assets(asset_ids: list[str] | None, project_id: str) ->
         if asset.kind != "video":
             raise HTTPException(400, f"参考素材《{asset.name or asset_id}》不是视频")
         data = getattr(asset, "content", None)
-        seconds = duration_seconds(bytes(data), asset.name or "") if data else None
-        if seconds is not None and not (REFERENCE_VIDEO_MIN_SEC <= seconds <= REFERENCE_VIDEO_MAX_SEC):
-            raise HTTPException(
-                400,
-                f"参考素材《{asset.name or asset_id}》时长 {seconds:.1f} 秒，"
-                f"视频模型只接受 {REFERENCE_VIDEO_MIN_SEC:.0f}–{REFERENCE_VIDEO_MAX_SEC:.0f} 秒的片段",
-            )
+        if data:
+            seconds = duration_seconds(bytes(data), asset.name or "")
+            if seconds is not None and not (REFERENCE_VIDEO_MIN_SEC <= seconds <= REFERENCE_VIDEO_MAX_SEC):
+                raise HTTPException(
+                    400,
+                    f"参考素材《{asset.name or asset_id}》时长 {seconds:.1f} 秒，"
+                    f"视频模型只接受 {REFERENCE_VIDEO_MIN_SEC:.0f}–{REFERENCE_VIDEO_MAX_SEC:.0f} 秒的片段",
+                )
+            fps = video_fps(bytes(data), asset.name or "")
+            if fps is not None and not (REFERENCE_VIDEO_MIN_FPS <= fps <= REFERENCE_VIDEO_MAX_FPS):
+                raise HTTPException(
+                    400,
+                    f"参考素材《{asset.name or asset_id}》帧率 {fps:.1f} fps，"
+                    f"视频模型只接受 {REFERENCE_VIDEO_MIN_FPS:.1f}–{REFERENCE_VIDEO_MAX_FPS:.0f} fps 的片段",
+                )
         cleaned.append(asset_id)
         if len(cleaned) >= 3:
             break

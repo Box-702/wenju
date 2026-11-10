@@ -264,6 +264,42 @@ def test_reference_asset_duration_out_of_window_is_rejected(store, client, sampl
     assert "秒" in resp.text
 
 
+def test_reference_asset_low_fps_is_rejected(store, client, sample_text, monkeypatch):
+    """低帧率素材（如 15fps 录屏）也当场拒绝。
+
+    2026-11-10 完整跑时撞出来的：15fps 的参考片任务建得好，生成阶段才报
+    `video fps 15.000, expected [23.976, 60]`——白等一轮才发现。
+    """
+    import app.media.probe as probe_mod
+
+    project = client.post(
+        "/api/projects/import", data={"raw_text": sample_text, "title": "雨夜"},
+    ).json()
+    pid = project["id"]
+    clip = store.add_asset(
+        pid, kind="video", name="录屏.mp4", source="upload",
+        url="/api/assets/file/asset_lows", content=b"\x00" * 10,
+    )
+    monkeypatch.setattr(probe_mod, "duration_seconds", lambda data, name: 3.0)
+    monkeypatch.setattr(probe_mod, "video_fps", lambda data, name: 15.0)
+    version = _video_version(store, pid, [
+        {
+            "id": "shot_scene_001_000", "scene_id": "scene_001", "order": 0,
+            "video_prompt": "A close-up.", "prompt_status": "approved",
+        },
+    ])
+    resp = client.put(
+        f"/api/projects/{pid}/video-versions/{version.id}/shots/shot_scene_001_000/prompt",
+        json={
+            "prompt": "A close-up.",
+            "decision": "save",
+            "reference_asset_ids": [clip.id],
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    assert "帧率" in resp.text
+
+
 @pytest.mark.parametrize("seconds,ok", [(5.0, True), (14.0, True), (1.0, False), (30.0, False)])
 def test_reference_window_bounds(store, client, sample_text, monkeypatch, seconds, ok):
     """2–15 秒是服务商的硬约束（实测 expected [2000, 15000] ms）。"""

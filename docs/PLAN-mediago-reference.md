@@ -62,7 +62,17 @@ MCP 工具 17 个：文档 9（`load_skill` / `get_project_config` / `update_pro
 
 ### A 组 · 稳定性（P0）
 
-#### A1. 生成提交幂等 —— 同镜头重复提交会重复扣费 ⚠️ 最高优先
+> **进度（2026-11-10 第二批收尾）**：A 组全部完成——A1-a/b/c ✅（claim 表落地，见 D-38 与下方落地说明）、
+> A2 ✅（**用进程内锁**实现，不是原计划的活动列，理由见 A2 节与 D-38）、A3 ✅、A4 ✅。
+> A3 细节：CI 加一步 `uv run ruff check --select E9,F63,F7,F82,B app tests evals`；
+> 存量 11 处致命违规当场清掉，其中 1 处是真 bug：`tests/test_assets.py` 里 `pytest.skip` 没导入 pytest，
+> 本机没 ffmpeg 时会 NameError 而不是跳过。ruff 以 dev 依赖进 `pyproject.toml`（pin 0.14.0，
+> CI `uv sync --frozen` 直接可用）。FastAPI 的 `File(...)` / `Form(...)` 默认参数写法是框架惯例
+> 不是 bug，已在 `[tool.ruff.lint.flake8-bugbear] extend-immutable-calls` 里豁免 B008。
+> B 组：B1/B2（第一批）+ B3/B4/B5 ✅（本批）。
+> 待做：B6/B7/B8/B9（P2 打磨）· C1（Agent 可读文档）· C2/C3（P2）。
+
+#### A1. 生成提交幂等 —— 同镜头重复提交会重复扣费 ⚠️ 最高优先 —— ✅ 已完成（A1-a/b/c，2026-11-10）
 
 **问题**：`app/api/video.py:704` 的 `_create_and_submit_job()` 无条件
 `create_video_job()` + `_submit_video_job()`。同一个 `shot_id` 被调用两次就建两个 job、
@@ -82,7 +92,48 @@ MCP 工具 17 个：文档 9（`load_skill` / `get_project_config` / `update_pro
 **验收**：重复调用 `submit_videos` 两次，`video_jobs` 表只多一条记录；
 `tests/test_video_idempotency.py` 覆盖。
 
-#### A2. 对话会话的 run 互斥
+**A1 落地说明（2026-11-10，两批合成）**：实现比原计划多做了一层，**修得对**——
+
+- 原计划「同镜头有在途任务就复用」会把「用户改了时长/画幅/参考素材再提交」也吞掉。
+  这个边界是 `test_api.py` 既有的「时长显式覆盖」用例逼出来的（同镜头先投一次
+  再用 `duration_sec=5` 重投，旧实现复用了第一次的任务，测试红）。
+  所以幂等的判据是「**同镜头 + 同意图**」：意图 = prompt / provider / model /
+  version_id + 时长、分辨率、画幅、首尾帧、参考图、音频、内容全部等价；
+  任何一项变了就新建（换参数重出片是合法请求）。
+- `reference_videos` 要单独处理：存下来的是「用户手挑 + 自动接力锚」合并的结果，
+  接力锚随上一镜出没出完变化，不能比；只比用户手挑的那段。
+- 等价定义：空串 / 空列表 / 没传视为同一件事；显式默认值 = 没传
+  （`video_claim_key` 一处归一，`_same_intent` 同一套规则）。
+- **A1-b 实际形态与原计划的差异**：表名是 `video_job_claims`（不是
+  `generation_claims`）；「进入 provider 调用后失败不释放」落成了更精确的三条规则：
+  ① 投递队列失败 → 任务标 failed → 终态钩子释放（此时服务商侧还没任务，
+  重提不会重复计费）；② 进程死在「claim 了没建完任务」的缝里 → 10 分钟超时自愈；
+  ③ 任务已真正提交出去后失败/成功 → claim 随终态释放，用户重提就是新一次出片
+  （意图已被消费，挡着它只会把用户锁死）。sweeper 判僵尸 pending 为失败走的也是
+  同一条释放路径。为什么不像 mediago 那样「失败也不释放」：那是给**一次性授权凭证**
+  设计的（确认表单不可复用）；我们的 claim 只是**在途去重**，永久不释放会把
+  失败意图的镜头锁死到重启。
+- 批次互斥（顺带做的）：同一项目同时只允许一个批次在推进，第二个返回 409。
+  两个批次会重复提交同一批镜头，还会互相抢「当前镜头」的完成回调
+  （`_find_running` 按 current_shot_id 匹配，命中第一个就返回）。
+  `BatchManager.running_for_project()` + `generate_batch` 入口检查。
+- 非 claim 路径兜底（`_same_intent` 的第二个职责）：成片质检的自动重 roll
+  直接 `create_video_job` 不占 claim——若用户此刻再点出片，claim 查不到、
+  但镜头确实有在途任务，会第三次建档。所以 claim 未命中后还要查一次
+  「同镜头在途的同意图任务」，命中就复用并把刚占的 claim 让回去。
+- 工具话术跟上：`submit_videos` 如实报告「几个新建、几个本来就在跑」；
+  `rerun_video` 对仍在生成的镜头直接拒掉并给出路（等它出完 / 先取消），不静默复用。
+- API 响应加 `reused` 字段（True = 复用了既有任务），前端可据此提示。
+- **A1-c 落地形态**：Agent 没有单独的确认凭证系统——问剧的「用户点头」本来就在
+  对话层（`approve_video_prompts` 硬闸门，未批准的镜头 `submit_videos` 直接拒绝，
+  B1 又封堵了话术绕过）。claim 覆盖了「点头之后、执行环节里」的重放风险，
+  这就是 A1-c 要的「无授权不得提交」闭环，不另造 selectionId 体系。
+
+**验收**：重复调用 `submit_videos` 两次，`video_jobs` 表只多一条记录 ✅；
+`tests/test_video_idempotency.py`（14 用例：HTTP 幂等 / 参数变化放行 / 批次互斥 /
+claim 生命周期四态 / 缝里拒绝 / 崩溃自愈 / 质检重 roll 兜底 / 归一化规则）。
+
+#### A2. 对话会话的 run 互斥 —— ✅ 已完成（2026-11-10，改用进程内锁）
 
 **问题**：`grep active_run app/chat/conductor.py` → 零结果。同一 conversation 并发两个请求，
 会话消息交错、工具上下文串。
@@ -90,13 +141,24 @@ MCP 工具 17 个：文档 9（`load_skill` / `get_project_config` / `update_pro
 **参照**：`services/server/internal/service/agent/agent_sessions_service.go:278`
 （`session.hasActiveRuns()` → 409）。
 
-**做法**：`conversations` 表加 `active_run_id`；`SubmitAgentMessage` 时若已有在途 run
-返回 409「该会话正在运行中」；run 结束 / 异常 / 客户端断连都要清 `active_run_id`
-（`finally` + sweeper 双保险）。注意问剧现有 `agent_runs` 表是改编图用的，对话层没有 run 实体。
+**实现与原计划的差异（结论性变更，理由见 D-38）**：原计划「conversations 表加
+`active_run_id` + sweeper 双保险」**改成了进程内 `threading` 锁**
+（`conductor.py` 的 `acquire_thread` / `release_thread`）。因为对话 run **不跨请求存活**
+——一轮对话就活在这个请求的线程里，进程重启它自然没了；落库方案需要的 stale 超时、
+启动清零、心跳，全是为「活得比请求久的资源」准备的清理路径，对话不是这种资源。
+进程内锁天然覆盖这三个出口：正常结束（`finally` 释放）、出错（同一 `finally`）、
+客户端断开（SSE generator 被关闭时其 `finally` 释放——这是最容易被忘的锁死源，
+有专门测试 `test_stream_releases_after_client_disconnect` 锁住）。
+构造 SSE 响应阶段就抛异常的边角也有出口（`handed_off` 标志交棒）。
 
-**验收**：`tests/test_chat.py` 加一条并发提交用例。
+**保留原计划的部分**：审阅动作（resume）不占位不报错——它是确定性路径、秒回，
+跟 LLM 轮并发执行不会互踩。
 
-#### A3. ruff 致命集进 CI
+**验收**：`tests/test_chat_mutex.py` 7 用例——忙时非流式/流式都 409、resume 放行、
+正常完成后释放、**客户端断开后释放**（轮询 50 次兜底异步收尾）、连续两轮可用、
+两线程并发占位恰一个成功。
+
+#### A3. ruff 致命集进 CI —— ✅ 已完成（2026-11-10）
 
 **问题**：问剧自己记着这笔债（`docs/ARCHITECTURE.md` 5.1：「全量检查有 200 处 E501 未清，
 一旦在 CI 里加 ruff 就会红」）。目前 CI 只跑 pytest / evals / 前端构建，**静态检查完全缺席**。
@@ -115,7 +177,8 @@ B 类（bugbear）能捞真 bug，E501（行长）先放过。存量 200 处 E50
 
 #### A4. 文档数字漂移修正 —— ✅ 已完成（2026-11-09）
 
-**原问题**：`README.md:299` 写「374 tests，30 个测试文件」，实测 **387 tests / 31 个测试文件**。
+**原问题**：`README.md:299` 写「374 tests，30 个测试文件」，实测（2026-11-10）**411 tests / 33 个测试文件**
+（基线 402 / 32；本批新增 `tests/test_video_idempotency.py` 9 个用例）。
 `docs/ARCHITECTURE.md` 写「20 个工具」，`README.md:58` 写「23 个」，实测 **23 个**
 （`app/chat/tools/` 里 `@tool` 装饰器 23 处）。
 
@@ -131,7 +194,7 @@ B 类（bugbear）能捞真 bug，E501（行长）先放过。存量 200 处 E50
 
 > 他们比我们强的 6 个具体写法。每条都给「他的原文 → 我们的改法」。
 
-#### B1. 抗绕过条款：「用户说 X 也不能跳过 Y」 —— P0
+#### B1. 抗绕过条款：「用户说 X 也不能跳过 Y」 —— P0 —— ✅ 已完成（2026-11-10）
 
 **他们的写法**（`TOOLS.md:62-63`、`image-generation.skill.md:12-13`）：
 
@@ -157,7 +220,13 @@ B 类（bugbear）能捞真 bug，E501（行长）先放过。存量 200 处 E50
 **同样的句式加到** `app/skills/asset-generation/SKILL.md`（它已有「不跳过确认」，
 但没说「用户说不用问也不行」）。
 
-#### B2. 「不要编造具体 ID」的枚举清单 —— P0
+#### B2. 「不要编造具体 ID」的枚举清单 —— P0 —— ✅ 已完成（2026-11-10）
+
+> 落地时压缩了措辞：系统提示有 2400 字预算（`test_system_prompt_stays_within_budget`），
+> 原文加进去超了 147 字。最终形态 = 硬规矩 1 保留「严禁凭对话历史编造版本号（ver_xxx）」原句
+> （`test_system_prompt_keeps_hard_rules` 断言的就是这句话），新增 1b 一行点名其余 id 类型
+> ——`1b. 同样禁止编造角色/地点/节拍/镜头 id、音色 id、素材 id、任务 id、参数名——只能取工具返回值`。
+> 最终 2378 字。比原方案略弱（id 前缀示例只剩 ver_xxx），但预算硬约束是实测出来的，不能绕过。
 
 **他们的写法**（`image-generation.skill.md:16`）：
 
@@ -180,7 +249,10 @@ B 类（bugbear）能捞真 bug，E501（行长）先放过。存量 200 处 E50
 
 **验收**：纯增量，零行为破坏；加一条 evals 用例断言「不出现未在工具返回里出现过的 id」。
 
-#### B3. 「不要用 A 方案替代 B 方案」 —— P1
+#### B3. 「不要用 A 方案替代 B 方案」 —— P1 —— ✅ 已完成（2026-11-10）
+
+> 落地：`asset-generation` 硬规矩 1（「不替用户决定，也不零碎地问」+「要问就一次问完」）
+> 与 `script-review`「卡片上的四个动作」末尾（整批摊开、不逐条追问）。
 
 **他们的写法**（`image-generation.skill.md:33`、`:47`）：
 
@@ -202,7 +274,16 @@ B 类（bugbear）能捞真 bug，E501（行长）先放过。存量 200 处 E50
 同理适用于 `app/skills/script-review/SKILL.md`：patch 应**一次性列全部待决条目**
 让用户逐条勾，不要问一句等一句。
 
-#### B4. 「不因缺 X 而暂停」的免问清单 —— P1
+#### B4. 「不因缺 X 而暂停」的免问清单 —— P1 —— ✅ 已完成（2026-11-10，落点修正）
+
+> **落地位置与原计划的差异**：原计划往 `style-guide` / `director-breakdown` 里加——
+> 这两个是 **crew 技能**，由代码直接塞进单次结构化调用（D-04：剧组是函数不是 Agent），
+> 它们根本没有「向用户提问」的通道，写了也无处生效。真正的过度反问发生在
+> **主 Agent** 侧（conductor 硬规矩 4「不确定时先问」没有下界）。
+> 所以免问清单落在了主 Agent 会加载的 `asset-generation` SKILL.md（「一、先问清楚」
+> 末尾新增「这些不用问，问了就是打扰」：画风沿用项目既定/默认、能推断的按推断写并汇报注明、
+> 只有影响剧情走向的缺失才值得问）。这是「先问，再做」流程里唯一「不用问」的白名单，
+> 与 B3「一次问完」同处一节，读的人不会漏。
 
 **他们的写法**：三个创作类 Skill **各有一条**，句式一致
 （`character-writer.skill.md:15` / `scene-writer.skill.md:15` / `prop-writer.skill.md:15`）：
@@ -231,7 +312,13 @@ B 类（bugbear）能捞真 bug，E501（行长）先放过。存量 200 处 E50
   只有「影响剧情走向」的信息缺失才值得问；「影响镜头长什么样」的缺失自己定。
 ```
 
-#### B5. 「禁止同上/沿用前镜」的省略禁令 —— P1
+#### B5. 「禁止同上/沿用前镜」的省略禁令 —— P1 —— ✅ 已完成（2026-11-10）
+
+> 落地：`video-prompt-zh` 与 `video-prompt-en` 均在规则 1 之后加了 **1b 自包含禁令**
+> （两个方言版同步，避免行为分叉）。编号用 1b 不重排 1–11——frontmatter 描述、
+> `crew-pipeline` 的「十一条写作规则」引用都不受影响。
+> 与「锚逐字复用」的边界在条目里写死了：锚 = 同样内容再写一遍（要重复），
+> 指代 = 内容省略成引用（要展开）。
 
 **他们的写法**（`storyboard-writer.skill.md:25`）：
 
@@ -395,7 +482,7 @@ Agent 原样带回，服务端强制比对。
 | 改提示词后 | `python -m evals.run` | 确定性层 critical == 0 |
 | 改提示词后 | `python -m evals.run --judge` | judge 均分不低于改前（阈值 75 / 观察线 85） |
 | 改技能结构后 | `python -m evals.skill_eval --ablate --repeat 3` | 约束落地率不低于当前 82% |
-| 改代码后 | `pytest tests -q` | 387 tests 全绿（改动后按实际数更新） |
+| 改代码后 | `pytest tests -q` | 426 tests 全绿（测试数随每批新增，以实际输出为准） |
 | 静态检查 | `ruff check --select E9,F63,F7,F82,B .` | 0 error（接入 CI 后由 CI 保证） |
 
 ---
@@ -403,13 +490,12 @@ Agent 原样带回，服务端强制比对。
 ## 六、建议执行顺序
 
 ```
-第 1 批（半天）：A1-a 幂等止血 · A3 ruff 进 CI · B1 抗绕过句式 · B2 不要编造 ID
+第 1 批（半天）：✅ 已完成（2026-11-10）
+  A1-a 幂等（含意图比对与批次互斥）· A3 ruff 进 CI · B1 抗绕过句式 · B2 不要编造 ID · A4 数字修正
 第 2 批（1 天） ：A1-b/c 意图指纹 claim · A2 会话互斥 · B3/B4/B5 三条提示词
-第 3 批（2-3 天）：C1 Agent 可读文档 · A4 文档数字修正 · B6/B7/B8/B9 打磨
+第 3 批（2-3 天）：C1 Agent 可读文档 · B6/B7/B8/B9 打磨
 第 4 批（按需） ：C2 引用历史对话 · C3 资产可发现
 ```
-
-**第 1 批是纯增量、零破坏**，建议先做。其中 A1-a 是唯一一处「会真实烧钱」的洞。
 
 ---
 

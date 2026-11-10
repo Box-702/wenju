@@ -1504,6 +1504,23 @@ base64 比原文大 1/3，且一次请求里所有参考素材加起来都算在
 - **解法**：内联那一步同时管 `reference_images` / `reference_videos` / `reference_audios`：
   凡是从本机回放端点出来的地址，一律转成 data URI。
 
+### 5.30 只在崩溃路径触发的 TypeError：数据库读回的 datetime 是 naive（2026-11-10）
+
+> 背景：加出片 claim 表（D-38）时，空 claim 的「10 分钟超时自愈」判断
+> `(_now() - existing.created_at).total_seconds()` 在真实提交路径上从没被执行过，
+> 测试全绿；是专门伪造一条 11 分钟前的空 claim 才把它逼出来。
+
+- **症状**：崩溃自愈路径一跑就 `TypeError: can't subtract offset-naive and offset-aware datetimes`。
+- **根因**：`_now()` 返回 **aware**（带 tzinfo）的 UTC，但 SQLAlchemy 的
+  `DateTime` 列**不带 timezone**，从库里读回的 `created_at` 是 **naive**。
+  aware − naive 直接抛错。SQLite 和 Postgres 都这样——别指望换后端能掩盖。
+- **解法**：新增 `_utcnow_naive()`（`datetime.now(UTC).replace(tzinfo=None)`），
+  所有「和时间列做减法/比年龄」一律用它。**写进库用 `_now()`，从库里读出来比较用
+  `_utcnow_naive()`**，两套语义分开，别混。见 `app/store.py`。
+- **教训**：**「只在异常/恢复路径上跑的代码，测试必须显式构造那条路径的状态」**。
+  超时判断这种代码，正常提交永远走不到，常规用例测不出——要么用 `freezegun` 冻时间，
+  要么像这里一样直接改 `created_at` 造一个超期的行。恢复逻辑不测等于没写。
+
 ---
 
 ## 六、排查手册（症状 → 先查什么）

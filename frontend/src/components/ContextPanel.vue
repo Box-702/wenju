@@ -15,7 +15,7 @@
 // =====================================================================
 
 import { computed, ref, watch, onMounted } from 'vue'
-import { store, loadShots, loadVideoJobs, loadAssets, notify } from '../stores/app'
+import { store, loadShots, loadVideoJobs, loadAssets, loadOverview, notify } from '../stores/app'
 import AppIcon from './AppIcon.vue'
 import ShotList from './video/ShotList.vue'
 import { openPromptEditor, loadPromptHistory, loadSkills, useSkill } from '../stores/app'
@@ -143,10 +143,17 @@ watch(clips, (list) => {
 
 const assets = computed(() => store.assets || [])
 
+/** 消耗/产出概览（C7）：镜头视图顶部一行，纯创作者语言，无数据就整块不显示。 */
+const overview = computed(() => store.overview)
+const costLabel = computed(() => {
+  const c = overview.value?.cost_estimate_usd
+  return c ? `≈ $${c.toFixed(2)}` : ''
+})
+
 async function refresh() {
   if (!store.pid) return
   try {
-    await Promise.all([loadShots(store.pid), loadVideoJobs(), loadAssets(store.pid)])
+    await Promise.all([loadShots(store.pid), loadVideoJobs(), loadAssets(store.pid), loadOverview()])
   } catch {
     /* 拉不到就先用现有数据 */
   }
@@ -248,6 +255,24 @@ watch(() => store.videoBatch?.status, (st) => {
 
     <!-- 镜头：分镜 + 已生成的视频 -->
     <div v-else-if="store.sideView === 'shots'" class="cp-body">
+      <!-- 消耗/产出概览（C7）：一行说清走到哪、大概花了多少。
+           数字全来自后端 overview（只聚合已落库的，预估标「≈」）；
+           还没有镜头方案时不显示（「0 镜 · 成片 0」不是信息是噪音）。 -->
+      <div v-if="overview && (overview.shots || overview.finalized)" class="cp-overview">
+        <span>{{ overview.shots }} 镜</span>
+        <span class="ov-sep">·</span>
+        <span>已批准 {{ overview.shots_approved }}</span>
+        <span class="ov-sep">·</span>
+        <span>成片 {{ overview.shots_done }}</span>
+        <template v-if="overview.shots_failed">
+          <span class="ov-sep">·</span>
+          <span class="ov-warn">失败 {{ overview.shots_failed }}</span>
+        </template>
+        <span v-if="costLabel" class="ov-cost">{{ costLabel }}</span>
+        <span v-if="overview.finalized" class="ov-final">
+          成片 {{ overview.finalized.duration_sec.toFixed(0) }} 秒{{ overview.finalized.dubbed ? ' · 已配音' : '' }}{{ overview.finalized.subtitled ? ' · 有字幕' : '' }}
+        </span>
+      </div>
       <div v-if="clips.length" class="clip-block">
         <div class="cp-subtitle">已生成视频（{{ clips.length }}）</div>
         <div class="clip-grid">
@@ -397,6 +422,25 @@ watch(() => store.videoBatch?.status, (st) => {
   letter-spacing: .06em;
   color: var(--dim);
 }
+
+/* 消耗/产出概览（C7）：一行小字，复用现有 token，不发明新颜色 */
+.cp-overview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px;
+  margin: 0 0 10px;
+  padding: 6px 9px;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid var(--line, rgba(255, 255, 255, .08));
+  border-radius: 8px;
+}
+.ov-sep { color: var(--dim); }
+.ov-warn { color: var(--gold); }
+.ov-cost { margin-left: auto; color: var(--dim); }
+.ov-final { flex-basis: 100%; color: var(--dim); font-size: 11px; }
 
 .cp-subtitle-row {
   display: flex;

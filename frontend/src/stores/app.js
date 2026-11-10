@@ -82,6 +82,7 @@ export const store = reactive({
   videoVersions: [],      // 视频版本列表
   videoVersionId: null,   // 当前镜头列表所属的视频版本
   videoJobs: [],          // 视频生成任务列表
+  overview: null,         // 作品「消耗/产出」概览（C7：场/镜/成片计数 + 出片预估费用）
   videoBatch: null,       // 批量生成批次状态（null/对象）
   videoMode: localStorage.getItem('sw_video_mode') || 'auto',   // 生成模式：auto | approval
   videoResolution: localStorage.getItem('sw_video_resolution') || '',  // 空=全局默认(768P)
@@ -946,6 +947,14 @@ export async function loadVideoJobs() {
   try {
     store.videoJobs = await api(`/projects/${store.pid}/video/jobs`)
   } catch { store.videoJobs = [] }
+}
+
+/** 加载作品的「消耗/产出」概览（C7）。失败留空：小卡整块不显示，不骗数字。 */
+export async function loadOverview() {
+  if (!store.pid) { store.overview = null; return }
+  try {
+    store.overview = await api(`/projects/${store.pid}/overview`)
+  } catch { store.overview = null }
 }
 
 /** 提交视频生成任务。 */

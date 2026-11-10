@@ -86,6 +86,81 @@ def project_dict(project: Any) -> dict[str, Any]:
     }
 
 
+def project_overview(project: Any) -> dict[str, Any]:
+    """作品的「消耗 / 产出」概览（C7 最小版，对标 mediago-drama 的用量统计）。
+
+    只聚合**已经落库**的数据，不新增任何采集点——
+    镜头/成片数来自 video_version + video_jobs，预估费用是提交时按秒数
+    算好落库的 cost_estimate（只对**真正提交到服务商**的任务求和：没有
+    external_task_id 的任务压根没出门，不该算进"花了多少"）。
+    数字全部是创作者语言（场/镜/成片/定妆图），**不出现 token**——
+    D-24：界面禁工程黑话；BYOK 用户真要逐笔对账，厂商控制台比这里的
+    预估准，所以这里只回答「这部作品走到哪、大概花了多少」。
+    """
+    st = deps.store()
+    pid = project.id
+
+    version = st.latest_version(project)
+    script = version.script if version else None
+
+    # 镜头方案：最新视频版本
+    versions = sorted(st.list_video_versions(pid), key=lambda v: v.created_at)
+    vv = versions[-1] if versions else None
+    shots = [s for s in (vv.shots if vv else []) if isinstance(s, dict) and s.get("id")]
+
+    # 任务一次取全，下面三种口径都从这份派生：
+    all_jobs = st.list_video_jobs(pid)
+    # 每个镜头的最新一次任务（后写覆盖先写——与工具层 latest_job_by_shot 同一读法）
+    latest_job: dict[str, Any] = {}
+    for j in sorted(all_jobs, key=lambda x: x.created_at):
+        if j.shot_id:
+            latest_job[j.shot_id] = j
+
+    shots_approved = sum(1 for s in shots if s.get("prompt_status") == "approved")
+    shots_done = sum(1 for s in shots if getattr(latest_job.get(s["id"]), "status", "") == "succeeded")
+    shots_failed = sum(1 for s in shots if getattr(latest_job.get(s["id"]), "status", "") in ("failed", "timeout"))
+
+    # 花费统计所有真正出过门的任务（拿到过 external_task_id = 服务商收了单）：
+    # 重 roll 的每一版都各自花了钱，不能只按镜头最新版算——那样会把
+    # 历史消耗低估。没出门的任务（还没投递成功）不计。
+    submitted = [j for j in all_jobs if j.external_task_id]
+    cost_total = sum(float(j.cost_estimate or 0) for j in submitted if j.cost_estimate)
+
+    # 视觉资产登记数（按实体去重：一个角色一张定妆图算一个）
+    style = st.get_video_style(pid) or {}
+    ref_images = [u for u in (style.get("reference_images") or {}).values() if u]
+    voices = [v for v in (style.get("voice_casting") or {}).values() if v]
+
+    # 合成状态：finalize 记录活在内存（重启后为空是真实情况，不假装还活着——
+    # 与 app/agent/tasks.py 同一口径）
+    finalized: dict[str, Any] = {}
+    try:
+        rec = deps.finalize_manager().latest_for_project(pid)
+        if rec and rec.get("status") == "succeeded":
+            result = rec.get("result") or {}
+            finalized = {
+                "duration_sec": float(result.get("duration_sec") or 0),
+                "dubbed": bool(result.get("dubbed")),
+                "subtitled": bool(result.get("subtitled")),
+            }
+    except Exception:  # noqa: BLE001  合成模块不可用不该拖垮概览
+        pass
+
+    return {
+        "scenes": len(script.scenes) if script else 0,
+        "characters": len(script.characters) if script else 0,
+        "shots": len(shots),
+        "shots_approved": shots_approved,
+        "shots_done": shots_done,
+        "shots_failed": shots_failed,
+        "reference_images": len(set(ref_images)),
+        "voices": len(set(voices)),
+        "video_submissions": len(submitted),
+        "cost_estimate_usd": round(cost_total, 4),
+        "finalized": finalized or None,
+    }
+
+
 def version_dict(version: Any, *, with_content: bool = False) -> dict[str, Any]:
     data = {
         "id": version.id,

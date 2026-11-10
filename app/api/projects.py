@@ -81,6 +81,17 @@ def get_project(project_id: str) -> dict[str, Any]:
     return data
 
 
+@router.get("/projects/{project_id}/overview")
+def project_overview(project_id: str) -> dict[str, Any]:
+    """作品的「消耗 / 产出」概览：场/镜/成片计数、定妆图与音色登记、出片预估费用。
+
+    只聚合已落库的数据（C7 最小版，见 docs/PLAN-mediago-reference.md），
+    不新增任何采集点。前端进右栏/作品页的一张小卡，说创作者语言。
+    """
+    p = common.get_project(project_id)
+    return common.project_overview(p)
+
+
 @router.delete("/projects/{project_id}")
 def delete_project(project_id: str) -> dict[str, Any]:
     """删除项目及其所有对话、消息、版本，并清理磁盘上的工作目录文件夹。"""

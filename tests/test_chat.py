@@ -543,6 +543,7 @@ TRIGGERS = [
     ("生成初稿", "generate_script"),
     ("改编（", "run_adaptation"),
     ("咨询（", "ask"),
+    ("读作品", "read_script"),
     ("拆镜头", "breakdown_scenes"),
     ("风格指南", "generate_style_guide"),
     ("定妆图", "generate_reference_assets"),

@@ -165,54 +165,91 @@ def _resolve_conversation(project_id: str | None, conversation_id: str | None) -
 # ---------- 对话 ----------
 
 
+def _acquire_turn_thread(payload: ChatRequest, conversation_id: str | None) -> str | None:
+    """会话互斥占位。返回占住的线程 id（释放时要用）；没占返回 None。
+
+    两条放行规则：
+    - 审阅动作（resume）走确定性路径、不碰 LLM 与消息历史，秒回——不占位。
+    - 其余一律占位：同一会话并发两轮会消息交错、滚动摘要互相覆盖、
+      工具轨迹搅在一起（参照 mediago StartRun → 409 的做法）。
+    """
+    if payload.meta and payload.meta.get("intent") == "resume":
+        return None
+    thread = conversation_id or chat_svc.GLOBAL_THREAD
+    if not chat_svc.acquire_thread(thread):
+        raise HTTPException(409, "这个对话正有一轮在运行中，等它结束后再发下一条。")
+    return thread
+
+
 @router.post("/chat")
 def chat(payload: ChatRequest) -> dict[str, Any]:
-    """对话式 Agent 的一轮非流式对话。"""
+    """对话式 Agent 的一轮非流式对话（同一会话串行，见 _acquire_turn_thread）。"""
     conversation_id = _resolve_conversation(payload.project_id, payload.conversation_id)
-    return chat_svc.chat_once(
-        deps.store(), deps.llm(), deps.settings(),
-        conversation_id=conversation_id,
-        project_id=payload.project_id,
-        message=payload.message,
-        meta=payload.meta,
-        images=payload.images,
-        refs=[r.model_dump() for r in (payload.refs or [])],
-        runner=deps.subagent_runner(),
-    )
+    held = _acquire_turn_thread(payload, conversation_id)
+    try:
+        return chat_svc.chat_once(
+            deps.store(), deps.llm(), deps.settings(),
+            conversation_id=conversation_id,
+            project_id=payload.project_id,
+            message=payload.message,
+            meta=payload.meta,
+            images=payload.images,
+            refs=[r.model_dump() for r in (payload.refs or [])],
+            runner=deps.subagent_runner(),
+        )
+    finally:
+        if held:
+            chat_svc.release_thread(held)
 
 
 @router.post("/chat/stream")
 async def chat_stream(payload: ChatRequest) -> StreamingResponse:
     """对话式 Agent 的 SSE 流式对话（工具轨迹 + 正文增量 + done）。"""
     conversation_id = _resolve_conversation(payload.project_id, payload.conversation_id)
-    gen = chat_svc.chat_stream(
-        deps.store(), deps.llm(), deps.settings(),
-        conversation_id=conversation_id,
-        project_id=payload.project_id,
-        message=payload.message,
-        meta=payload.meta,
-        images=payload.images,
-        refs=[r.model_dump() for r in (payload.refs or [])],
-        runner=deps.subagent_runner(),
-    )
+    held = _acquire_turn_thread(payload, conversation_id)
+    handed_off = False
+    try:
+        gen = chat_svc.chat_stream(
+            deps.store(), deps.llm(), deps.settings(),
+            conversation_id=conversation_id,
+            project_id=payload.project_id,
+            message=payload.message,
+            meta=payload.meta,
+            images=payload.images,
+            refs=[r.model_dump() for r in (payload.refs or [])],
+            runner=deps.subagent_runner(),
+        )
 
-    # chat_stream 是同步生成器（内部含阻塞的 LLM / DB 调用），
-    # 必须放到线程池里逐条推进，否则会把整个事件循环卡住，拖死所有并发请求。
-    _STREAM_DONE = object()
+        # chat_stream 是同步生成器（内部含阻塞的 LLM / DB 调用），
+        # 必须放到线程池里逐条推进，否则会把整个事件循环卡住，拖死所有并发请求。
+        _STREAM_DONE = object()
 
-    async def event_source():
-        it = iter(gen)
-        while True:
-            event = await run_in_threadpool(next, it, _STREAM_DONE)
-            if event is _STREAM_DONE:
-                break
-            yield common.sse_frame(event["event"], event["data"])
+        async def event_source():
+            it = iter(gen)
+            try:
+                while True:
+                    event = await run_in_threadpool(next, it, _STREAM_DONE)
+                    if event is _STREAM_DONE:
+                        break
+                    yield common.sse_frame(event["event"], event["data"])
+            finally:
+                # 正常耗尽、出错、客户端中途断开（本 generator 被关闭）都会走到这里：
+                # 互斥位必须释放，不然这个会话会被一次断开的请求永久锁死。
+                if held:
+                    chat_svc.release_thread(held)
 
-    return StreamingResponse(
-        event_source(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+        response = StreamingResponse(
+            event_source(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+        # 从这里起，释放交棒给 event_source 的 finally；端点自己不再管。
+        handed_off = True
+        return response
+    finally:
+        # 构造响应阶段就抛了异常（还没交棒）：就地释放，别把会话锁死。
+        if held and not handed_off:
+            chat_svc.release_thread(held)
 
 
 @router.get("/chat/history")

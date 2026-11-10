@@ -21,6 +21,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import threading
 import time
 from typing import Any
 
@@ -50,6 +51,39 @@ MAX_CONTEXT_IMAGES = 12
 # 还没有项目的全局对话用固定值 GLOBAL_THREAD。
 GLOBAL_THREAD = "global"
 
+# ---- 会话互斥（一个会话同时只跑一轮对话）----
+#
+# 为什么必须互斥：同一 conversation 并发两轮，会各自读写历史摘要、
+# 往同一条线程落消息、各自起工具循环——消息交错、摘要互相覆盖、
+# 两份「本轮动作」轨迹搅在一起。用户看到的是一团乱，比直接报错糟得多。
+# （参照 mediago-drama 的 StartRun：session.hasActiveRuns() → 409。）
+#
+# 为什么用进程内锁而不是落库：对话 run 不跨请求存活——一轮对话就活在这个
+# 请求的线程里，进程重启它就没了，锁随进程自然清空，不需要 stale 超时或
+# 启动清零这类清理路径（视频出片 claim 要落库，是因为任务活得比请求久）。
+# 本产品是单机本地服务（无鉴权、仅本机），单进程锁覆盖全部并发来源。
+_active_threads: set[str] = set()
+_active_lock = threading.Lock()
+
+
+def acquire_thread(thread_id: str) -> bool:
+    """占住一条会话线程；已被占住返回 False（调用方据此拒绝请求）。"""
+    with _active_lock:
+        if thread_id in _active_threads:
+            return False
+        _active_threads.add(thread_id)
+        return True
+
+
+def release_thread(thread_id: str) -> None:
+    with _active_lock:
+        _active_threads.discard(thread_id)
+
+
+def thread_is_busy(thread_id: str) -> bool:
+    with _active_lock:
+        return thread_id in _active_threads
+
 # 兼容别名：工具闭包写入的收集器类型现在定义在 tools.context。
 _Collector = Collector
 
@@ -74,13 +108,11 @@ SYSTEM_PROMPT_TEMPLATE = (
     "· 拆镜头（拆解 / 分镜 / 设计镜头 / 场景拆解）→ breakdown_scenes\n"
     "· 风格指南（视觉风格 / 角色造型 / 画面风格）→ generate_style_guide\n"
     "· 定妆图（参考图 / 人物形象图 / 视觉参考）→ generate_reference_assets\n"
-    "· 生成资产（定妆照 / 角色画像 / 场景图 / 音色）→ 先 load_skill 'asset-generation'："
-    "问清给谁生成与画面/声音要求，列清单让用户逐项确认后再生成\n"
+    "· 生成资产（定妆照 / 角色画像 / 场景图 / 音色）→ 先 load_skill 'asset-generation' 再动手\n"
     "· 视频 prompt（生成 prompt / 镜头描述）→ generate_video_prompts\n"
     "· 开始制作（一键制作 / 跑完整流程 / 出一版提示词）→ start_production，"
     "五阶段（剧本→拆解→风格→资产图→提示词）自动跑完，已完成的阶段自动复用\n"
-    "· 问进度（到哪了 / 拆好了吗 / 出片了吗 / 合成好了没 / 哪些还没批准）→ get_status，"
-    "一次问清，不要凭记忆答，也不要靠猜\n"
+    "· 问进度（到哪了 / 拆好了吗 / 出片了吗 / 合成好了没 / 哪些还没批准）→ get_status，一次问清\n"
     "· 批准提示词 → approve_video_prompts（只在用户明确说「批准」时）\n"
     "· 出片（出片 / 生成视频 / 提交视频）→ submit_videos；重试或重 roll 某镜 → rerun_video\n"
     "· 合成成片（拼成片 / 出完整视频）→ finalize_film\n"
@@ -100,6 +132,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     "不要凭空描述、也不要换成别的角色；本轮上下文里的「本轮引用的资产」列的就是它们。\n"
     "1. 汇报以工具返回为准：说「已生成 / 已建成 / 已挑出 / 已提交 / 已出片」之前，本轮必须真的调用过对应工具；"
     "严禁凭对话历史编造版本号（ver_xxx）、场次、进度或任务结果。没调工具就直说还没做，或者先做再说。\n"
+    "1b. 同样禁止编造角色/地点/节拍/镜头 id、音色 id、素材 id、任务 id、参数名——只能取工具返回值。\n"
     "2. 不替用户做最终决定：接受、拒绝、批准永远由用户发起，你只负责解释影响和引导。\n"
     "3. 剧组任务（拆解 / 风格 / 定妆图 / 提示词）与出片都在后台运行，启动后告知用户可在右栏查看进度。\n"
     "4. 回复简洁、口语化、用简体中文；不确定时先问；不要虚构剧本内容。\n"

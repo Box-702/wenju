@@ -101,6 +101,7 @@ def plan_dubbing(
     genders: dict[str, str] | None = None,
     appearances: dict[str, str] | None = None,
     visual_style: str | None = None,
+    voice_pool: list[dict[str, Any]] | None = None,
 ) -> DubbingPlan:
     """把剧本对白归属到镜头，产出配音计划。
 
@@ -118,7 +119,7 @@ def plan_dubbing(
     """
     cast = cast_script(
         script, casting=voices, genders=genders, appearances=appearances,
-        visual_style=visual_style,
+        visual_style=visual_style, voice_pool=voice_pool,
     )
     char_map = {c.id: c.name for c in script.characters}
     beat_map = _scene_beat_map(script)
@@ -364,7 +365,11 @@ def synthesize_track(
                           "voice_id": line.voice_id})
             from .casting import VOICE_LABELS
 
-            _emit(f"[配音] {line.speaker}·{VOICE_LABELS.get(line.voice_id, line.voice_id)}"
+            # 音色名：内置表 → 选角带来的发现名 → 原始 id（D-24 不给用户看工程 id）。
+            # getattr 兜底：测试可传裸 plan（没有 cast 字段）。
+            cast = getattr(plan, "cast", None)
+            label = cast.label_for(line.voice_id) if cast else VOICE_LABELS.get(line.voice_id, line.voice_id)
+            _emit(f"[配音] {line.speaker}·{label}"
                   f"（{start:.1f}s 起，{dur:.1f}s）：{line.text}")
         track.sort(key=lambda x: x["start_ms"])
         return track, total
@@ -463,6 +468,7 @@ def dub_video_with_track(
     genders: dict[str, str] | None = None,
     appearances: dict[str, str] | None = None,
     visual_style: str | None = None,
+    voice_pool: list[dict[str, Any]] | None = None,
 ) -> tuple[Path | None, list[dict[str, Any]], DubbingPlan]:
     """一站式配音：计划 → 合成 → 混音。没有台词或 TTS 不可用时返回 (None, [], plan)。
 
@@ -474,7 +480,7 @@ def dub_video_with_track(
     plan = plan_dubbing(
         script, shots, casting,
         expected_shots=expected_shots, genders=genders, appearances=appearances,
-        visual_style=visual_style,
+        visual_style=visual_style, voice_pool=voice_pool,
     )
     if plan.warnings:
         for w in plan.warnings:

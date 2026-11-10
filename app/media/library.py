@@ -61,10 +61,12 @@ def build_library(
     style: dict[str, Any] | None = None,
     *,
     visual_style: str | None = None,
+    voice_pool: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """聚合出资产库视图（角色 + 地点 + 汇总告警）。
 
     ``style`` 是项目 video_style（StyleGuide 的 JSON 形态）；缺字段时按空处理。
+    ``voice_pool`` 是 BYOK 勾选启用的音色；给了就替代内置池（下拉与自动选角都用它）。
     """
     style = style or {}
     # 老项目的 video_style 里没有 visual_style 字段：按实拍处理，不要返回空串
@@ -88,7 +90,7 @@ def build_library(
     cast = cast_script(
         script, casting=casting, genders=genders,
         appearances=appearances, images=images,
-        visual_style=visual_style,
+        visual_style=visual_style, voice_pool=voice_pool,
     )
     stats = _speech_stats(script)
 
@@ -143,19 +145,40 @@ def build_library(
         "visual_style": visual_style,
         "characters": characters,
         "locations": locations,
-        "voice_options": voice_options(visual_style),
+        "voice_options": voice_options(visual_style, pool=voice_pool),
         "warnings": warnings,
     }
 
 
-def voice_options(visual_style: str | None = None) -> list[dict[str, str]]:
-    """可选的音色清单（前端下拉用），漫剧把年轻音色排在前面。"""
+def voice_options(
+    visual_style: str | None = None,
+    *,
+    pool: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """可选的音色清单（前端下拉用），漫剧把年轻音色排在前面。
+
+    ``pool`` 是 build_voice_pool 出来的启用池（勾选在前 + 内置兜底 + 克隆），
+    顺序已经排好——**这里原样保留，不再排序**：前端自己按 gender 分组，
+    组内相对顺序就是优先级（勾的排前面，自动选角也按这个顺序拿）。
+    没给 pool 时回退内置 8 个（老项目行为不变）。
+    """
     from .casting import voice_pools
 
+    rows = [r for r in (pool or []) if isinstance(r, dict) and r.get("voice_id")]
+    if rows:
+        return [
+            {
+                "voice_id": str(r["voice_id"]),
+                "label": str(r.get("name") or r["voice_id"]),
+                "gender": str(r.get("gender") or "other"),
+            }
+            for r in rows
+        ]
+
     male_pool, female_pool = voice_pools(visual_style)
-    out: list[dict[str, str]] = []
-    for gender, pool in (("male", male_pool), ("female", female_pool)):
-        for v in pool:
+    out = []
+    for gender, p in (("male", male_pool), ("female", female_pool)):
+        for v in p:
             out.append({
                 "voice_id": v,
                 "label": VOICE_LABELS.get(v, v),

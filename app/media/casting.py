@@ -179,10 +179,14 @@ class CastMember:
     source: str = "default"       # casting / gender / name / pronoun / guess / default
     appearance: str = ""
     image: str = ""               # 定妆图 URL（资产库展示用）
+    label_hint: str = ""          # 发现音色带来的显示名（内置音色留空走 VOICE_LABELS）
 
     @property
     def voice_label(self) -> str:
-        return VOICE_LABELS.get(self.voice_id, self.voice_id)
+        # 内置音色优先用我们起的中文名（磁性男声…）；发现/勾选的音色不在内置表里，
+        # 用厂商名（label_hint）；都没有才退回原始 id。顺序不能反，否则内置音色的
+        # 中文标签会被厂商名覆盖（回归）。
+        return VOICE_LABELS.get(self.voice_id) or self.label_hint or self.voice_id
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -206,6 +210,13 @@ class Casting:
     warnings: list[str] = field(default_factory=list)
     # 陌生角色的兜底池（漫剧项目要跟着换成年轻音色池）
     male_pool: tuple[str, ...] = MALE_POOL
+    # voice_id → 显示名（发现/勾选的音色带来的）。内置音色不在这里，走 VOICE_LABELS。
+    # 配音进度、成片报告都靠它把 clever_boy 显示成「聪明男童」，而不是原始 id（D-24）。
+    voice_names: dict[str, str] = field(default_factory=dict)
+
+    def label_for(self, voice_id: str) -> str:
+        """一个 voice_id 的中文名：内置表 → 发现名 → 原始 id。"""
+        return VOICE_LABELS.get(voice_id) or self.voice_names.get(voice_id) or voice_id
 
     @property
     def voices(self) -> dict[str, str]:
@@ -290,6 +301,26 @@ def _speech_chars(script: Script) -> dict[str, int]:
     return counts
 
 
+def _resolve_pools(
+    voice_pool: list[dict[str, Any]] | None,
+    default_male: tuple[str, ...],
+    default_female: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, str]]:
+    """把「勾选启用的音色」拆成男/女自动选角池 + voice_id→显示名。
+
+    空池（没勾选过）→ 原样回退内置男/女池，行为与改造前完全一致。
+    gender=other 的音色不进自动池（自动选角依赖性别分池，猜性别是出过事故的）——
+    它们仍出现在下拉里，只是只能由人手动指定给某个角色。
+    """
+    rows = [r for r in (voice_pool or []) if isinstance(r, dict) and r.get("voice_id")]
+    if not rows:
+        return default_male, default_female, {}
+    male = tuple(str(r["voice_id"]) for r in rows if r.get("gender") == "male")
+    female = tuple(str(r["voice_id"]) for r in rows if r.get("gender") == "female")
+    names = {str(r["voice_id"]): str(r.get("name") or r["voice_id"]) for r in rows}
+    return male, female, names
+
+
 def cast_script(
     script: Script,
     *,
@@ -298,13 +329,17 @@ def cast_script(
     appearances: dict[str, str] | None = None,
     images: dict[str, str] | None = None,
     visual_style: str | None = None,
+    voice_pool: list[dict[str, Any]] | None = None,
 ) -> Casting:
     """为整部剧选角。
 
     ``casting``  资产库里人工确认过的 {角色名: voice_id}，最高优先级；
     ``genders``  资产库里的 {角色名: male/female}（人工修正覆盖推断）；
     ``appearances`` / ``images`` 来自美术指导与定妆图，仅用于展示与推断；
-    ``visual_style`` 决定音色池顺序（二次元/三维用年轻音色池）。
+    ``visual_style`` 决定音色池顺序（二次元/三维用年轻音色池）；
+    ``voice_pool``  BYOK 勾选启用的音色 [{voice_id, name, gender}]。给了就用它做
+    自动选角池（按 gender 分男/女；other 不参与自动），没给回退内置硬编码池——
+    老项目与测试都跑在「没勾选」上，行为完全不变。
     """
     casting = {k: v for k, v in (casting or {}).items() if v}
     genders = {k: normalize_gender(v) for k, v in (genders or {}).items()}
@@ -317,9 +352,12 @@ def cast_script(
     genders = rekey(genders, idx)
     appearances = rekey(appearances, idx)
     images = rekey(images, idx)
-    male_pool, female_pool = voice_pools(visual_style)
+    default_male, default_female = voice_pools(visual_style)
+    male_pool, female_pool, voice_names = _resolve_pools(
+        voice_pool, default_male, default_female,
+    )
 
-    result = Casting(male_pool=male_pool)
+    result = Casting(male_pool=male_pool, voice_names=voice_names)
     used_male: set[str] = set()
     used_female: set[str] = set()
     guessed: list[str] = []
@@ -366,6 +404,7 @@ def cast_script(
             name=c.name, char_id=c.id, gender=gender, voice_id=voice_id,
             basis=basis, source=source, appearance=look,
             image=lookup(images, c.id, idx),
+            label_hint=voice_names.get(voice_id, ""),
         ))
 
     if guessed:
@@ -376,8 +415,41 @@ def cast_script(
     return result
 
 
-# ---- 兼容旧接口 --------------------------------------------------------
+def build_voice_pool(store: Any, visual_style: str | None = None) -> list[dict[str, Any]]:
+    """下游用的完整音色池 = 勾选启用的发现音色（在前）+ 内置 8 个 + 克隆音色。
 
+    为什么放这里而不是 api 层：配音链路（video/finalize）也要用同一份池，
+    而 video 不该反向 import api。store 只是鸭子类型地调它的三个方法，
+    casting 层本身仍不 import 任何 IO 模块。
+
+    勾选的排前面：用户勾了哪些，自动选角就先用哪些——这是 BYOK 的本意。
+    没勾选过时池=内置 8 个（按画风排序，漫剧年轻音色在前），与改造前完全一致；
+    内置 8 个永远兜底，勾选只增不减。克隆音色厂商不给性别，归 other——
+    只供手动指定给角色，不参与自动选角。
+    """
+    male, female = voice_pools(visual_style)
+    pool: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for r in store.enabled_voice_pool():
+        if r["voice_id"] in seen:
+            continue
+        seen.add(r["voice_id"])
+        pool.append(r)
+    for gender, p in (("male", male), ("female", female)):
+        for vid in p:
+            if vid in seen:
+                continue
+            seen.add(vid)
+            pool.append({"voice_id": vid, "name": VOICE_LABELS.get(vid, vid), "gender": gender})
+    for uv in store.list_user_voices():
+        if uv.voice_id in seen:
+            continue
+        seen.add(uv.voice_id)
+        pool.append({"voice_id": uv.voice_id, "name": uv.name or uv.voice_id, "gender": "other"})
+    return pool
+
+
+# ---- 兼容旧接口 --------------------------------------------------------
 
 def assign_voices(
     script: Script,

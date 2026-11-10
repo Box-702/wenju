@@ -57,6 +57,9 @@
                     <button class="small ghost" :disabled="testingId === selectedProvider.id" @click="testProvider(selectedProvider)">
                       {{ testingId === selectedProvider.id ? '测试中…' : '测试连接' }}
                     </button>
+                    <button class="small ghost" :disabled="!selectedProvider.configured || discovering" @click="openDiscover(selectedProvider)">
+                      {{ discovering ? '查询中…' : '发现模型' }}
+                    </button>
                     <button class="small danger" @click="deleteLlm(selectedProvider)">删除厂商</button>
                   </span>
                 </div>
@@ -167,6 +170,26 @@
                     {{ savingLlm ? '保存中…' : '保存' }}
                   </button>
                   <button class="ghost" @click="closeLlmForm">取消</button>
+                </div>
+              </div>
+
+              <!-- 发现模型：拿这把 key 去厂商问一遍，勾哪些用哪些（BYOK） -->
+              <div v-if="discover.open" class="sub-modal discover">
+                <h5>发现模型 · {{ discover.provider?.label || discover.provider?.name }}</h5>
+                <p v-if="discover.error" class="test-result err">{{ discover.error }}</p>
+                <div v-else-if="!discover.models.length" class="pop-empty">厂商没有返回模型清单。</div>
+                <div v-else class="disc-list">
+                  <label v-for="m in discover.models" :key="m" class="disc-row">
+                    <input type="checkbox" :value="m" v-model="discover.picked" :disabled="discover.existing.has(m)" />
+                    <span class="dr-model">{{ m }}</span>
+                    <span v-if="discover.existing.has(m)" class="dr-have">已收录</span>
+                  </label>
+                </div>
+                <div class="form-actions">
+                  <button class="primary" :disabled="!discover.picked.length" @click="applyDiscover">
+                    添加勾选的 {{ discover.picked.length }} 个
+                  </button>
+                  <button class="ghost" @click="discover.open = false">取消</button>
                 </div>
               </div>
 
@@ -405,6 +428,47 @@ function toggleModel(p, index) {
 function removeModel(p, index) {
   const models = providerModels(p).filter((_, i) => i !== index)
   return saveModels(p, models)
+}
+
+// ---- 发现模型：拿 key 调厂商 /models，勾选入清单（后端 testProvider 已返回全量） ----
+const discovering = ref(false)
+const discover = reactive({ open: false, provider: null, models: [], picked: [], existing: new Set(), error: '' })
+
+async function openDiscover(p) {
+  discover.open = true
+  discover.provider = p
+  discover.models = []
+  discover.picked = []
+  discover.error = ''
+  discover.existing = new Set(providerModels(p).map((m) => m.model))
+  discovering.value = true
+  try {
+    const res = await api('/providers/' + p.id + '/test', 'POST')
+    if (!res.ok) {
+      discover.error = res.error || res.detail || '连不上厂商'
+      return
+    }
+    const names = res.models || []
+    if (!names.length) discover.error = '这家厂商没有返回模型清单（可能不支持列表接口）'
+    discover.models = names
+    // 默认勾上厂商清单里、我们还没收录的第一批——少点几下
+    discover.picked = names.filter((n) => !discover.existing.has(n)).slice(0, 5)
+  } catch (e) {
+    discover.error = '查询失败：' + (e.message || e)
+  } finally {
+    discovering.value = false
+  }
+}
+
+async function applyDiscover() {
+  const p = discover.provider
+  if (!p || !discover.picked.length) return
+  const models = providerModels(p).slice()
+  for (const name of discover.picked) {
+    if (!models.some((m) => m.model === name)) models.push({ name, model: name, enabled: true })
+  }
+  discover.open = false
+  await saveModels(p, models)
 }
 
 // 添加 / 编辑模型的行内表单
@@ -909,4 +973,19 @@ onMounted(() => {
   border: 1px solid var(--line); border-radius: var(--radius-lg);
 }
 .form-actions { display: flex; gap: 8px; margin-top: 14px; }
+
+/* 发现模型：勾选清单 */
+.disc-list {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 300px; overflow-y: auto; margin-top: 4px;
+}
+.disc-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: var(--radius-sm);
+  font-size: var(--fs-sm); color: var(--ink); cursor: pointer;
+}
+.disc-row:hover { background: rgba(255, 255, 255, .05); }
+.disc-row input[type='checkbox'] { accent-color: var(--accent); flex: none; }
+.dr-model { font-family: var(--mono); font-size: 12px; }
+.dr-have { margin-left: auto; font-size: 10.5px; color: var(--dim); flex: none; }
 </style>

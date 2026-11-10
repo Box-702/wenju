@@ -99,6 +99,13 @@ def _shot_clips(store: Any, project_id: str) -> list[dict[str, Any]]:
     return out
 
 
+def _voice_pool(store: Any, visual_style: str | None = None) -> list[dict[str, Any]]:
+    """下游用的完整音色池（勾选优先 + 内置兜底 + 克隆）。见 casting.build_voice_pool。"""
+    from ..media.casting import build_voice_pool
+
+    return build_voice_pool(store, visual_style)
+
+
 @router.get("/projects/{project_id}/library")
 def get_library(project_id: str, version_id: str | None = None) -> dict[str, Any]:
     """资产库总览：每个角色的形象锚、定妆图、性别与音色（含判定依据）。
@@ -118,7 +125,8 @@ def get_library(project_id: str, version_id: str | None = None) -> dict[str, Any
             "visual_style": normalize_visual_style(style.get("visual_style")),
             "clips": _shot_clips(store, project_id),
         }
-    lib = build_library(script, style, visual_style=style.get("visual_style"))
+    lib = build_library(script, style, visual_style=style.get("visual_style"),
+                        voice_pool=_voice_pool(store, style.get("visual_style")))
     lib["clips"] = _shot_clips(store, project_id)
     return lib
 
@@ -137,7 +145,9 @@ def get_library_all() -> dict[str, Any]:
         version = store.latest_version(p)
         if version is not None:
             style = store.get_video_style(p.id) or {}
-            lib = build_library(version.script, style, visual_style=style.get("visual_style"))
+            # 池按本项目画风排（内置 8 个的顺序=自动选角优先级，漫剧年轻在前）
+            lib = build_library(version.script, style, visual_style=style.get("visual_style"),
+                                voice_pool=_voice_pool(store, style.get("visual_style")))
             projects.append({
                 "project_id": p.id,
                 "title": lib.get("project_title") or p.title,
@@ -188,15 +198,69 @@ def patch_library(project_id: str, payload: LibraryPatch) -> dict[str, Any]:
         if ch.voice_id:
             log.info("资产库：%s 的音色指定为 %s（%s）", name,
                      ch.voice_id, VOICE_LABELS.get(ch.voice_id, ch.voice_id))
-    return build_library(script, merged, visual_style=merged.get("visual_style"))
+    return build_library(script, merged, visual_style=merged.get("visual_style"),
+                         voice_pool=_voice_pool(store, merged.get("visual_style")))
 
 
 @router.get("/projects/{project_id}/library/voices")
-def list_voices(project_id: str) -> list[dict[str, str]]:
-    """可选音色清单（按项目类型排序：漫剧把年轻音色排前面）。"""
+def list_voices(project_id: str) -> list[dict[str, Any]]:
+    """可选音色清单（勾选过用勾选池；否则按项目画风排内置池）。"""
     project = common.get_project(project_id)
     style = deps.store().get_video_style(project.id) or {}
-    return voice_options(style.get("visual_style"))
+    return voice_options(style.get("visual_style"),
+                         pool=_voice_pool(deps.store(), style.get("visual_style")))
+
+
+@router.post("/voices/discover")
+def discover_voices() -> dict[str, Any]:
+    """拿当前配置的 key 去厂商问一遍有什么系统音色，落库供勾选（BYOK）。
+
+    不猜、不硬编码：MiniMax 的 /v1/get_voice 返回这把 key 账号可用的全部音色。
+    发现只写入池、不改勾选状态（重新发现不该把用户已勾的关掉或擅自启用新的）。
+    性别从 voice_id 前缀判（厂商不给），推不出的归 other。
+    """
+    from ..config import get_settings
+    from ..llm.registry import resolve_tts
+    from ..llm.tts import build_tts_client
+
+    store = deps.store()
+    client = build_tts_client(resolve_tts(get_settings(), store))
+    if client is None:
+        raise HTTPException(503, "没有配置可用的 MiniMax API Key，无法查询音色列表")
+    try:
+        voices = client.list_system_voices()
+    except NotImplementedError:
+        raise HTTPException(501, "当前语音厂商不支持音色列表查询")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"查询音色列表失败：{e}")
+    if not voices:
+        raise HTTPException(502, "厂商返回空的音色列表")
+    store.upsert_voice_pool(voices)
+    return {"count": len(voices), "voices": voices}
+
+
+@router.get("/voices/pool")
+def get_voice_pool() -> dict[str, Any]:
+    """音色池：全部发现的（含 enabled 标记，供管理界面）+ 下游真正用的启用池。"""
+    store = deps.store()
+    all_rows = [
+        {"voice_id": v.voice_id, "name": v.name, "gender": v.gender,
+         "source": v.source, "enabled": v.enabled}
+        for v in store.list_voice_pool()
+    ]
+    return {"all": all_rows, "enabled": store.enabled_voice_pool()}
+
+
+class VoicePoolUpdate(BaseModel):
+    voice_ids: list[str] = Field(default_factory=list)
+
+
+@router.put("/voices/pool")
+def put_voice_pool(payload: VoicePoolUpdate) -> dict[str, Any]:
+    """保存勾选：把 voice_ids 设为启用的系统音色集（克隆音色不受影响）。"""
+    store = deps.store()
+    count = store.set_voice_pool_enabled(payload.voice_ids)
+    return {"enabled": count}
 
 
 @router.post("/projects/{project_id}/voices/clone")

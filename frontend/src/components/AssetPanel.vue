@@ -60,6 +60,9 @@
           <button class="small ghost" :disabled="importing" @click="importInput?.click()" title="导入图片/视频">
             <AppIcon name="upload" /> {{ importing ? '导入中…' : '导入' }}
           </button>
+          <button class="small ghost" type="button" title="查询并勾选可用音色" @click="voiceLibOpen = true">
+            <AppIcon name="sound" /> 声音库
+          </button>
           <button class="small ghost" @click="loadLibrary" title="刷新" aria-label="刷新">⟳</button>
         </span>
       </div>
@@ -298,6 +301,9 @@
       </template>
     </div>
 
+    <!-- 声音库管理：拿 key 问厂商有什么音色 → 试听 → 勾选启用 -->
+    <VoiceLibraryModal v-if="voiceLibOpen" @close="voiceLibOpen = false" />
+
     <!-- 生成音色：用样本音频克隆这个角色的专属声音 -->
     <div v-if="voiceClone.open" class="modal-backdrop" @click.self="voiceClone.open = false">
       <div class="modal-card" role="dialog" aria-label="生成音色">
@@ -359,6 +365,9 @@ function previewScene(l) {
 import { loadSkills, useSkill } from '../stores/app'
 import { api, uploadAsset } from '../api.js'
 import AppIcon from './AppIcon.vue'
+import VoiceLibraryModal from './VoiceLibraryModal.vue'
+
+const voiceLibOpen = ref(false)
 
 const projects = computed(() => store.projects)
 const props = defineProps({

@@ -84,6 +84,14 @@ class TTSClient(ABC):
         """
         raise NotImplementedError(f"{self.label} 不支持音色克隆")
 
+    def list_system_voices(self, *, timeout: float = 30.0) -> list[dict[str, str]]:
+        """列出该 key 可用的系统音色：[{voice_id, name, gender}]。
+
+        BYOK 的应有之义——拿用户的 key 去厂商问一遍有什么，而不是我们硬编码几个。
+        默认不支持（只有 MiniMax 实现了）；不支持的厂商抛异常，前端据此提示。
+        """
+        raise NotImplementedError(f"{self.label} 不支持音色列表查询")
+
 
 class MiniMaxTTSClient(TTSClient):
     """MiniMax T2A v2 语音合成。"""
@@ -203,6 +211,52 @@ class MiniMaxTTSClient(TTSClient):
             except Exception as e:  # noqa: BLE001
                 failures.append(f"{mask(key)} {e}")
         raise RuntimeError(f"音色克隆失败：{'；'.join(failures)}")
+
+    def list_system_voices(self, *, timeout: float = 30.0) -> list[dict[str, str]]:
+        """MiniMax 系统音色列表：拿 key 调 /v1/get_voice，返回该账号可用的全部音色。
+
+        实测（2026-11-10）：POST {"voice_type":"all"} → system_voice 数组，每项
+        {voice_id, voice_name, description:[], created_time}。**厂商不返回性别**，
+        只能从 voice_id 前缀推（male-/female-），推不出的归 other——这类音色
+        能手动指定给角色，但不进自动选角的男/女池（选角依赖性别分池）。
+        """
+        ring = ring_for("minimax", minimax_keys(self.config.api_key))
+        candidates = ring.candidates()
+        if not candidates:
+            raise RuntimeError("音色列表查询失败：没有配置 MiniMax API Key")
+        failures: list[str] = []
+        for key in candidates:
+            try:
+                with httpx.Client(trust_env=False, timeout=timeout) as client:
+                    resp = client.post(
+                        self.config.endpoint("v1/get_voice"),
+                        headers={
+                            "Authorization": f"Bearer {key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={"voice_type": "all"},
+                    )
+                data = resp.json() if resp.content else {}
+                if key_failure(resp.status_code, data):
+                    reason = error_message(data, resp.status_code)
+                    ring.mark_bad(key, reason)
+                    failures.append(f"{mask(key)} {reason}")
+                    continue
+                resp.raise_for_status()
+                ring.mark_ok(key)
+                raw = (data or {}).get("system_voice") or []
+                return [self._normalize_voice(v) for v in raw if isinstance(v, dict) and v.get("voice_id")]
+            except Exception as e:  # noqa: BLE001
+                failures.append(f"{mask(key)} {e}")
+        raise RuntimeError(f"音色列表查询失败：{'；'.join(failures)}")
+
+    @staticmethod
+    def _normalize_voice(v: dict[str, Any]) -> dict[str, str]:
+        """厂商音色对象 → {voice_id, name, gender}；性别从前缀判（厂商不给）。"""
+        vid = str(v.get("voice_id") or "").strip()
+        low = vid.lower()
+        gender = "male" if low.startswith("male") else "female" if low.startswith("female") else "other"
+        return {"voice_id": vid, "name": str(v.get("voice_name") or vid), "gender": gender}
 
     @staticmethod
     def _parse_audio(data: object) -> bytes:

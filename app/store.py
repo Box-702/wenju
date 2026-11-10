@@ -394,6 +394,26 @@ class UserVoice(Base):
     created_at: Mapped[datetime] = mapped_column(default=_now)
 
 
+class VoicePool(Base):
+    """从厂商发现出来的系统音色全集 + 用户勾选启用的开关。
+
+    BYOK：音色是「这把 key 所属账号」的属性，不是某个作品的——所以这张表是
+    全局的（不像 user_voices 那样按项目）。发现时 upsert 全量（默认不启用），
+    用户勾选哪几个，下游自动选角与音色下拉就只从 enabled 的那批里取。
+    gender 从 voice_id 前缀判（厂商不给性别）：male/female/other，
+    other 只能手动指定给角色，不参与自动选角的男/女分池。
+    """
+
+    __tablename__ = "voice_pool"
+
+    voice_id: Mapped[str] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(default="")
+    gender: Mapped[str] = mapped_column(default="other")     # male | female | other
+    source: Mapped[str] = mapped_column(default="system")    # system（发现）| clone（克隆）
+    enabled: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+
+
 class UserSkill(Base):
     """用户导入的技能（一份带 frontmatter 的 Markdown）。
 
@@ -1390,6 +1410,78 @@ class Store:
             if project_id:
                 q = q.filter_by(project_id=project_id)
             return q.order_by(UserVoice.created_at.desc()).all()
+
+    # ---- VoicePool（BYOK 发现的系统音色 + 勾选启用）----
+
+    def upsert_voice_pool(self, rows: list[dict[str, Any]]) -> int:
+        """把发现到的系统音色写入池（按 voice_id upsert）。
+
+        只补 name/gender，**不动 enabled**——重新发现不该把用户已勾选的音色关掉，
+        也不该擅自启用新的。返回写入条数。
+        """
+        if not rows:
+            return 0
+        with self.session() as s:
+            n = 0
+            for r in rows:
+                vid = str(r.get("voice_id") or "").strip()
+                if not vid:
+                    continue
+                row = s.get(VoicePool, vid)
+                if row is None:
+                    row = VoicePool(voice_id=vid, enabled=False)
+                    s.add(row)
+                row.name = str(r.get("name") or vid)
+                row.gender = str(r.get("gender") or "other")
+                row.source = str(r.get("source") or "system")
+                n += 1
+            s.commit()
+            return n
+
+    def list_voice_pool(self, *, enabled_only: bool = False) -> list[VoicePool]:
+        with self.session() as s:
+            q = s.query(VoicePool)
+            if enabled_only:
+                q = q.filter(VoicePool.enabled.is_(True))
+            return q.order_by(VoicePool.gender, VoicePool.name).all()
+
+    def enabled_voice_pool(self) -> list[dict[str, str]]:
+        """下游真正用的启用音色：[{voice_id, name, gender}]（勾选过的那批）。
+
+        给 casting / library 的 voice_pool 参数用；空列表表示「没勾选过任何发现的
+        音色」，调用方据此回退内置硬编码池（保持老项目与测试行为不变）。
+        """
+        return [
+            {"voice_id": v.voice_id, "name": v.name, "gender": v.gender}
+            for v in self.list_voice_pool(enabled_only=True)
+        ]
+
+    def set_voice_enabled(self, voice_id: str, enabled: bool) -> VoicePool | None:
+        """勾选/取消勾选一个音色。池里没有这个 voice_id 时不新建（发现才有行）。"""
+        with self.session() as s:
+            row = s.get(VoicePool, str(voice_id or "").strip())
+            if row is None:
+                return None
+            row.enabled = bool(enabled)
+            s.commit()
+            s.refresh(row)
+            return row
+
+    def set_voice_pool_enabled(self, voice_ids: list[str]) -> int:
+        """整批设为启用集：列表里的 enabled=True，其余系统音色全部 False。
+
+        克隆音色（source=clone）不受这次批量开关影响——它们的启用走 user_voices，
+        不该被一次「保存系统音色勾选」误关。返回启用条数。
+        """
+        wanted = {str(v or "").strip() for v in voice_ids if str(v or "").strip()}
+        with self.session() as s:
+            count = 0
+            for row in s.query(VoicePool).filter(VoicePool.source == "system").all():
+                row.enabled = row.voice_id in wanted
+                if row.enabled:
+                    count += 1
+            s.commit()
+            return count
 
     def save_user_skill(
         self,

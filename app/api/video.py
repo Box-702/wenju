@@ -184,7 +184,9 @@ def _probe_openai_compatible(base_url: str, api_key: str, model: str = "") -> tu
         try:
             data = _json.loads(body)
             names = [m.get("id", "") for m in (data.get("data") or []) if m.get("id")]
-            return True, f"连接成功，厂商返回 {len(names)} 个模型", names[:12]
+            # 不截断：BYOK 的本意是「厂商有什么 → 用户勾什么」，只给前 12 个
+            # 等于替用户做了他没要求的筛选（厂商清单本来就是按新→旧排的）。
+            return True, f"连接成功，厂商返回 {len(names)} 个模型", names
         except Exception:  # noqa: BLE001
             return True, "连接成功", []
     if status in (401, 403):

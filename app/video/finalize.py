@@ -208,6 +208,9 @@ def finalize_film(
                     dubbed_path = tmp / "dubbed.mp4"
                     # 选角以项目资产库为准（人工确认过的）+ 美术指导的外貌锚推断。
                     style = store.get_video_style(project_id) or {}
+                    # 音色池：勾选启用的 + 内置兜底 + 克隆（与资产库/选角同一份，
+                    # 让发现出来的音色在配音进度与成片报告里显示中文名而不是原始 id）。
+                    from ..media.casting import build_voice_pool
                     out, track, plan = dub_video_with_track(
                         current, script, shots, tts, dubbed_path,
                         on_progress=emit,
@@ -217,6 +220,7 @@ def finalize_film(
                         genders=style.get("character_genders") or None,
                         appearances=style.get("character_appearances") or None,
                         visual_style=style.get("visual_style"),
+                        voice_pool=build_voice_pool(store, style.get("visual_style")),
                     )
                     if plan.cast:
                         cast_rows = [m.to_dict() for m in plan.cast.members]

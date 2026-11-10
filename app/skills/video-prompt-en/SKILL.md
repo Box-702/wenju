@@ -27,6 +27,13 @@ thing the video model sees — anything you leave out, it will invent):
    and never escalate it: one primary move per shot, stay on one side of the subject
    (no axis crossing), and end on the original framing — no late push-in that changes
    the shot size.
+1b. **Every shot's prompt must be self-contained.** Never write "same as above",
+   "as the previous shot", "referring to the last shot" — the video model only sees
+   THIS prompt_body; it has no previous shot, and a pointer is just a license to
+   invent. Anything that must stay consistent across shots (look anchors, light
+   direction, environment traits, character state) has to be spelled out again here.
+   (This does not contradict the verbatim-reuse rule: reuse means writing the SAME
+   CONTENT again; a pointer omits the content — repeat the former, expand the latter.)
 2. **Keep the lens breathing.** Real operators lead or lag the subject slightly, the
    lens is occasionally blocked by foreground people or objects, and fast moves end with
    a brief loss and recovery of focus. Such imperfection is welcome; uncontrolled

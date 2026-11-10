@@ -84,7 +84,7 @@ class _JsonPromptStructured:
         hint = self._json_hint()
         prepared = _append_json_hint(messages, hint)
         last_error: Exception | None = None
-        for attempt in range(2):
+        for _attempt in range(2):
             resp = self._model.invoke(prepared, **kwargs)
             text = str(getattr(resp, "content", "") or "")
             try:

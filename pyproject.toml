@@ -49,6 +49,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.2",
+    "ruff==0.14.0",
 ]
 
 [project.scripts]
@@ -68,3 +69,12 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI 的依赖声明惯例（`file: UploadFile = File(...)`）在 B008 眼里是
+# 「在默认参数里调用函数」——但那是框架的推荐写法，不是 bug。
+extend-immutable-calls = [
+    "fastapi.Body", "fastapi.Cookie", "fastapi.Depends", "fastapi.File",
+    "fastapi.Form", "fastapi.Header", "fastapi.Path", "fastapi.Query",
+    "fastapi.Security", "fastapi.UploadFile",
+]

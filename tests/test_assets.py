@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 
+import pytest
 from fastapi.testclient import TestClient
 
 import app.api as api_mod

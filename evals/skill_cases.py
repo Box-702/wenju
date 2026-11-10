@@ -93,7 +93,7 @@ def loaded_skills(events: list[dict[str, Any]]) -> list[str]:
                 results[-1] = str(e.get("summary") or "")
 
     out: list[str] = []
-    for name, result in zip(calls, results):
+    for name, result in zip(calls, results, strict=True):
         if not name:
             continue
         # 失败的样子有三种：

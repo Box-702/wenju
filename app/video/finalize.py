@@ -178,10 +178,10 @@ def finalize_film(
         # provider 实际产出与计划时长有偏差（v6 实测：计划 20s，成片 21.2s），
         # 按计划时长排配音/字幕会越往后漂移越大——下载后逐镜实测校准。
         calibrated: list[Shot] = []
-        for shot, clip in zip(shots, clips):
+        for shot, clip in zip(shots, clips, strict=True):
             real = _media_duration_sec(Path(clip))
             calibrated.append(shot.model_copy(update={"duration_sec": max(1.0, real)}) if real > 0 else shot)
-        if any(a.duration_sec != b.duration_sec for a, b in zip(calibrated, shots)):
+        if any(a.duration_sec != b.duration_sec for a, b in zip(calibrated, shots, strict=True)):
             emit(f"按实际成片时长校准时间轴（合计 {sum(s.duration_sec for s in calibrated):.1f}s）")
         shots = calibrated
 

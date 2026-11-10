@@ -108,7 +108,7 @@ def timeline_estimated(
         need = sum(durs) + EST_LINE_GAP_SEC * (len(lines) - 1)
         scale = min(1.0, window / need) if need > 0 else 1.0
         cursor = base + EST_LEAD_SEC
-        for ln, d in zip(lines, durs):
+        for ln, d in zip(lines, durs, strict=True):
             dur = max(0.5, d * scale)
             entries.append(SubEntry(
                 speaker=ln.speaker, text=ln.text,

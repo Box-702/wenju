@@ -74,7 +74,7 @@ def test_estimated_timeline_stays_inside_shot_windows():
         s, ms_end = e.start_ms / 1000, e.end_ms / 1000
         lo, hi = windows[e.shot_id]
         assert lo <= s < ms_end <= hi + 0.01, f"{e.text} 越出镜头窗口：{s}-{ms_end} vs {lo}-{hi}"
-    for a, b in zip(entries, entries[1:]):
+    for a, b in zip(entries, entries[1:], strict=False):
         assert b.start_ms >= a.start_ms, "字幕必须按时间排序"
         assert b.start_ms >= a.end_ms, "字幕条目不能重叠"
 

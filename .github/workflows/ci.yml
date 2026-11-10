@@ -1,7 +1,10 @@
 # =====================================================================
-# ci.yml —— 后端测试 + 提示词质量 eval + 前端构建
+# ci.yml —— 后端测试 + 静态检查 + 提示词质量 eval + 前端构建
 #
-# 三个独立 job 并行跑：任一失败即标红。
+# 四个独立 job 并行跑：任一失败即标红。
+#
+# backend 里含一步 ruff 致命集检查（E9/F63/F7/F82/B）：
+# 只拦真 bug，不拦行宽与导入序那几百条存量债。
 #
 # eval 分两个 job：
 #   - eval-offline：不需要任何 key，验证断言库、judge 解析器、case 完整性，
@@ -35,6 +38,12 @@ jobs:
 
       - name: 同步依赖
         run: uv sync --frozen
+
+      - name: 静态检查（致命集）
+        # 只跑致命集：语法错误、未定义名、bugbear。
+        # 全量规则（E501 行长 348 处、I001 导入序 39 处）欠着债，
+        # 一次全开会红到没人愿意修——先让「真 bug 会被拦住」这件事成立。
+        run: uv run ruff check --select E9,F63,F7,F82,B app tests evals
 
       - name: 跑测试
         run: uv run pytest tests -q

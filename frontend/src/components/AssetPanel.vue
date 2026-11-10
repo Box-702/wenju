@@ -154,14 +154,14 @@
                 <input
                   v-model="c.note"
                   class="asset-note"
-                  placeholder="画面要求（如：三十五岁，深灰长衫，眼神疲惫）"
+                  placeholder="画面要求（如：深灰长衫，眼神疲惫）"
                   @change="saveNote(c)"
                 />
                 <!-- 声音描述：克隆音色时作为参考文本 -->
                 <input
                   v-model="c.voice_note"
                   class="asset-note"
-                  placeholder="声音描述（如：低沉沙哑，语速偏慢）"
+                  placeholder="声音描述（如：低沉沙哑）"
                   @change="saveNote(c)"
                 />
                 <div class="asset-nums">台词 {{ c.speech_chars }} 字 · {{ c.scenes }} 场</div>
@@ -722,8 +722,8 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 }
 .asset-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(152px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
   margin-bottom: 4px;
 }
 /* 第一级：范围切换（当前作品 / 全部作品） */
@@ -799,7 +799,7 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 }
 .asset-badge.miss { color: var(--warn); }
 
-.asset-meta { padding: 8px 9px 9px; display: flex; flex-direction: column; gap: 4px; }
+.asset-meta { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
 .asset-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .asset-name {
   font-size: var(--fs-md); color: var(--ink); font-weight: 600;
@@ -808,7 +808,8 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 .asset-id { font-family: var(--mono); font-size: 10px; color: var(--dim); flex: none; }
 .asset-voice {
   position: relative;
-  display: flex; align-items: center; gap: 4px;
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: nowrap;
   font-size: var(--fs-xs); color: var(--muted);
   min-width: 0;
 }
@@ -817,7 +818,7 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 .asset-voice.none { color: var(--dim); }
 /* 音色行上的两个小动作：试听 / 生成音色 */
 .voice-act {
-  flex: none; padding: 1px 7px; font-size: 10px; border-radius: var(--radius-sm);
+  flex: none; padding: 2px 9px; font-size: 11px; border-radius: var(--radius-sm);
   background: transparent; border: 1px solid var(--line); color: var(--dim);
   cursor: pointer; white-space: nowrap;
 }
@@ -825,9 +826,12 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 .voice-act:disabled { opacity: .5; cursor: default; }
 
 .voice-btn {
+  /* 音色名吃掉整行剩余宽度；空间再紧也只省略号，不许竖排换行 */
+  flex: 1; min-width: 0;
   padding: 0; background: none; border: none;
-  color: inherit; font: inherit; font-size: var(--fs-xs);
+  color: inherit; font: inherit; font-size: 12px;
   cursor: pointer; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   border-bottom: 1px dashed var(--line-strong);
 }
 .voice-btn:hover { color: var(--ink); border-bottom-color: var(--accent); }
@@ -835,7 +839,7 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 /* 音色选择浮层 */
 .voice-pop {
   position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 40;
-  min-width: 190px; max-height: 240px; overflow-y: auto;
+  min-width: 230px; max-height: 260px; overflow-y: auto;
   background: var(--panel-solid); border: 1px solid var(--line);
   border-radius: var(--radius-lg); box-shadow: var(--shadow-2); padding: 4px;
 }
@@ -848,18 +852,18 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 .voice-pop-item:hover { background: rgba(255, 255, 255, .08); color: var(--ink); }
 .voice-pop-item.on { color: var(--accent); }
 .vp-gender { margin-left: auto; font-size: 10px; color: var(--dim); }
-.asset-gender { flex: none; color: var(--dim); font-size: 10px; }
-.asset-ok { flex: none; color: var(--accent); font-size: 10px; }
+.asset-gender { flex: none; color: var(--dim); font-size: 10.5px; }
+.asset-ok { flex: none; color: var(--accent); font-size: 10.5px; white-space: nowrap; }
 .asset-desc {
-  margin: 0; font-size: var(--fs-xs); color: var(--dim); line-height: 1.5;
+  margin: 0; font-size: 12px; color: var(--dim); line-height: 1.55;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.asset-nums { font-size: 10px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.asset-nums { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
 /* 用户写的画面要求 / 声音描述：像备注一样轻，但真的进生成 */
 .asset-note {
   width: 100%; box-sizing: border-box;
-  padding: 4px 7px; font-size: 10.5px; font-family: inherit;
+  padding: 5px 8px; font-size: 11.5px; font-family: inherit;
   color: var(--muted); background: rgba(0, 0, 0, .22);
   border: 1px solid var(--line); border-radius: var(--radius-sm);
   outline: none;

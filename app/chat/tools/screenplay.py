@@ -225,6 +225,9 @@ def build(ctx: ToolContext) -> list:
         else:
             coverage = f"原文约 {len(raw) / 10000:.1f} 万字，已全部纳入改编"
         tail = f"（有 {len(issues)} 处结构问题需注意）" if issues else ""
+        if artifacts.get("naming_degraded"):
+            # 名层护栏重跑后人物/地点名仍是拼音：如实说出来，别让用户以为一切正常。
+            tail += "（注意：这次模型把人物或地点名写成了拼音，可能需要在对话里让我改名）"
         return (
             f"已生成初稿版本 {version.id}（模式：{artifacts.get('mode')}）："
             f"共 {len(script.scenes)} 场，{len(script.characters)} 个人物，"

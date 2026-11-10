@@ -482,7 +482,7 @@ Agent 原样带回，服务端强制比对。
 | 改提示词后 | `python -m evals.run` | 确定性层 critical == 0 |
 | 改提示词后 | `python -m evals.run --judge` | judge 均分不低于改前（阈值 75 / 观察线 85） |
 | 改技能结构后 | `python -m evals.skill_eval --ablate --repeat 3` | 约束落地率不低于当前 82% |
-| 改代码后 | `pytest tests -q` | 426 tests 全绿（测试数随每批新增，以实际输出为准） |
+| 改代码后 | `pytest tests -q` | 429 tests 全绿（测试数随每批新增，以实际输出为准） |
 | 静态检查 | `ruff check --select E9,F63,F7,F82,B .` | 0 error（接入 CI 后由 CI 保证） |
 
 ---

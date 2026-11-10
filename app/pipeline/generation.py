@@ -235,6 +235,32 @@ def _is_degenerate_plan(plan: ScenePlan, raw_text: str) -> bool:
     return False
 
 
+def _has_cjk(text: object) -> bool:
+    """文本里是否含汉字（CJK 统一表意文字基本区）。"""
+    return any("\u4e00" <= ch <= "\u9fff" for ch in str(text or ""))
+
+
+def _bible_naming_issue(bible: Bible, language: str) -> str | None:
+    """故事圣经的「显示名」是否退化成了拼音/英文 slug。
+
+    名字是下游一切（选角/人物字典/资产库引用）的地基，带病进场景阶段就全歪。
+    判定只在中文输出下生效：改编英文原著时拉丁名是正当的。
+    返回 None=没问题；返回字符串=一段可直接喂给重跑的修正指令。
+    """
+    if not str(language or "").lower().startswith("zh"):
+        return None
+    bad = [c.name for c in bible.characters if c.name and not _has_cjk(c.name)]
+    bad += [loc.name for loc in bible.locations if loc.name and not _has_cjk(loc.name)]
+    if not bad:
+        return None
+    return (
+        "上一版把人物/地点的 name 写成了拼音或英文 slug（如 "
+        + "、".join(repr(x) for x in bad[:5])
+        + "）。name 必须是**原著中出现的中文称呼原文**（如「林然」「后巷便利店」）；"
+        "拼音只能出现在 id 里。请重新输出完整 JSON。"
+    )
+
+
 def _prior_block(prior_context: str) -> str:
     """前情提要注入块（连载选段改编时衔接上下文，禁止写进本次剧本）。"""
     text = (prior_context or "").strip()
@@ -246,7 +272,7 @@ def _prior_block(prior_context: str) -> str:
     )
 
 
-def _stage_bible(llm: LLM, settings: Settings, *, title: str, excerpts: list[str], prof: dict[str, Any], language: str, prior_context: str = "") -> Bible:
+def _stage_bible(llm: LLM, settings: Settings, *, title: str, excerpts: list[str], prof: dict[str, Any], language: str, prior_context: str = "", critique: str = "") -> Bible:
     """第一阶段：生成故事圣经（标题、梗概、主题、人物、地点）。"""
     from .profiles import profile_prompt
 
@@ -254,9 +280,14 @@ def _stage_bible(llm: LLM, settings: Settings, *, title: str, excerpts: list[str
     prompt = (
         f"请基于下面的原著片段生成剧本故事圣经。标题：{title}\n"
         f"改编类型 profile：\n{profile_prompt(prof, language=language)}\n\n"
+        "【命名硬规矩】人物与地点的 name 必须用原著中出现的称呼原文"
+        "（中文原著就用中文名，如「林然」「后巷便利店」）；"
+        "**严禁把 name 写成拼音或英文 slug**（如 lin_ran）——拼音只允许出现在 id 里。\n\n"
         f"原著片段：\n{text[:4000]}"
         + _prior_block(prior_context)
     )
+    if critique:
+        prompt += f"\n\n上一版存在以下问题，请修正后重新输出：\n{critique}"
     return llm.structured(Bible).invoke(
         [{"role": "system", "content": llm.system_prompt()}, {"role": "user", "content": prompt}]
     )
@@ -339,6 +370,20 @@ def generate_script(
                 chunks = [raw_text or ""]
             excerpts = chunks[:12]
             bible = _stage_bible(llm, settings, title=title, excerpts=excerpts, prof=prof, language=language, prior_context=prior_context)
+            # 名层护栏：显示名退化成拼音 slug 时，带反馈重跑一次故事圣经（有界：只一次）。
+            naming = _bible_naming_issue(bible, language)
+            if naming:
+                log.warning("人物/地点名退化成拼音，带反馈重跑故事圣经：%s", naming[:60])
+                retry = _stage_bible(
+                    llm, settings, title=title, excerpts=excerpts, prof=prof,
+                    language=language, prior_context=prior_context, critique=naming,
+                )
+                if _bible_naming_issue(retry, language) is None:
+                    bible = retry
+                else:
+                    # 重跑仍不合格：不硬塞（拼音名进下游会一路错到底），落日志 + artifacts 记一笔，
+                    # 由上游（对话层）如实告诉用户「模型这次没听话」。
+                    log.warning("故事圣经重跑后名仍为拼音，保留但下游可能沿用 slug 称呼")
             plan = _stage_scenes(llm, settings, bible=bible, excerpts=excerpts, prof=prof, language=language, chunks=chunks, prior_context=prior_context)
             # 退化护栏：把多章素材挤进过少的场景（结构退化）时，带反馈重拆一次。
             if _is_degenerate_plan(plan, raw_text):
@@ -485,7 +530,12 @@ def generate_script(
                 locations=locs,
                 scenes=scenes,
             )
-            artifacts = {"mode": "llm", "bible": bible.model_dump(), "scene_count": len(scenes)}
+            artifacts = {
+                "mode": "llm",
+                "bible": bible.model_dump(),
+                "scene_count": len(scenes),
+                "naming_degraded": _bible_naming_issue(bible, language) is not None,
+            }
             return script, artifacts
         except Exception as e:  # noqa: BLE001
             log.warning("LLM 生成失败，回退本地规则剧本：%s", e)

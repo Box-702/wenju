@@ -310,7 +310,7 @@ watch(() => store.assetRefreshSeq, refresh)
           </button>
         </div>
         <div v-if="currentClip" class="clip-player">
-          <VideoPlayer :src="currentClip.url" />
+          <VideoPlayer :url="currentClip.url" @close="currentClip = null" />
           <a class="cp-dl" :href="currentClip.url" download target="_blank" rel="noopener">
             <AppIcon name="download" /> 下载
           </a>

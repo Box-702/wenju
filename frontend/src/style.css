@@ -515,12 +515,16 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 }
 .modal-sub { font-size: var(--fs-sm); color: var(--muted); margin-top: 3px; }
 .modal-close {
+  position: relative;
   margin-left: auto; width: 28px; height: 28px; flex: none;
   border-radius: var(--radius-md); display: inline-grid; place-items: center;
   background: transparent; border: 1px solid var(--line); color: var(--muted);
   cursor: pointer;
   transition: color 130ms var(--ease), background 130ms var(--ease), border-color 130ms var(--ease);
 }
+/* 命中区外扩到 ~42px（对齐 --tap）：视觉仍是 28px 小方块，手指/鼠标好点。
+   用户反馈「关闭按钮有点问题」= 28px 太小按不中。 */
+.modal-close::after { content: ''; position: absolute; inset: -7px; }
 .modal-close:hover { color: var(--ink); background: var(--panel2); border-color: var(--line-strong); }
 .modal-label {
   display: block; font-size: var(--fs-sm); color: var(--muted);

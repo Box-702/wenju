@@ -98,7 +98,7 @@
 
           <div v-if="typeTab === 'character'" class="asset-grid">
             <div v-for="c in lib.characters" :key="c.char_id" class="asset-card">
-              <div class="asset-pic">
+              <div class="asset-pic" :class="{ clickable: c.image }" @click="c.image && previewPortrait(c)">
                 <img v-if="c.image" :src="c.image" :alt="c.name" loading="lazy" />
                 <div v-else class="asset-placeholder">缺定妆照</div>
               </div>
@@ -171,7 +171,7 @@
 
           <div v-else-if="typeTab === 'location'" class="asset-grid">
             <div v-for="l in lib.locations" :key="l.loc_id" class="asset-card">
-              <div class="asset-pic scene">
+              <div class="asset-pic scene" :class="{ clickable: l.image }" @click="l.image && previewScene(l)">
                 <img v-if="l.image" :src="l.image" :alt="l.name" loading="lazy" />
                 <div v-else class="asset-placeholder">缺场景图</div>
               </div>
@@ -190,7 +190,7 @@
           </div>
 
           <div v-else-if="typeTab === 'clip'" class="asset-grid">
-            <div v-for="a in clipsOf(assets)" :key="a.id" class="asset-card">
+            <div v-for="a in clipsOf(assets)" :key="a.id" class="asset-card clickable" @click="previewAsset(a)">
               <div class="asset-pic scene">
                 <video v-if="a.url" :src="a.url" muted playsinline preload="metadata"></video>
                 <div v-else class="asset-placeholder">成片</div>
@@ -209,7 +209,7 @@
           </div>
 
           <div v-else class="asset-grid">
-            <div v-for="a in materialOf(assets)" :key="a.id" class="asset-card">
+            <div v-for="a in materialOf(assets)" :key="a.id" class="asset-card clickable" @click="previewAsset(a)">
               <div class="asset-pic scene">
                 <img v-if="a.kind === 'image' && a.url" :src="a.url" :alt="a.name" loading="lazy" />
                 <div v-else class="asset-placeholder">{{ a.kind === 'audio' ? '音频' : '素材' }}</div>
@@ -338,6 +338,24 @@
 // =====================================================================
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { store, selectProject, notify, loadShots } from '../stores/app.js'
+
+/** 打开预览浮层：卡片点一下就播/看大图，不用先下载再本地打开。 */
+function previewAsset(a) {
+  const item = { id: a.id, name: a.name || '未命名', kind: a.kind, image: a.url }
+  // 只有真能播/能看的才给媒体键；字幕（srt）点了没意义
+  if (a.kind === 'video') { item.video = a.url; delete item.image }
+  else if (a.kind === 'audio') { item.audio = a.url; delete item.image }
+  else if (a.kind !== 'image') delete item.image
+  store.assetPreview = item
+}
+
+function previewPortrait(c) {
+  store.assetPreview = { id: c.char_id, name: c.name, kind: 'character', image: c.image }
+}
+
+function previewScene(l) {
+  store.assetPreview = { id: l.loc_id, name: l.name, kind: 'location', image: l.image }
+}
 import { loadSkills, useSkill } from '../stores/app'
 import { api, uploadAsset } from '../api.js'
 import AppIcon from './AppIcon.vue'
@@ -576,6 +594,7 @@ async function onImportChosen(e) {
     }
     notify(`已导入 ${files.length} 个素材`, 'ok')
     await loadLibrary()
+    store.assetRefreshSeq += 1  // 让侧栏「资产」视图也看到新导入的
   } catch (err) {
     notify(`导入失败：${err.message}`)
   } finally {
@@ -782,6 +801,7 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
   transition: border-color 130ms var(--ease), transform 130ms var(--ease);
 }
 .asset-card:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+.asset-card.clickable, .asset-pic.clickable { cursor: pointer; }
 .asset-pic { position: relative; aspect-ratio: 3 / 4; background: rgba(0, 0, 0, .28); }
 .asset-pic.scene { aspect-ratio: 16 / 10; }
 .asset-pic img { display: block; width: 100%; height: 100%; object-fit: cover; }

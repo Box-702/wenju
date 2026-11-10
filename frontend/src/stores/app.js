@@ -32,7 +32,8 @@ export const store = reactive({
   assetIndex: [],      // 可被 @ 引用的资产清单 [{ kind, id, name, sub }]
   assetRefs: {},       // 资产引用索引 { char_xxx / loc_xxx → { name, image, kind } }
                        // 提示词里的 @引用 要显示成「小图 + 名字」，靠它
-  assetPreview: null,  // 正在预览的资产（点提示词里的 @引用 打开）
+  assetPreview: null,  // 正在预览的资产（@引用 / 侧栏 / 资产库卡片都打开它）
+  assetRefreshSeq: 0,  // 素材入库后 +1：侧栏资产视图跟着刷（跨组件不共享 ref）
   versions: [],        // 当前项目的版本列表
 
   // 左侧面板开关（默认展开，记忆在 localStorage）

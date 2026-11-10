@@ -15,7 +15,7 @@
 // =====================================================================
 
 import { computed, ref, watch, onMounted } from 'vue'
-import { store, loadShots, loadVideoJobs, loadAssets, loadOverview, notify } from '../stores/app'
+import { store, loadShots, loadVideoJobs, loadAssets, loadOverview } from '../stores/app'
 import AppIcon from './AppIcon.vue'
 import ShotList from './video/ShotList.vue'
 import { openPromptEditor, loadPromptHistory, loadSkills, useSkill } from '../stores/app'
@@ -130,6 +130,10 @@ const clips = computed(() =>
     })),
 )
 
+function kindZh(k) {
+  return { character: '定妆照', location: '场景图', video: '视频', image: '图片', audio: '音频' }[k] || '素材'
+}
+
 function shotLabel(shotId) {
   const s = (store.shots || []).find((x) => x.id === shotId)
   return s ? (s.subject || s.id) : (shotId || '')
@@ -142,6 +146,31 @@ watch(clips, (list) => {
 }, { immediate: true })
 
 const assets = computed(() => store.assets || [])
+
+/** 侧栏「资产」= 资产库的快捷视图，必须同源：
+    定妆照 / 场景图（assetRefs，进作品时已加载）+ 成片与素材（media assets）。
+    以前只列 media assets——孔乙己明明有 5 张定妆照，侧栏却说「还是空的」。 */
+const KIND_ZH = { video: '视频', image: '图片', audio: '音频' }
+const sidebarAssets = computed(() => {
+  const out = []
+  for (const [id, a] of Object.entries(store.assetRefs || {})) {
+    if (!a.image) continue // 缺图的在资产库里有告警，这里不占行
+    out.push({ id, name: a.name, kind: a.kind, image: a.image })
+  }
+  for (const a of assets.value) {
+    const row = { id: a.id, name: a.name || '未命名', kind: a.kind, url: a.url }
+    // 只有真能播/能看的才给媒体键；字幕（srt）之类点了没意义，只留下载
+    if (a.kind === 'video') row.video = a.url
+    else if (a.kind === 'audio') row.audio = a.url
+    else if (a.kind === 'image') row.image = a.url
+    out.push(row)
+  }
+  return out
+})
+
+function openPreview(item) {
+  store.assetPreview = { ...item }
+}
 
 /** 消耗/产出概览（C7）：镜头视图顶部一行，纯创作者语言，无数据就整块不显示。 */
 const overview = computed(() => store.overview)
@@ -171,15 +200,6 @@ function downloadAsset(a) {
   document.body.removeChild(link)
 }
 
-async function copyUrl(a) {
-  try {
-    await navigator.clipboard.writeText(a.url)
-    notify('链接已复制', 'ok')
-  } catch {
-    notify('复制失败')
-  }
-}
-
 onMounted(() => {
   refresh()
   loadSkills()
@@ -188,6 +208,10 @@ watch(() => store.pid, refresh)
 watch(() => store.videoBatch?.status, (st) => {
   if (st === 'succeeded' || st === 'running') refresh()
 })
+// 合成完成 → 成片刚落库，侧栏不刷新就看不到（用户实测：资产库有东西右侧栏空着）
+watch(() => store.videoFinalize?.status, (st) => { if (st === 'succeeded') refresh() })
+// 导入素材后（AssetPanel 改的是 store.assets 之外再拉一次），跟着刷新
+watch(() => store.assetRefreshSeq, refresh)
 </script>
 
 <template>
@@ -340,18 +364,17 @@ watch(() => store.videoBatch?.status, (st) => {
         <span class="cp-subtitle">资产库</span>
         <button class="cp-link" type="button" @click="emit('open-assets')">打开资产库 →</button>
       </div>
-      <div v-if="!assets.length" class="cp-empty">
-        资产库还是空的。生成的白模、成片都会存在这里。
+      <div v-if="!sidebarAssets.length" class="cp-empty">
+        资产库还是空的。生成的定妆照、成片都会存在这里。
       </div>
       <div v-else class="asset-list">
-        <div v-for="a in assets" :key="a.id" class="asset-row">
-          <span class="asset-kind">{{ a.kind }}</span>
-          <span class="asset-name">{{ a.name }}</span>
+        <div v-for="a in sidebarAssets" :key="a.kind + ':' + a.id" class="asset-row">
+          <button class="ar-main" type="button" :title="'点开预览 ' + a.name" @click="openPreview(a)">
+            <span class="asset-kind">{{ kindZh(a.kind) }}</span>
+            <span class="asset-name">{{ a.name }}</span>
+          </button>
           <span class="asset-acts">
-            <button v-if="a.url" class="cp-icon" type="button" title="复制链接" @click="copyUrl(a)">
-              <AppIcon name="copy" />
-            </button>
-            <a v-if="a.url" class="cp-icon" :href="a.url" download target="_blank" rel="noopener" title="下载">
+            <a class="cp-icon" :href="a.url || a.image || a.video || a.audio" download target="_blank" rel="noopener" title="下载">
               <AppIcon name="download" />
             </a>
           </span>
@@ -594,6 +617,14 @@ watch(() => store.videoBatch?.status, (st) => {
   border: 1px solid transparent;
 }
 .asset-row:hover { background: rgba(255, 255, 255, .07); }
+
+/* 整行是个「点开预览」的按钮：透明底、无边框、内容左对齐 */
+.ar-main {
+  display: flex; align-items: center; gap: 8px;
+  flex: 1; min-width: 0;
+  padding: 0; background: transparent; border: 0;
+  font: inherit; text-align: left; color: inherit; cursor: pointer;
+}
 
 .asset-kind {
   flex: none;

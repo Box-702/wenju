@@ -1630,6 +1630,46 @@ base64 比原文大 1/3，且一次请求里所有参考素材加起来都算在
 
 ---
 
+### 5.35 CI 沉默的红：push 后 0 秒失败，本地全绿（2026-11-10）
+
+> 背景：推「消耗概览」那批时顺手拉 CI 状态，发现一片 failure——
+> 追下去才知道 **10-28 起（最后一次绿是 10-12），每次 push 都在 0 秒红**，没人看过一眼。
+> 修复是分层的：门一开，抓到一层债。
+
+#### （1）根因：job 级 `if` 读了 `secrets` —— 工作流编译期直接失败
+
+- **症状**：run 0 秒 completed/failure，`jobs` 与 check-runs **全空**（连 checkout 都没跑）；
+  本地 `yaml.safe_load` 却完全合法。GitHub 只给一句 "This run likely failed because of a
+  workflow file issue"。**YAML 合法 ≠ Actions 语法合法**——Actions 的 job 级 `if:` 不允许
+  `secrets` 上下文，整份文件在编译期被拒，这就是"没有 job 的红"。
+- **引入**：49957a0（10-28 加 evals 框架）写的 `if: ${{ github.event_name == 'push' || secrets.EVAL_API_KEY != '' }}`。
+  语义也写反了——本意是「PR 拿不到 secret 所以不跑」，写成了「push 无条件跑」。
+- **解法**：GitHub 官方模式——前置一个 `eval-gate` job，在 **step 级**（step env 里读 secret 是合法的）
+  把「有没有 key」写成 output，`eval-llm` 的 if 只看 `needs.eval-gate.outputs.has-key`。
+
+#### （2）门开了，ruff 首跑就抓到存量债
+
+工作流修好后第一个真正执行的新步骤 = 587d6c1 加的 ruff 致命集，
+当场抓出 BYOK 音色提交（a01b201，11-10）写的 `app/api/cast.py` 两处 B904（except 里 raise 不带 from）。
+那两处新代码写的时候门禁正在沉默地红——**不是新代码突然变坏，是它全跑在"CI 不存在"的世界里**。
+
+#### （3）裸 pytest 和 `python -m pytest` 不是同一个 sys.path
+
+ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module named 'evals'`（tests/test_skill_eval.py）。
+- **根因**：本地我们惯用 `python -m pytest`——`-m` 会把仓库根塞进 sys.path，所以非安装包的
+  `evals` 也能 import；CI 用 `uv run pytest tests`（裸 pytest，rootdir 不进 sys.path），
+  `app` 是安装包没事，`evals` 不是。本地怎么跑都绿，CI 必红。
+- **解法**：`pyproject.toml` 的 `[tool.pytest.ini_options]` 加 `pythonpath = ["."]`，
+  让任何启动方式（CI / IDE / 裸命令）行为一致，而不是赌调用姿势。
+- **验证**：本地用与 CI 相同的裸 `.venv/Scripts/pytest.exe tests -q` 先复现红，
+  加配置后复现绿（462 passed），再 `-m` 对跑一遍确认两种启动方式一致。
+
+**教训（最贵的）**：「CI 红了没人看」比「没配 CI」更糟——红久了大家就默认它该红，
+新加的门禁等于没上。以后新加任何门禁（ruff 就是例子），上线当天必须确认它真的跑过一次；
+每次 push 扫一眼 `gh run list`，要么就别装。
+
+---
+
 ## 六、排查手册（症状 → 先查什么）
 
 | 症状 | 先查 |

@@ -62,6 +62,11 @@ include = ["app*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-p no:cacheprovider"
+# 仓库根进 sys.path：`app` 是安装包（setuptools include=["app*"]），裸 pytest 也导得到；
+# 但 `evals` 不是安装的包，`tests/test_skill_eval.py` 的 `import evals` 只在
+# `python -m pytest`（隐式把 cwd 塞进 sys.path）下能过，CI 用 `uv run pytest` 就 ModuleNotFound。
+# 写在这里让任何启动方式（CI / IDE / 裸命令）行为一致，不再靠"本地碰巧用了 -m"。
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100

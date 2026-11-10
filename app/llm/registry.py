@@ -203,26 +203,36 @@ def _explicit_chat_pref(store: Any) -> ModelConfig | None:
 
 
 def resolve_chat(settings: Any, store: Any = None) -> ModelConfig | None:
-    """对话模型：用户在设置里显式选择 > CHAT_PROVIDER > .env 链 > DB 兜底。
+    """对话模型：**DB 权威**（UI 显式偏好 > DB 厂商行），env 只在 DB 空时兜底。
 
-    UI 显式偏好排最高——「让用户在界面上选模型」必须能压过 .env，
-    否则设置入口形同虚设；未做过选择时保持 .env 的既有行为。
+    BYOK 的应有之义（D-41）：用户在「设置 → 模型」里选的必须说了算，
+    env 不再能悄悄盖过它。env 链退为"空库兜底"——新装/无 DB 时仍能靠 .env 跑起来，
+    一旦 DB 有配置就以 DB 为准。
     """
-    pref = _explicit_chat_pref(store)
+    pref = _explicit_chat_pref(store) or _from_store(store, "llm", "chat")
     if pref:
         return pref
+    # DB 空：回落 env（保持"克隆下来就能跑"，也保持无 store 的既有行为）
     forced = _canonical(_settings_attr(settings, "chat_provider"))
     if forced:
-        return _from_settings(forced, settings) or _from_store(store, "llm", "chat") or None
+        return _from_settings(forced, settings)
     for name in _ENV_CHAIN:
         config = _from_settings(name, settings)
         if config:
             return config
-    return _from_store(store, "llm", "chat")
+    return None
 
 
 def resolve_vision(settings: Any, store: Any = None) -> ModelConfig | None:
-    """视觉模型：显式指定 > DB > 复用支持视觉的对话厂商 > 常见视觉厂商链。"""
+    """视觉模型：**DB 权威**，env 只在 DB 空时兜底（同 resolve_chat，D-41）。
+
+    DB 兜底顺序：vision 行 → llm 行的 vision 偏好 → 任意 vision 行 → 任意 llm 行。
+    env 兜底顺序：VISION_API_KEY 显式 → VISION_PROVIDER 强制 → 支持视觉的厂商链。
+    """
+    from_store = _from_store(store, "vision") or _from_store(store, "llm", "vision")
+    if from_store:
+        return from_store
+
     forced = _canonical(_settings_attr(settings, "vision_provider"))
     explicit_key = _settings_attr(settings, "vision_api_key")
 
@@ -246,10 +256,6 @@ def resolve_vision(settings: Any, store: Any = None) -> ModelConfig | None:
             config.model = chosen or spec.vision_model or config.model
             return config
 
-    from_store = _from_store(store, "vision") or _from_store(store, "llm", "vision")
-    if from_store:
-        return from_store
-
     # 复用当前对话厂商（若它自带视觉能力），否则按 key 的可用性挑一家。
     for name in ("deepseek", "zhipu", "openai", "qwen"):
         spec = get_provider_spec(name)
@@ -264,32 +270,12 @@ def resolve_vision(settings: Any, store: Any = None) -> ModelConfig | None:
 
 
 def resolve_image(settings: Any, store: Any = None) -> ModelConfig | None:
-    """文生图模型：显式指定 > 用户在设置里选的（DB 偏好） > 智谱 CogView > OpenAI Images。
+    """文生图模型：**DB 权威**（image_gen 偏好 > image 行），env 只在 DB 空时兜底。
 
-    用户偏好（task_type=image_gen）不需要在 DB 里存 key：provider 行没填 key 时
-    回落 .env 的同厂商 key（CogView 与智谱 GLM 共用 ZHIPUAI_API_KEY）——
-    这样设置页只让用户「选模型」，不用重复粘贴 key。
+    DB 行没填 key 时回落 .env 的同厂商 key（CogView 与智谱 GLM 共用
+    ZHIPUAI_API_KEY）——设置页只让用户「选模型」不重复粘 key；
+    迁移（D-41）会把 key 种进 DB，之后这条回落基本不再触发。
     """
-    forced = _canonical(_settings_attr(settings, "image_provider"))
-    explicit_key = _settings_attr(settings, "image_api_key")
-
-    if forced or explicit_key:
-        name = forced or "cogview"
-        spec = get_provider_spec(name)
-        # cogview 与 zhipu 共用同一个 key。
-        source = _from_settings("zhipu" if name == "cogview" else name, settings)
-        api_key = explicit_key or (source.api_key if source else "")
-        if api_key:
-            return ModelConfig(
-                provider=name,
-                label=spec.label if spec else "自定义文生图",
-                model=_settings_attr(settings, "image_model") or (spec.image_model if spec else ""),
-                api_key=api_key,
-                base_url=_settings_attr(settings, "image_base_url")
-                or (spec.default_base_url if spec else ""),
-                source="env",
-            )
-
     # 用户在设置里选过生图模型：模型/端点以用户选择为准，key 缺失时回落 .env。
     if store is not None:
         try:
@@ -318,6 +304,26 @@ def resolve_image(settings: Any, store: Any = None) -> ModelConfig | None:
     from_store = _from_store(store, "image", "image_gen")
     if from_store:
         return from_store
+
+    forced = _canonical(_settings_attr(settings, "image_provider"))
+    explicit_key = _settings_attr(settings, "image_api_key")
+
+    if forced or explicit_key:
+        name = forced or "cogview"
+        spec = get_provider_spec(name)
+        # cogview 与 zhipu 共用同一个 key。
+        source = _from_settings("zhipu" if name == "cogview" else name, settings)
+        api_key = explicit_key or (source.api_key if source else "")
+        if api_key:
+            return ModelConfig(
+                provider=name,
+                label=spec.label if spec else "自定义文生图",
+                model=_settings_attr(settings, "image_model") or (spec.image_model if spec else ""),
+                api_key=api_key,
+                base_url=_settings_attr(settings, "image_base_url")
+                or (spec.default_base_url if spec else ""),
+                source="env",
+            )
 
     for name in ("cogview", "openai"):
         spec = get_provider_spec(name)
@@ -361,11 +367,15 @@ def describe_providers() -> list[dict[str, Any]]:
 
 
 def resolve_tts(settings: Any, store: Any = None) -> ModelConfig | None:
-    """TTS 模型：显式 TTS_* > MINIMAX_API_KEY 环境变量回落。
+    """TTS 模型：**DB 权威**（tts 行），env 只在 DB 空时兜底（同 resolve_chat，D-41）。
 
-    minimax 不在 llm 厂商表（它只作为视频 provider 存在），所以不走
-    _from_settings，直接读环境变量——与 MiniMaxProvider 的取 key 方式一致。
+    minimax 一把 key 打通对话/视频/配音；env 兜底时与视频 Provider 共用一个
+    key 环（坏 key 在这里也跳过，见 app/keys.py）。
     """
+    from_store = _from_store(store, "tts", "tts")
+    if from_store:
+        return from_store
+
     provider = _canonical(_settings_attr(settings, "tts_provider")) or "minimax"
     api_key = _settings_attr(settings, "tts_api_key")
     base_url = _settings_attr(settings, "tts_base_url")

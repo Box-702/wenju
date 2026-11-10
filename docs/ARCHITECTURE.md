@@ -178,19 +178,23 @@ ProviderSpec(
 > 协议客户端，而不是加一条 `ProviderSpec`。这是有意的取舍——主流可选厂商里它不占多数，
 > 且引入后要多维护一套 SDK 依赖。
 
-### 2.3 配置解析优先级（`registry.py`）
+### 2.3 配置解析优先级（`registry.py`，D-41 起 DB 权威）
 
 ```
-显式指定（CHAT_PROVIDER / VISION_PROVIDER / IMAGE_PROVIDER）
-   ↓ 没有
-.env 厂商优先级链：OPENAI_* > ZHIPUAI_* > DEEPSEEK_*
-   ↓ 都没有
-数据库 api_providers / model_preferences（前端「设置 → 模型」里配的）
+数据库 api_providers / model_preferences（前端「设置 → 模型」里配的）——唯一权威
+   ↓ DB 该模态为空
+.env 兜底链（显式指定 > 厂商优先级链），保住「克隆下来就能跑」
 ```
 
+- **DB 优先是 BYOK 的应有之义**（D-41）：以前 env 压过 DB，用户在 UI 选的模型会被
+  `.env` 悄悄盖掉（实测 UI 选 v4-pro、实际跑 env 的 flash）。现在界面说话算数；
+  env 降级为「空库兜底」，只在新装/删库时起作用。
+- **首次启动自动入库**（`app/llm/seed.py`，lifespan 与 CLI 都挂）：把 .env 现有 key
+  幂等搬进 DB——只补缺不覆盖、不设偏好、空 env 不动空库，跑一百遍不改坏用户数据。
+  备用 key 轮换（`app/keys.py`）继续读 os.environ，那是故障转移安全网不是配置入口。
 - **三个能力维度各自解析，互不干扰**：对话用 DeepSeek、质检用智谱视觉、文生图用 CogView 是允许的。
-- 视觉未显式配置时，自动复用一个「自带视觉能力且 key 可用」的厂商，并把模型名换成该厂商的视觉模型。
-- 文生图未显式配置时，按 `cogview` → `openai` 顺序找 key。
+- 视觉未配置时，自动复用一个「自带视觉能力且 key 可用」的厂商，并把模型名换成该厂商的视觉模型。
+- 文生图未配置时，按 `cogview` → `openai` 顺序找 key。
 - 解析结果是一个 `ModelConfig`（`provider / model / api_key / base_url / extra_body / source`），
   上层只消费它，不关心来源是 `.env` 还是数据库。
 

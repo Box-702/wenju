@@ -46,6 +46,7 @@
 | [D-37](#d-37-参考视频只从参考素材里选不再收公网直链) | 素材 | 参考视频只从参考素材里挑；「登记公网直链」这条路整条拆掉，提交前内联成 data URI | 已定 |
 | [D-39](#d-39-首页输入框是开新作品的起点不是独立模式) | 交互 | 首页直聊：发送即进对话视图；本轮聊出作品就把整段对话迁进作品 | 已定 |
 | [D-40](#d-40-byok-的能力清单由厂商发现用户勾选而不是我们硬编码) | 设置/模型 | BYOK：音色与对话模型都「拿 key 问厂商 → 勾选启用」；视频模型不可发现则保持手填 | 已定 |
+| [D-41](#d-41-配置权威从-env-翻转为-db-现有-key-幂等入库) | 设置/模型 | DB 是唯一权威、env 降为空库兜底；启动时 .env key 幂等入库（只补缺不覆盖） | 已定 |
 | [D-38](#d-38-出片幂等用数据库claim会话互斥用进程内锁) | 稳定性 | 出片用 claim 表（比「查在途」多挡崩溃窗口），会话用进程内锁（run 不跨请求） | 已定 |
 
 ---
@@ -1403,6 +1404,49 @@ key 是用户的，可用能力清单也是用户账号的属性，凭什么由�
 **相关**：`app/llm/tts.py`（list_system_voices）· `app/store.py`（VoicePool）·
 `app/api/cast.py`（/voices/discover、/voices/pool）· `app/media/casting.py`（build_voice_pool）·
 `frontend/src/components/VoiceLibraryModal.vue` · `docs/DEVELOPMENT.md` 5.34
+
+---
+
+<a id="d-41-配置权威从-env-翻转为-db-现有-key-幂等入库"></a>
+## D-41 配置权威从 .env 翻转为 DB，现有 key 幂等入库 —— 已定（2026-11-10）
+
+**背景**：用户要求「从现在开始都不走 env，把现有的 key 和数据都入库，走真实 BYOK」。
+盘点时发现 env 一直在**悄悄覆盖 UI 选择**：设置里配的是 `deepseek-v4-pro`（DB 行），
+实际跑的却是 `.env` 的 `deepseek-flash`——「设置 → 模型」形同虚设，
+这与 D-40「BYOK 的能力清单归用户」的精神直接冲突：key 和选择都是用户的，界面必须说话算数。
+
+**选项**：
+① 彻底切断 .env：解析链无视 env，key 只能从 UI 进 DB；
+② DB 权威 + env 降为空库兜底：DB 有配置以 DB 为准，空库时 env 仍能起跑；
+③ 只加「UI 显式偏好」入口压 env（现状的延伸，env 链仍是主配置源）。
+
+**决定**：选 ②，配一次性幂等种子（`app/llm/seed.py`）。
+
+**理由**：
+- ① 破坏「克隆下来就能跑」的硬指标（D-07），且空库时服务直接不可用、
+  start.bat 首跑体验与全部 env-only 测试都要陪葬；
+- ③ 已经试过——UI 偏好只覆盖 chat 一维，vision/image/tts 仍被 env 压着，
+  而且偏好没设过时 env 照样赢，等于没修；
+- ② 把「能跑」和「说话算数」分开解决：DB 是权威（四模态一致），
+  env 只在 DB 空时兜底（新装/删库不裸奔）。
+
+**种子的三条铁律**（用户数据，跑一百遍不许改坏）：
+1. **只补缺不覆盖**——同 (kind, name) 已有带 key 的行就跳过（那是用户 UI 定的）；
+2. **不设 model_preference**——单行时 DB 兜底自然选中，多行时由用户在 UI 选，
+   种子设偏好反而可能把选择盖回 env 字面值；
+3. **空 env 不动空库**——env 里没有对应 key 就什么都不做。
+搬的是「当前实际生效的配置」（store=None 的 env 视图解析结果），不是 env 的字面默认值。
+
+**副作用要如实告知**：翻转后 chat 从 flash 变成 UI 里配的 v4-pro——这不是 bug，
+是用户选择终于生效了；想换回 flash 在设置里点一下即可（现在点了真的管用）。
+备用 key 轮换（`app/keys.py`）继续读 os.environ——那是故障转移的安全网，不是配置入口。
+
+**什么时候该推翻**：若出现「多机器共享一份 DB、各机 env 不同」的部署形态，
+env 兜底语义会失效，届时配置应完全走 DB + 显式导入导出。
+
+**相关**：`app/llm/registry.py`（四 resolver 的 DB 优先链）· `app/llm/seed.py` ·
+`app/main.py` lifespan / `app/cli.py`（启动钩子）· `tests/test_byok_seed.py`（8 用例锁幂等三原则）·
+`docs/ARCHITECTURE.md` 2.3 · D-40（能力清单归用户）· D-07（克隆就能跑）
 
 ---
 

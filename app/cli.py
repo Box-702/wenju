@@ -49,6 +49,13 @@ def main() -> None:
 
     cfg = settings()
     store_ = store()
+    # 与 Web 入口一致：CLI 也把 .env 现有配置幂等入库（D-41），
+    # 否则 CLI 跑出来的模型和 Web 不是同一套。
+    try:
+        from .llm.seed import seed_keys_from_env
+        seed_keys_from_env(cfg, store_)
+    except Exception:  # noqa: BLE001
+        pass
     llm_ = llm()
 
     print("【1】创建项目")

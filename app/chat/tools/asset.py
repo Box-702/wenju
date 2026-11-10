@@ -53,7 +53,7 @@ def build_asset_tools(ctx: ToolContext) -> list[Any]:
         if asset.kind != "audio" or not asset.content:
             return f"素材「{asset.name}」不是可用的音频样本（需要音频文件）。"
 
-        client = build_tts_client(resolve_tts(get_settings()))
+        client = build_tts_client(resolve_tts(get_settings(), store))
         if client is None or not client.available:
             return "没有配置语音合成（需要 MINIMAX_API_KEY），暂时无法克隆音色。"
 

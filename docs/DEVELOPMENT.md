@@ -1670,6 +1670,29 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 
 ---
 
+### 5.36 「空 env」测试不空：Settings 的 property 合并多个字段，覆盖一个不够（2026-11-10）
+
+> 背景：写 BYOK 种子测试（`test_byok_seed.py`）时，有一条要验证「env 里没 key → 什么都不种」。
+> 测试里 `Settings(MINIMAX_API_KEY="", …)` 显式把主 key 置空了，结果 seed 还是种出了一行
+> `tts/minimax`——"空 env"根本不空。
+
+- **症状**：`assert acts == []` 失败，`acts` 里多一个 `tts/minimax`；`video/minimax` 却没种出来
+  （说明 `minimax_keys()` 读 os.environ 是空的，问题只在 Settings 这一侧）。
+- **根因**：`Settings.minimax_key_list` 是个 **computed property**，它 merge 了
+  `minimax_api_key` **和** `minimax_api_key_fallbacks` 两个字段。测试只把前者置空，
+  后者仍被 pydantic-settings 从 `.env` 的 `MINIMAX_API_KEY_FALLBACKS` 读了进来——
+  于是 `resolve_tts` 拿到一把真实 key，种子就"尽责"地入库了。
+  这是 5.25「三条配置路径」的延伸：**property 汇聚多源时，单字段覆盖 = 没覆盖。**
+- **解法**：测试的 `_settings()` helper 里把 `MINIMAX_API_KEY` 和 `MINIMAX_API_KEY_FALLBACKS`
+  **两个字段都显式置空**；video 分支读 os.environ 的部分，用 `monkeypatch.delenv` 清掉
+  `MINIMAX_API_KEY/KEYS/FALLBACKS` 三个环境变量才算真"空 env"。
+- **教训**：给「读取配置的代码」写测试时，先数清楚它读了几条路径（Settings 字段 ×N +
+  os.environ ×M），**每条都要在测试里显式隔离**，漏一条就会出现"我以为关了其实没关"的假绿。
+  这类坑不会在实现里暴露（生产环境本来就该读 .env），只在测试里暴露——所以测试必须
+  从"它到底读哪些源"出发设计，而不是从"我传了哪些参数"出发。
+
+---
+
 ## 六、排查手册（症状 → 先查什么）
 
 | 症状 | 先查 |

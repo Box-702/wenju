@@ -153,6 +153,14 @@ async def _lifespan(app: FastAPI):
 
     settings = get_settings()
     log = logging.getLogger(__name__)
+    # BYOK 入库（D-41）：把 .env 现有 key 幂等搬进 DB，之后 DB 是唯一权威。
+    # 失败不阻断启动——env 兜底链还在，最坏情况是行为同从前。
+    try:
+        from .deps import store as _seed_store
+        from .llm.seed import seed_keys_from_env
+        seed_keys_from_env(settings, _seed_store())
+    except Exception as e:  # noqa: BLE001
+        log.warning("BYOK 配置入库失败（不阻断服务）：%s", e)
     if settings.video_sweeper_enabled:
         from .video.sweeper import start_sweeper
 

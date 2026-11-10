@@ -291,7 +291,7 @@ async def clone_voice(
     from ..llm.registry import resolve_tts
     from ..llm.tts import build_tts_client
 
-    client = build_tts_client(resolve_tts(get_settings()))
+    client = build_tts_client(resolve_tts(get_settings(), store))
     if client is None or not client.available:
         raise HTTPException(503, "没有配置语音合成（需要 MINIMAX_API_KEY），无法克隆音色")
 
@@ -368,7 +368,7 @@ def preview_voice(project_id: str, payload: VoicePreview) -> Response:
     from ..llm.tts import build_tts_client
     from ..config import get_settings
 
-    client = build_tts_client(resolve_tts(get_settings()))
+    client = build_tts_client(resolve_tts(get_settings(), deps.store()))
     if client is None or not client.available:
         raise HTTPException(503, "未配置 TTS（需要 MINIMAX_API_KEY），无法试听")
 

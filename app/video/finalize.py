@@ -83,12 +83,12 @@ def _resolve_script(store: Any, project: Any) -> Script | None:
         return None
 
 
-def _resolve_tts():
+def _resolve_tts(store: Any = None):
     from ..config import get_settings
     from ..llm.registry import resolve_tts
     from ..llm.tts import build_tts_client
 
-    cfg = resolve_tts(get_settings())
+    cfg = resolve_tts(get_settings(), store)
     return build_tts_client(cfg) if cfg else None
 
 
@@ -200,7 +200,7 @@ def finalize_film(
         dubbed = False
         cast_rows: list[dict[str, Any]] = []
         if dubbing and script is not None:
-            tts = _resolve_tts()
+            tts = _resolve_tts(store)
             if tts is None or not tts.available:
                 emit("未配置 TTS（可用 MINIMAX_API_KEY），跳过配音")
             else:

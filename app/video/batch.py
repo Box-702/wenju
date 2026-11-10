@@ -88,6 +88,21 @@ class BatchManager:
             found = [b for b in self._batches.values() if b.project_id == project_id]
         return max(found, key=lambda b: b.created_at) if found else None
 
+    def running_for_project(self, project_id: str) -> Batch | None:
+        """该项目当前还在推进的批次（没到终态）。
+
+        同一项目同时跑两个批次会重复提交同一批镜头、重复计费，
+        而且两个批次会互相抢「当前镜头」的完成回调（`_find_running` 按
+        current_shot_id 匹配，命中第一个就返回）。提交新批次前先查这个。
+        """
+        with self._lock:
+            found = [
+                b for b in self._batches.values()
+                if b.project_id == project_id
+                and b.status in ("running", "awaiting_approval")
+            ]
+        return max(found, key=lambda b: b.created_at) if found else None
+
     # ---- 启动 ----
 
     def start(

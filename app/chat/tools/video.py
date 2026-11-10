@@ -76,18 +76,30 @@ def build(ctx: ToolContext) -> list:
         if not approved:
             return "没有可提交的镜头：提示词需要先经过人工批准。可以说「批准全部提示词」，或先看看镜头清单。"
         from ...api.schemas import VideoJobCreate
-        from ...api.video import _create_and_submit_job, generate_batch
+        from ...api.video import generate_batch, submit_video_job
 
         try:
             if wanted:
                 # 指定镜头：逐镜直接提交（接力链主要服务整片连拍，这里不强求）。
+                created = 0
+                reused = 0
                 for sid in approved:
                     shot = next(s for s in v.shots if isinstance(s, dict) and s.get("id") == sid)
-                    _create_and_submit_job(p.id, VideoJobCreate(
+                    _job, is_new = submit_video_job(p.id, VideoJobCreate(
                         shot_id=sid, provider="minimax", model="default",
                         prompt=shot.get("video_prompt") or "", version_id=v.id,
                     ))
-                return f"已提交 {len(approved)} 个指定镜头的视频生成，稍后可问我进度。"
+                    created += 1 if is_new else 0
+                    reused += 0 if is_new else 1
+                # 幂等：已在跑的镜头不会重复提交（那会重复计费），
+                # 所以要如实说「几个新建、几个本来就在跑」。
+                if reused and not created:
+                    return (f"这 {reused} 个镜头已经在生成了（没有重复提交，不会重复计费），"
+                            "稍后可问我进度。")
+                if reused:
+                    return (f"已提交 {created} 个镜头的视频生成，另有 {reused} 个本来就在跑"
+                            "（没有重复提交）。稍后可问我进度。")
+                return f"已提交 {created} 个指定镜头的视频生成，稍后可问我进度。"
             # 整片：走批次（串行推进，前一镜成片自动作为后一镜接力参考）。
             from ...api.video import BatchCreateRequest
 
@@ -117,7 +129,7 @@ def build(ctx: ToolContext) -> list:
             return f"没有找到镜头 {shot_id}，可以先查镜头清单确认 id。"
         job = ctx.latest_job_by_shot(p.id).get(shot_id)
         from ...api.schemas import VideoJobCreate
-        from ...api.video import _create_and_submit_job, retry_video_job
+        from ...api.video import retry_video_job, submit_video_job
 
         try:
             if job is not None and job.status in ("failed", "cancelled"):
@@ -125,7 +137,12 @@ def build(ctx: ToolContext) -> list:
                 return f"已重新排队镜头 {shot_id}（之前失败/取消的任务重试）。"
             if not shot.get("video_prompt") or shot.get("prompt_status") != "approved":
                 return "该镜头的提示词还没批准，重跑前需要先批准。"
-            _create_and_submit_job(p.id, VideoJobCreate(
+            # 还在跑就别再投一次——那会重复计费。要重出片先取消或等它出完。
+            active = ctx.store.find_active_video_job(p.id, shot_id)
+            if active is not None:
+                return (f"镜头 {shot_id} 还在生成中（任务 {active.id}，状态 {active.status}），"
+                        "没有重复提交。等它出完再决定要不要重跑；想立刻换一版就先取消那个任务。")
+            _job, _created = submit_video_job(p.id, VideoJobCreate(
                 shot_id=shot_id, provider="minimax", model="default",
                 prompt=shot.get("video_prompt") or "", version_id=v.id,
             ))

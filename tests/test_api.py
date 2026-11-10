@@ -246,7 +246,12 @@ def test_chat_stream_emits_done_frame(client, sample_text):
 
 
 def test_video_generation_carries_aspect_ratio(client, sample_text, monkeypatch):
-    """画幅选择（9:16 等）随任务落库：单发与批次都写进 params.aspect_ratio。"""
+    """画幅选择（9:16 等）随任务落库：单发与批次都写进 params.aspect_ratio。
+
+    单发与批次**故意走不同镜头**：批次是串行的，只会同步提交第一镜；
+    而提交现在带幂等闸门（同镜头同意图会复用既有任务，不重复建），
+    两条路径都投同一个镜头就只会剩一个任务——那是闸门在起作用，不是本用例要测的。
+    """
     import app.api.video as video_api
 
     project = _import_project(client, sample_text)
@@ -276,13 +281,14 @@ def test_video_generation_carries_aspect_ratio(client, sample_text, monkeypatch)
 
     monkeypatch.setattr(video_api, "_submit_video_job", lambda job: None)
 
+    # 单发走第二镜（批次第一镜是 shot_..._000，两条路径互不撞车）。
     single = client.post(
         f"/api/projects/{project['id']}/video/generate",
         json={
-            "shot_id": "shot_scene_001_000",
+            "shot_id": "shot_scene_001_001",
             "provider": "minimax",
             "model": "default",
-            "prompt": "A close-up shot of Qi Xia.",
+            "prompt": "A wide shot of the rainy street.",
             "version_id": created.json()["id"],
             "params": {"aspect_ratio": "9:16"},
         },

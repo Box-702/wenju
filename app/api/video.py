@@ -691,8 +691,88 @@ def _submit_video_job(job: Any) -> None:
     deps.video_manager().submit(job.id, provider, job.prompt, _job_params(dict(job.params or {})))
 
 
-def _create_and_submit_job(project_id: str, payload: VideoJobCreate) -> Any:
+#: 参与出片意图指纹的参数键。刻意**不含**自动回填的 reference_videos——它是接力锚，
+#: 随「上一镜出没出完」变化，拿它算指纹会让批次重投永远判成「意图不同」，幂等等于没做；
+#: 用户手挑的那部分单独进意图（见 submit_video_job 里的 manual_reference_videos）。
+_INTENT_PARAM_KEYS = (
+    "duration_sec",
+    "resolution",
+    "aspect_ratio",
+    "first_frame_image",
+    "last_frame_image",
+    "reference_images",
+    "reference_audios",
+    "content",
+)
+
+
+def _video_intent(
+    payload: VideoJobCreate, effective_params: dict[str, Any], manual_reference_videos: list[str]
+) -> dict[str, Any]:
+    """一次出片请求的「意图」——claim key 由它算出。
+
+    两个归一化保证「等价参数 = 同一意图」：
+    - 用回填后的 effective_params（时长/分辨率都定了型，「没传」和「传了默认值」同 key）；
+    - 空串 / 空列表按「没提」处理，不进指纹。
+    """
+    params: dict[str, Any] = {}
+    for key in _INTENT_PARAM_KEYS:
+        value = effective_params.get(key)
+        if value:
+            params[key] = value
+    if manual_reference_videos:
+        params["reference_videos"] = list(manual_reference_videos)
+    return {
+        "prompt": payload.prompt,
+        "provider": payload.provider,
+        "model": payload.model,
+        "version_id": payload.version_id,
+        "params": params,
+    }
+
+
+def _same_intent(job: Any, payload: VideoJobCreate, effective_params: dict[str, Any],
+                 manual_reference_videos: list[str]) -> bool:
+    """在途任务与新请求是不是「同一件事」（claim 之前的前置比对）。
+
+    claim 表只覆盖**从 submit_video_job 进来**的轮；成片质检的自动重 roll
+    （app/video/qa.py）直接 create_video_job、不占 claim。没有这层比对的话：
+    质检刚重 roll 出一个在途任务，用户又说「出片」——claim 查不到、任务又不是
+    自己提交的，就会第三次建档、同一个镜头两条任务并行烧钱。
+    """
+    if job.prompt != payload.prompt:
+        return False
+    if job.provider != payload.provider or job.model != payload.model:
+        return False
+    stored = dict(job.params or {})
+
+    def _norm(value: Any) -> Any:
+        return value if value else None
+
+    for key in _INTENT_PARAM_KEYS:
+        if _norm(stored.get(key)) != _norm(effective_params.get(key)):
+            return False
+    # 参考视频：存下来的是「手挑 + 自动接力锚」合并结果，接力锚随出片进度变化不比，
+    # 只按长度截出手挑那段比对。
+    if manual_reference_videos:
+        stored_refs = list(stored.get("reference_videos") or [])
+        if stored_refs[: len(manual_reference_videos)] != manual_reference_videos:
+            return False
+    return True
+
+
+def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, bool]:
     """创建视频任务并投递（单镜提交与批量批次共用的入口）。
+
+    返回 (任务, 是否新建)。**幂等由 claim 表保证**（`VideoJobClaim`，见 app/store.py）：
+    同一镜头 + 同一意图在途期间，第二次请求命中既有 claim——
+    任务已建好就直接复用它（不新建、不重复计费）；正卡在「claim 了但还没建完任务」
+    的缝里就报 409 停止，绝不把同一个意图投出去两次。
+    换参数的重出片是不同意图，正常新建。
+
+    两条边界：
+    - 上一版已出片的镜头再次提交：任务进终态时 claim 自动释放，属合法重出片。
+    - 进程崩溃留下的空 claim 由 10 分钟超时自愈；残留的终态 claim 就地清理。
 
     含提交时自动锚回填（定妆图 + 前镜成片接力）与默认分辨率策略：
     payload.params 未显式带 resolution 时落全局默认（VIDEO_DEFAULT_RESOLUTION）。
@@ -704,6 +784,7 @@ def _create_and_submit_job(project_id: str, payload: VideoJobCreate) -> Any:
     from ..video import get_registry
     from ..video.rhythm import suggest_duration
 
+    store = deps.store()
     version = _resolve_video_version(project_id, payload.version_id)
     shot = next(
         (s for s in (version.shots if version else [])
@@ -719,7 +800,7 @@ def _create_and_submit_job(project_id: str, payload: VideoJobCreate) -> Any:
     explicit = payload.params.get("duration_sec")
     director_sec = float((shot or {}).get("duration_sec") or 0)
     pacing = getattr(version, "pacing", None) if version else None
-    project = deps.store().get_project(project_id)
+    project = store.get_project(project_id)
     fmt = getattr(project, "adaptation_type", None)
     duration = int(round(explicit or director_sec or suggest_duration(pacing, fmt)))
 
@@ -736,21 +817,62 @@ def _create_and_submit_job(project_id: str, payload: VideoJobCreate) -> Any:
         if value:
             stored_params[key] = value
 
-    # 提交时自动补齐一致性锚（定妆图 + 前镜成片接力）；调用方显式给的优先。
+    # 先记下用户手挑的参考视频，再补自动锚——回填会把接力锚并进来，混在一起分不清意图。
+    manual_reference_videos = list(payload.params.get("reference_videos") or [])
     _auto_references(project_id, payload.shot_id, payload.version_id, stored_params)
 
-    job = deps.store().create_video_job(
-        project_id=project_id,
-        shot_id=payload.shot_id,
-        provider=payload.provider,
-        model=payload.model,
-        prompt=payload.prompt,
-        params=stored_params,
-        version_id=payload.version_id,
-        cost_estimate=cost,
+    # 意图占位（claim）：建任务之前先占——崩溃轮、并发轮、重试轮都有唯一出口。
+    # claim 表只覆盖从本函数进来的轮；成片质检的自动重 roll 直接建任务不占 claim，
+    # 所以 claim 未命中时还要再查一层「同镜头有在途的同意图任务吗」兜底，
+    # 否则质检刚重 roll 完、用户一句「出片」就能让同一镜头三条任务并行。
+    key = store.video_claim_key(
+        project_id, payload.shot_id,
+        _video_intent(payload, stored_params, manual_reference_videos),
     )
-    _submit_video_job(job)
-    return job
+    outcome, existing_task_id = store.claim_video_job(
+        key, project_id=project_id, shot_id=payload.shot_id
+    )
+    if outcome == "replay":
+        if existing_task_id:
+            existing = store.get_video_job(existing_task_id)
+            if existing is not None:
+                log.info("镜头 %s 同意图任务在途（%s），复用不重复提交", payload.shot_id, existing.id)
+                return existing, False
+        # 卡在缝里 / 并发建档中：拒绝重放，绝不投第二次。
+        raise HTTPException(
+            409, "这一镜的出片请求正在提交中（上一轮还没完成建档）。稍等片刻再试，不要重复提交。"
+        )
+    active = store.find_active_video_job(project_id, payload.shot_id)
+    if active is not None and _same_intent(active, payload, stored_params, manual_reference_videos):
+        store.release_video_claim(key)  # 让位给真正在跑的那条，claim 不许留着挡路
+        log.info("镜头 %s 有在途任务（非本路径提交），同意图直接复用：%s", payload.shot_id, active.id)
+        return active, False
+
+    try:
+        job = store.create_video_job(
+            project_id=project_id,
+            shot_id=payload.shot_id,
+            provider=payload.provider,
+            model=payload.model,
+            prompt=payload.prompt,
+            params=stored_params,
+            version_id=payload.version_id,
+            cost_estimate=cost,
+        )
+    except Exception:
+        store.release_video_claim(key)  # 建档失败：占位要还回去，别挡下一次尝试
+        raise
+    store.finish_video_claim(key, job.id)
+    try:
+        _submit_video_job(job)
+    except Exception:
+        # 投递失败：任务标终态（顺带释放 claim），别让占位挡住用户改好之后的重试。
+        try:
+            store.update_video_job(job.id, status="failed", error_message="投递失败")
+        except Exception:  # noqa: BLE001
+            log.warning("投递失败后回写任务 %s 状态失败", job.id)
+        raise
+    return job, True
 
 
 def _resolve_video_version(project_id: str, version_id: str | None) -> Any:
@@ -864,15 +986,19 @@ def _auto_references(project_id: str, shot_id: str | None, version_id: str | Non
 
 @router.post("/projects/{project_id}/video/generate")
 def create_video_job(project_id: str, payload: VideoJobCreate) -> dict[str, Any]:
-    """提交视频生成任务：落库后立刻投递到异步队列（提交 → 轮询 → 回调写回状态）。"""
+    """提交视频生成任务：落库后立刻投递到异步队列（提交 → 轮询 → 回调写回状态）。
+
+    幂等：同一镜头已有在途任务时返回那个任务（`reused=True`），不新建、不重复计费。
+    """
     common.get_project(project_id)
-    job = _create_and_submit_job(project_id, payload)
+    job, created = submit_video_job(project_id, payload)
     return {
         "id": job.id,
-        "status": "submitted",
+        "status": "submitted" if created else job.status,
         "provider": job.provider,
         "model": job.model,
         "cost_estimate": job.cost_estimate,
+        "reused": not created,
     }
 
 
@@ -959,7 +1085,7 @@ def _batch_submit(
         if shot is None or not shot.get("video_prompt") or shot.get("prompt_status") != "approved":
             return None
         try:
-            job = _create_and_submit_job(project_id, VideoJobCreate(
+            job, _created = submit_video_job(project_id, VideoJobCreate(
                 shot_id=shot_id, provider=provider, model=model,
                 prompt=shot.get("video_prompt") or "", version_id=version_id,
                 params={
@@ -1020,6 +1146,17 @@ def generate_batch(project_id: str, payload: BatchCreateRequest) -> dict[str, An
 
     provider = payload.provider or _pick_video_provider()[0]
     model = payload.model or "default"
+
+    # 同一项目同时只能有一个批次在推进：两个批次会重复提交同一批镜头（重复计费），
+    # 还会互相抢完成回调。要重出片先 abort 掉正在跑的那个。
+    running = deps.batch_manager().running_for_project(project_id)
+    if running is not None:
+        raise HTTPException(
+            409,
+            f"已有一个出片批次在推进（{running.id}，当前镜头 {running.current_shot_id or '—'}）。"
+            "重复提交会重复计费；想换一批请先终止当前批次。",
+        )
+
     batch = deps.batch_manager().start(
         project_id, shot_ids, payload.mode,
         _batch_submit(project_id, provider, model, version.id, payload.resolution, payload.aspect_ratio),
@@ -1071,9 +1208,9 @@ def batch_command(batch_id: str, payload: BatchCommandRequest) -> dict[str, Any]
         else:
             batch = mgr.abort(batch_id)
     except KeyError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
     return batch.to_dict()
 
 

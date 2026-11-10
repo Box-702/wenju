@@ -19,7 +19,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, UTC
@@ -27,9 +29,12 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import ForeignKey, LargeBinary, create_engine, desc
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 from .domain import Script
+
+log = logging.getLogger(__name__)
 
 #: Postgres 连接超时（秒）。libpq 默认「一直等」，数据库没起来时请求会永久挂住，
 #: 所以必须给一个上限：宁可 5 秒后报错，也不要让界面无限转圈。
@@ -53,6 +58,16 @@ def _json_load(raw: str | None, default: Any = None) -> Any:
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _utcnow_naive() -> datetime:
+    """不带时区的 UTC 时刻——用于和时间列做减法。
+
+    `created_at` 存的是 UTC 字段值，但 SQLAlchemy 的 DateTime（无 timezone）
+    读回来是 **naive** datetime；直接拿 aware 的 `_now()` 去减会 TypeError。
+    比较/算年龄一律用这个。
+    """
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _as_datetime(value: Any) -> datetime | None:
@@ -415,11 +430,43 @@ class ModelPreference(Base):
         return _json_load(self.params_json, {})
 
 
+#: 视频任务里表示「还在跑」的状态。数据库里都表示任务未到终态。
+#: 提交幂等与孤儿任务接管都以这份清单为准——两处必须一致，否则会出现
+#: 「提交时认为在途、接管时认为已死」的窗口。
+ACTIVE_VIDEO_JOB_STATUSES = ("pending", "submitting", "queued", "generating")
+
+#: 到了这些状态，这一轮出片意图就结束了——claim 随之释放，同一镜头可再提新意图。
+VIDEO_JOB_TERMINAL_STATUSES = ("succeeded", "failed", "cancelled")
+
+
+class VideoJobClaim(Base):
+    """一次出片意图的在途登记（幂等 claim）。
+
+    为什么要单独一张表而不是只看 video_jobs：`create_video_job` 落库与
+    `manager.submit` 投递之间有窗口——进程死在这个缝里，库里会留一条永远
+    `pending` 且没有 external_task_id 的僵尸任务（sweeper 只能判它失败），
+    用户重提还得再等一轮巡检。claim 表把「占位」提到建任务之前：
+    同一镜头 + 同一意图的并发/崩溃后重放，第二次直接命中既有 claim，
+    要么拿到已建好的任务复用，要么明确报「上一轮在提交中死掉了」——
+    绝不把同一个意图投出去两次（= 重复计费）。
+
+    生命周期：占位(claimed) → 建任务(task_id) → 终态时释放。
+    崩溃遗留的 claim 由 sweeper 超时释放，不挡用户重提。
+    """
+
+    __tablename__ = "video_job_claims"
+
+    key: Mapped[str] = mapped_column(primary_key=True)  # sha256(项目/镜头/意图)
+    project_id: Mapped[str] = mapped_column(index=True)
+    shot_id: Mapped[str] = mapped_column(default="")
+    task_id: Mapped[str | None] = mapped_column(default=None)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+
+
 class VideoJob(Base):
     """视频生成任务。"""
 
     __tablename__ = "video_jobs"
-
     id: Mapped[str] = mapped_column(primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
     version_id: Mapped[str | None] = mapped_column(default=None)
@@ -1481,17 +1528,138 @@ class Store:
         with self.session() as s:
             return (
                 s.query(VideoJob)
-                .filter(VideoJob.status.in_(("pending", "submitting", "queued", "generating")))
+                .filter(VideoJob.status.in_(ACTIVE_VIDEO_JOB_STATUSES))
                 .order_by(VideoJob.created_at.asc())
                 .limit(limit)
                 .all()
             )
 
+    def find_active_video_job(self, project_id: str, shot_id: str) -> VideoJob | None:
+        """同一镜头当前还在途中的任务（提交幂等用）。
+
+        重复提交同一个镜头会重复计费——模型工具重试、用户连点两下、批次重跑都会撞上。
+        提交前先查这个：命中就复用既有任务，不再新建。
+
+        只看「在途」不看历史：上一版已经出片的镜头再次提交是合法的「重出片」
+        （`rerun_video` 走这条），不能被这里挡住。
+        """
+        if not project_id or not shot_id:
+            return None
+        with self.session() as s:
+            return (
+                s.query(VideoJob)
+                .filter(
+                    VideoJob.project_id == project_id,
+                    VideoJob.shot_id == shot_id,
+                    VideoJob.status.in_(ACTIVE_VIDEO_JOB_STATUSES),
+                )
+                .order_by(VideoJob.created_at.desc())
+                .first()
+            )
+
+    # ---- 出片意图 claim（幂等占位，见 VideoJobClaim）----
+
+    @staticmethod
+    def video_claim_key(project_id: str, shot_id: str, intent: dict[str, Any]) -> str:
+        """对「同一镜头的同一意图」算稳定 key。
+
+        intent 里只放**影响产出**的字段（prompt / provider / model / 时长、分辨率、
+        画幅、首尾帧、参考图/音频）。不放自动接力的 reference_videos——那部分
+        随上一镜出片进度变化，不是用户意图。
+
+        params 里的空值（None / 空串 / 空表）一律按「没提」处理——
+        「没传」和「传了空」是同一件事，归一化放在这里，所有调用方共用一条规则。
+        """
+        norm = dict(intent)
+        params = norm.get("params")
+        if isinstance(params, dict):
+            norm["params"] = {
+                k: v for k, v in params.items()
+                if not (v is None or v == "" or v == [] or v == {})
+            }
+        payload = json.dumps(norm, sort_keys=True, ensure_ascii=False, default=str)
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+        return f"{project_id}:{shot_id}:{digest}"
+
+    def claim_video_job(self, key: str, *, project_id: str, shot_id: str) -> tuple[str, str | None]:
+        """原子占位（compare-and-swap）。返回 (结果, task_id)：
+
+        - ``("claimed", None)``   —— 占到锁。调用方负责建任务，然后
+          `finish_video_claim(key, task_id)` 落定。
+        - ``("replay", task_id)`` —— 同意图已有在途 claim：
+          * task_id 非空 → 任务已建好且仍在途，直接复用它（不新建、不重投）；
+          * task_id 为空 → 上一轮死在「claim 了但还没建任务」的缝里（10 分钟内），
+            或此刻正有并发请求在建档。**报错停止**——宁可让用户明确重提，
+            也不能把同一意图投两次（= 重复计费）。
+
+        两种「claim 已失效」的情况在本方法内就地清理并按 `claimed` 重新占位，
+        调用方不需要区分崩溃轮/正常轮：
+        - claim 指向的任务已到终态（释放钩子没跑成的残留）；
+        - claim 无任务且超过 10 分钟（进程死在缝里，不会再有回调来释放）。
+
+        为什么这样切：`create_video_job` 与队列投递之间有窗口，进程死在缝里会留下
+        永远 pending 的僵尸任务。claim 把占位提到建任务之前，配合 update_video_job
+        的终态释放钩子，正常轮、崩溃轮、并发轮都有唯一出口。
+        """
+        stale_after = 600.0
+        with self.session() as s:
+            existing = s.get(VideoJobClaim, key)
+            if existing is not None:
+                if existing.task_id:
+                    job = s.get(VideoJob, existing.task_id)
+                    if job is not None and job.status in ACTIVE_VIDEO_JOB_STATUSES:
+                        return ("replay", existing.task_id)
+                    s.delete(existing)  # 残留：任务已终态或被删
+                    s.commit()
+                elif (_utcnow_naive() - existing.created_at).total_seconds() < stale_after:
+                    return ("replay", None)  # 缝里/并发窗口，拒绝重放
+                else:
+                    s.delete(existing)  # 崩溃遗留的空 claim
+                    s.commit()
+            s.add(VideoJobClaim(key=key, project_id=project_id, shot_id=shot_id))
+            try:
+                s.commit()
+            except IntegrityError:
+                # 并发下别人先占到了：回滚后读对方的，按 replay 处理。
+                s.rollback()
+                other = s.get(VideoJobClaim, key)
+                if other is None:
+                    raise
+                return ("replay", other.task_id)
+            return ("claimed", None)
+
+    def finish_video_claim(self, key: str, task_id: str) -> None:
+        """claim 落定：记上任务 id，之后的同意图重放直接复用这个任务。"""
+        with self.session() as s:
+            c = s.get(VideoJobClaim, key)
+            if c is not None:
+                c.task_id = task_id
+                s.commit()
+
+    def release_video_claim(self, key: str) -> None:
+        """释放占位：同一镜头的下一轮出片意图不再被挡住。"""
+        with self.session() as s:
+            c = s.get(VideoJobClaim, key)
+            if c is not None:
+                s.delete(c)
+                s.commit()
+
+    def find_video_claim(self, key: str) -> VideoJobClaim | None:
+        with self.session() as s:
+            return s.get(VideoJobClaim, key)
+
     def update_video_job(self, job_id: str, **fields: Any) -> VideoJob | None:
+        """更新任务字段；**任务进入终态时自动释放对应的出片 claim**。
+
+        释放放在这里而不是各个调用点（队列回写 / 取消 / 巡检判失败 / 质检），
+        是因为 claim 泄漏的后果不对称：不释放 = 同一意图永远被挡住，
+        用户重提只会拿到「还在跑」；而这里一处收口，所有终态路径全覆盖。
+        """
         with self.session() as s:
             j = s.get(VideoJob, job_id)
             if not j:
                 return None
+            prev_status = j.status
             for key, value in fields.items():
                 if key == "params":
                     j.params_json = json.dumps(value, ensure_ascii=False)
@@ -1499,6 +1667,12 @@ class Store:
                     setattr(j, key, value)
             s.commit()
             s.refresh(j)
+            new_status = j.status
+            if new_status != prev_status and new_status in VIDEO_JOB_TERMINAL_STATUSES:
+                c = s.query(VideoJobClaim).filter_by(task_id=job_id).first()
+                if c is not None:
+                    s.delete(c)
+                    s.commit()
             return j
 
     # ---- VideoVersion ----

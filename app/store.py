@@ -1056,6 +1056,24 @@ class Store:
             s.refresh(m)
             return m
 
+    def move_chat_messages(self, from_thread_id: str, to_thread_id: str) -> int:
+        """把一个会话线程的消息整体迁到另一个线程（按时间正序接在后面）。
+
+        用途：在首页（全局线程）开聊、Agent 中途建了作品——这一整段「把它聊出来」
+        的对话应该属于那部作品，迁进它的默认对话。迁完作品里能看到完整来路，
+        全局线程也干净（不留孤儿历史）。
+        """
+        if not from_thread_id or not to_thread_id or from_thread_id == to_thread_id:
+            return 0
+        with self.session() as s:
+            n = (
+                s.query(ChatMessage)
+                .filter(ChatMessage.thread_id == from_thread_id)
+                .update({ChatMessage.thread_id: to_thread_id}, synchronize_session=False)
+            )
+            s.commit()
+            return int(n or 0)
+
     def list_chat_messages(self, thread_id: str, limit: int = 200) -> list[ChatMessage]:
         with self.session() as s:
             # 取「最新 limit 条」再按时间正序返回：长对话要保留的是最近上下文，

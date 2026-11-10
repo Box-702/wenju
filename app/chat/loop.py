@@ -171,6 +171,8 @@ class AgentLoop:
         self.has_images = has_images
         # 本轮对话所属的作品：模型漏传/传空 project_id 时用它兜底。
         self.current_project_id = current_project_id or ""
+        # 工具运行期写入的收集器（可选）：本轮中途建了作品时，兜底值跟着走。
+        self.collector: dict[str, Any] | None = None
         self._by_name = {getattr(t, "name", ""): t for t in self.tools if getattr(t, "name", "")}
 
     # ---- 对外 ----
@@ -301,10 +303,13 @@ class AgentLoop:
             return f"未知工具：{name}。可用工具：{', '.join(sorted(self._by_name)) or '无'}"
         # 模型常把 project_id 漏掉或传空（实测：get_status("") 会答「还没有剧本版本」）。
         # 这里是唯一的收口处：所有作品级工具统一补上当前作品。
-        if self.current_project_id:
+        # 当前作品**动态读 collector**：首页直聊时本轮 create_project 之后，
+        # 同一轮里的后续工具（generate_script 等）漏传 project_id 也能兜到新作品上。
+        pid = self.current_project_id or (self.collector or {}).get("project_id") or ""
+        if pid:
             args = dict(args or {})
             if "project_id" in args and not str(args.get("project_id") or "").strip():
-                args["project_id"] = self.current_project_id
+                args["project_id"] = pid
         try:
             result = tool.invoke(args)
         except Exception as e:  # noqa: BLE001

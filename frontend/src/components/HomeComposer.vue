@@ -7,7 +7,8 @@
 // =====================================================================
 
 import { ref, computed, onMounted } from 'vue'
-import { store, sendMessage, loadModelStatus, loadProviders, notify, setHint, generateAssetImages } from '../stores/app'
+import { nextTick } from 'vue'
+import { store, sendMessage, loadModelStatus, loadProviders, notify } from '../stores/app'
 import { uploadChatImage } from '../api'
 import ComposerCard from './ComposerCard.vue'
 
@@ -34,15 +35,7 @@ const GOALS = [
 // 点了也只是打开左栏，属于名不副实的重复入口。
 
 
-const SPEC_RESOLUTIONS = ['768P', '1080P']
-
 const goalLabel = computed(() => (GOALS.find((g) => g.id === props.goal) || GOALS[0]).label)
-// 模型切换在「设置」里做，输入框不再放模型胶囊。
-const specLabel = computed(() => {
-  const res = store.videoResolution || '768P'
-  const aspect = store.videoAspect || '9:16'
-  return `${res} · ${aspect}`
-})
 const canSend = computed(() => (!!text.value.trim() || attachedImages.value.some((i) => i.id))
   && !store.streaming && uploadingCount.value === 0)
 
@@ -117,28 +110,37 @@ function send() {
   const used = refs.value
   refs.value = []
   sendMessage(prefix + t, imageIds, used)
+  // 发送即进对话视图：首页不渲染消息流，不切过去用户会看到「输入了毫无反应」。
+  // 对话优先——首页输入框是「开一部新作品的起点」，不是独立模式。
+  store.mode = 'workspace'
 }
 
-function cycleResolution() {
-  const cur = store.videoResolution || '768P'
-  const i = SPEC_RESOLUTIONS.indexOf(cur)
-  store.setVideoResolution(SPEC_RESOLUTIONS[(i + 1) % SPEC_RESOLUTIONS.length])
+/** 「＋」菜单里的「生成资产」：放一句触发语进输入框，剩下的由用户写、agent 按技能走流程。 */
+function startAssetGen() {
+  const lead = '帮我生成资产：'
+  if (!text.value.includes(lead)) {
+    text.value = text.value ? `${text.value} ${lead}` : lead
+  }
+  nextTick(() => {
+    const el = card.value?.$el?.querySelector('textarea')
+    if (el) {
+      el.focus()
+      el.setSelectionRange(el.value.length, el.value.length)
+    }
+  })
 }
+
 </script>
 
 <template>
   <ComposerCard
     ref="card"
     v-model:text="text"
-    :goal-label="goalLabel"
-    :spec-label="specLabel"
     :can-send="canSend"
     :busy="store.streaming"
     @send="send"
     @open-settings="store.showSettings = true"
-    @cycle-spec="cycleResolution"
     @open-skills="emit('open-skills')"
-    @change-goal="emit('goal', goal)"
     :assets="store.assetIndex"
     @asset-picked="onAssetPicked"
     @new-project="store.showNewProject = true"
@@ -158,6 +160,12 @@ function cycleResolution() {
       </button>
       <button class="menu-item" type="button" role="menuitem" @click.stop="close(); openMention()">
         引用资产
+      </button>
+      <button class="menu-item" type="button" role="menuitem" @click.stop="close(); startAssetGen()">
+        生成资产
+      </button>
+      <button class="menu-item" type="button" role="menuitem" @click.stop="close(); emit('open-skills')">
+        技能
       </button>
       <button
         v-if="!store.pid"

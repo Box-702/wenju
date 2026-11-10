@@ -10,7 +10,7 @@
 // =====================================================================
 
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { store, sendMessage, clearHint, loadModelStatus, loadProviders, notify, generateAssetImages } from '../stores/app'
+import { store, sendMessage, clearHint, loadModelStatus, loadProviders, notify } from '../stores/app'
 import { api, uploadChatImage } from '../api'
 import ComposerCard from './ComposerCard.vue'
 
@@ -28,9 +28,6 @@ const hasImages = computed(() => attachedImages.value.some((i) => i.id))
 const canSend = computed(() => (!!text.value.trim() || hasImages.value) && !store.streaming && uploadingCount.value === 0)
 
 const statusText = computed(() => (store.streaming ? store.streamingStage || '正在处理' : ''))
-
-// 模型切换在「设置」里做，输入框不再放模型胶囊。
-
 
 onMounted(() => {
   loadModelStatus()
@@ -95,24 +92,27 @@ function onPaste(e) {
   }
 }
 
-// ---- 用生图模型给资产库补定妆照 / 场景图 ----
-const generatingAssets = ref(false)
-async function generateAssets() {
-  if (generatingAssets.value) return
-  generatingAssets.value = true
-  try {
-    await generateAssetImages()
-  } finally {
-    generatingAssets.value = false
-  }
-}
-
 // ---- @ 引用的资产：随本轮消息一起发给 Agent ----
 const refs = ref([])
 function onAssetPicked(item) {
   if (!item?.id) return
   if (refs.value.some((r) => r.id === item.id)) return
   refs.value = [...refs.value, { kind: item.kind, id: item.id, name: item.name }]
+}
+
+/** 「＋」菜单里的「生成资产」：放一句触发语进输入框（与首页同一交互）。 */
+function startAssetGen() {
+  const lead = '帮我生成资产：'
+  if (!text.value.includes(lead)) {
+    text.value = text.value ? `${text.value} ${lead}` : lead
+  }
+  nextTick(() => {
+    const el = card.value?.$el?.querySelector('textarea')
+    if (el) {
+      el.focus()
+      el.setSelectionRange(el.value.length, el.value.length)
+    }
+  })
 }
 
 function send() {
@@ -180,6 +180,12 @@ watch(() => store.draftSeq, () => {
         </button>
         <button class="menu-item" type="button" role="menuitem" @click.stop="close(); openMention()">
           引用资产
+        </button>
+        <button class="menu-item" type="button" role="menuitem" @click.stop="close(); startAssetGen()">
+          生成资产
+        </button>
+        <button class="menu-item" type="button" role="menuitem" @click.stop="close(); emit('open-skills')">
+          技能
         </button>
         <button
           v-if="!store.pid"

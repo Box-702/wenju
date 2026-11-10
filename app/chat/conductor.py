@@ -193,7 +193,11 @@ def build_agent_loop(
     project_id：本轮对话所属的作品——工具漏传 project_id 时的兜底。
     """
     tools = build_chat_tools(store, llm, collector, runner=runner, project_id=project_id)
-    return AgentLoop(llm, tools, has_images=has_images, current_project_id=project_id)
+    loop = AgentLoop(llm, tools, has_images=has_images, current_project_id=project_id)
+    # 把 collector 交给内核：本轮 create_project 之后，同轮后续工具漏传的
+    # project_id 兜底跟着指向新作品（见 AgentLoop._invoke_tool）。
+    loop.collector = collector
+    return loop
 
 
 # ---------- 历史 ----------
@@ -453,6 +457,17 @@ def _finalize_turn(
     if save_user:
         store.save_chat_message(thread_id=thread, role="user", content=message,
                                 payload=[meta or {}], images=images)
+    # 首页直聊：本轮从全局线程开聊、Agent 中途建了作品 → 把这段对话迁进
+    # 那部作品的默认对话，done 回真实 conv id。
+    # 不迁的话：① 消息孤儿在全局线程，进作品看对话是空的；
+    # ② 前端把 thread_id="global" 当 conversation_id 带上，第二轮必 404。
+    # 迁的是整个全局线程：本轮上下文里模型看到的就是这些历史，
+    # 「把作品聊出来」的来路全在这段对话里，一起归进作品才是事实。
+    if not conversation_id and new_project_id and new_project_id != project_id:
+        conv = store.ensure_default_conversation(new_project_id)
+        moved = store.move_chat_messages(GLOBAL_THREAD, conv.id)
+        if moved:
+            thread = conv.id
     # 消息元信息（模型 · 耗时）放在 events 首位——它是「这一轮」的元信息，
     # 不是工具轨迹的一部分；前端渲染成消息头，步骤列表会把它过滤掉。
     all_events = events

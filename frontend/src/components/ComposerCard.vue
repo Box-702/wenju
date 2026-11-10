@@ -408,7 +408,9 @@ function onInput(e) {
               @click.stop="modelOpen = !modelOpen"
             >
               <AppIcon name="sparkle" />
-              <span>{{ modelLabel }}</span>
+              <!-- 展开时胶囊变动作提示（「选择对话模型」），收起后回到当前模型名——
+                   下拉开着的时候当前模型名反而挡住视线（参考用户给的截图交互） -->
+              <span>{{ modelOpen ? '选择对话模型' : modelLabel }}</span>
               <AppIcon name="chevron-down" class="cc-chev" />
             </button>
             <Transition name="ccpop">

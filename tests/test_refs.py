@@ -37,6 +37,18 @@ def test_verdict_parses_pass_fail_and_defaults_to_pass():
     assert _verdict("说不清楚")[0] is True
 
 
+def test_verdict_reads_last_line_not_whole_answer():
+    """依据行里出现「不合格」字样，不能把最后一行的 PASS 翻成 FAIL。
+
+    质检回答改成「一行依据 + 一行判定」后，拿全文找子串会误判——
+    22/23 张全 FAIL 的排查里撞到的解析坑。
+    """
+    ok, reason = _verdict("画的是真人照片感，说不清算不算不合格。\nPASS")
+    assert ok is True
+    assert "真人照片感" in reason  # 依据要带出来，任务步骤详情里才看得见为什么重来
+    assert _verdict("构图不对，不是单人正面半身。\nFAIL")[0] is False
+
+
 def _script_with(scene_chars: list[str]) -> Script:
     return Script(
         title="t", logline="l", themes=[],

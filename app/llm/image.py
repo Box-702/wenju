@@ -40,8 +40,14 @@ class ImageClient(ABC):
         return self.config.label or self.config.provider
 
     @abstractmethod
-    def generate(self, prompt: str, *, size: str = DEFAULT_SIZE, timeout: float = 120.0) -> str:
-        """生成一张图，返回图片地址（URL 或 data URI）。失败抛异常。"""
+    def generate(self, prompt: str, *, size: str = DEFAULT_SIZE, timeout: float = 120.0,
+                 negative_prompt: str = "") -> str:
+        """生成一张图，返回图片地址（URL 或 data URI）。失败抛异常。
+
+        negative_prompt：画风反向词（如二次元项目要排除「真人、写实照片」）。
+        走厂商的结构化字段而不是塞进正文——提示词里写否定句会反噬
+        （模型把「不要真人」听成「要真人」，见记忆 [[video-prompt-adherence-budget]]）。
+        """
         ...
 
     def _post(self, path: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
@@ -61,12 +67,12 @@ class ImageClient(ABC):
 class CogViewImageClient(ImageClient):
     """智谱 CogView：POST /images/generations → data[0].url（同步）。"""
 
-    def generate(self, prompt: str, *, size: str = DEFAULT_SIZE, timeout: float = 120.0) -> str:
-        data = self._post(
-            "images/generations",
-            {"model": self.config.model, "prompt": prompt, "size": size},
-            timeout,
-        )
+    def generate(self, prompt: str, *, size: str = DEFAULT_SIZE, timeout: float = 120.0,
+                 negative_prompt: str = "") -> str:
+        body: dict[str, Any] = {"model": self.config.model, "prompt": prompt, "size": size}
+        if negative_prompt:
+            body["negative_prompt"] = negative_prompt  # CogView 实测支持（2026-11-10）
+        data = self._post("images/generations", body, timeout)
         items = data.get("data") or []
         url = items[0].get("url") if items else None
         if not url:
@@ -77,12 +83,12 @@ class CogViewImageClient(ImageClient):
 class OpenAIImageClient(ImageClient):
     """OpenAI Images：返回 url 或 b64_json，统一转成可直传的图片地址。"""
 
-    def generate(self, prompt: str, *, size: str = DEFAULT_SIZE, timeout: float = 120.0) -> str:
-        data = self._post(
-            "images/generations",
-            {"model": self.config.model, "prompt": prompt, "size": size, "n": 1},
-            timeout,
-        )
+    def generate(self, prompt: str, *, size: str = DEFAULT_SIZE, timeout: float = 120.0,
+                 negative_prompt: str = "") -> str:
+        body: dict[str, Any] = {"model": self.config.model, "prompt": prompt, "size": size, "n": 1}
+        if negative_prompt:
+            body["negative_prompt"] = negative_prompt
+        data = self._post("images/generations", body, timeout)
         items = data.get("data") or []
         if not items:
             raise RuntimeError(f"文生图未返回数据：{str(data)[:200]}")

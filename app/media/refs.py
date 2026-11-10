@@ -53,13 +53,16 @@ def environment_prompt(name: str, description: str, style: str | None = None) ->
 
 _QA_CHARACTER = (
     "你在给 AI 短剧做角色定妆图质检。\n"
-    "只有以下两种情况判 FAIL（任一不满足即 FAIL）：\n"
+    "只有以下三种情况判 FAIL（任一满足即 FAIL）：\n"
     "A) 画面不是「单人 + 正面 + 半身」的定妆照（例如多人合影、全身远景、纯风景）；\n"
     "B) 人物不是中国人 / 东亚面孔。\n"
     "　（例外：若该角色按设定本就戴面具 / 头盔 / 看不到人脸，B 条不适用，不要因此判 FAIL。）\n"
+    "C) 画风与要求的「{style}」明显不符——例如要求二维动画赛璐璐上色，画出来的却是"
+    "真人照片感 / 写实电影感；或要求写实，画出来是卡通。\n"
+    "　（同一大类里的流派差异不算 FAIL：同为二维，线条粗细、上色精致度不同都不拦。）\n"
     "注意：平台水印、背景颜色、服装细节的细微出入都**不算** FAIL，不要因此判不合格。\n"
     "参考描述（用于确认没画错角色，不要求逐条吻合）：\n{expect}\n\n"
-    "最后一行只输出一个词：PASS 或 FAIL。"
+    "倒数第二行用一句话说明依据，最后一行只输出一个词：PASS 或 FAIL。"
 )
 
 _QA_ENVIRONMENT = (
@@ -69,17 +72,29 @@ _QA_ENVIRONMENT = (
     "B) 画面里有明显的人物。\n"
     "注意：平台水印、家具数量、灯光位置等细节出入都**不算** FAIL，只要整体空间类型与气质对得上即可。\n"
     "参考描述：\n{expect}\n\n"
-    "最后一行只输出一个词：PASS 或 FAIL。"
+    "倒数第二行用一句话说明依据，最后一行只输出一个词：PASS 或 FAIL。"
 )
 
 
 def _verdict(text: str) -> tuple[bool, str]:
-    """从质检回答里解析 PASS/FAIL；解析不到时保守判为通过（避免无限重生）。"""
-    tail = text.strip().upper()
+    """从质检回答里解析 PASS/FAIL；解析不到时保守判为通过（避免无限重生）。
+
+    只看**最后一行**：回答现在是「一行依据 + 一行判定」，拿全文找子串的话，
+    依据里出现「fail / 不合格」字样会把 PASS 翻成 FAIL（反之亦然）。
+    """
+    lines = [ln.strip() for ln in str(text or "").strip().splitlines() if ln.strip()]
+    if not lines:
+        return True, "（回答为空，按通过处理）"
+    tail = lines[-1].upper()
+    reason = "；".join(lines[:-1])[-200:] or tail
     if "FAIL" in tail:
-        return False, text.strip()[-200:]
+        return False, reason
     if "PASS" in tail:
-        return True, text.strip()[-200:]
+        return True, reason
+    # 最后一行不是判定词（模型没按格式来）：全文兜底扫一次，仍认不出来就放行
+    joined = " ".join(lines).upper()
+    if "FAIL" in joined:
+        return False, reason
     return True, "（未能解析判定，按通过处理）"
 
 
@@ -144,8 +159,10 @@ def build_reference_assets(
             appearance = (appearance + "；" + add).strip("； ")
         prompt = character_prompt(name, appearance, visual_style)
         refs[cid] = _generate_with_qa(
-            provider, prompt, _QA_CHARACTER.format(expect=appearance or name),
+            provider, prompt,
+            _QA_CHARACTER.format(expect=appearance or name, style=_style_label(visual_style)),
             kind=f"角色·{name}", vision=vision, max_retry=max_retry, emit=_emit,
+            negative_prompt=f"{_style_negative(visual_style)}，{_NEG_COMPOSITION}",
         )
 
     # 场景：优先用风格指南的环境描述；缺失则退化为地点名
@@ -162,9 +179,31 @@ def build_reference_assets(
         refs[lid] = _generate_with_qa(
             provider, prompt, _QA_ENVIRONMENT.format(expect=desc or name),
             kind=f"场景·{name}", vision=vision, max_retry=max_retry, emit=_emit,
+            negative_prompt=f"{_style_negative(visual_style)}，{_NEG_EMPTY_PLATE}",
         )
 
     return refs
+
+
+# 构图排除项：实测 cogview 对正文里「不要多人/背面」的否定句不敏感，
+# 但 negative_prompt 结构化字段有效（2026-11-10 质检 FAIL 依据几乎全是构图跑偏）。
+# 否定句写正文会反噬（模型把「不要背面」听成「背面」）——排除项走字段，不走文字。
+_NEG_COMPOSITION = "多人，合影，背面，背影，侧背影，远景，全身远景，俯拍"
+_NEG_EMPTY_PLATE = "人物，人像，角色，行人"
+
+
+def _style_negative(visual_style: str | None) -> str:
+    """画风的反向词（进 API 的 negative_prompt 字段，不写进正文）。"""
+    from ..pipeline.visual_styles import get_visual_style
+
+    return str(get_visual_style(visual_style).get("negative") or "")
+
+
+def _style_label(visual_style: str | None) -> str:
+    """画风的中文名（进质检问题，让视觉模型知道「该长什么样」）。"""
+    from ..pipeline.visual_styles import get_visual_style
+
+    return str(get_visual_style(visual_style).get("label") or "原设定画风")
 
 
 def _notes_by_entity(notes: dict[str, str] | None, idx: Any) -> dict[str, str]:
@@ -188,11 +227,17 @@ def _generate_with_qa(
     vision: VisionClient,
     max_retry: int,
     emit: Any,
+    negative_prompt: str = "",
 ) -> str:
-    """生成 → 质检 → 不合格重试；返回最终采用的图片 URL。"""
+    """生成 → 质检 → 不合格重试；返回最终采用的图片 URL。
+
+    negative_prompt 走厂商的结构化字段（画风反向词）：提示词正文里写
+    「不要真人照片」反而会被模型听成「要真人照片」（否定句反噬），
+    所以正向描述进 prompt、排除项进 negative_prompt。
+    """
     url = ""
     for attempt in range(max_retry + 1):
-        url = provider.generate(prompt)
+        url = provider.generate(prompt, negative_prompt=negative_prompt)
         if not vision.available:
             emit(f"[{kind}] 已生成（未配置视觉模型，跳过质检）")
             return url

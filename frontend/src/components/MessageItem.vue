@@ -6,12 +6,13 @@
 // - 用户消息：简洁的指令条，像编辑器的命令输入
 // - Agent 回复：通栏注释，带可折叠的工作步骤面板
 // - 工具调用：折叠的「工作步骤」面板，每个步骤有图标+状态
-// - 载荷卡片：审阅建议 / 版本通知
+// - 载荷卡片：审阅建议 / 版本通知 / 后台任务卡（剧组与流水线的调用过程）
 // =====================================================================
 
 import { computed, ref, watch, onUnmounted } from 'vue'
 import PatchSummaryCard from './PatchSummaryCard.vue'
 import VersionCard from './VersionCard.vue'
+import TaskCard from './TaskCard.vue'
 import { mdToHtml, esc } from '../utils/markdown'
 import { STAGE_LABELS } from '../stores/app'
 
@@ -215,6 +216,7 @@ onUnmounted(() => clearTimeout(copiedTimer))
       <template v-for="(p, i) in message.payloads" :key="i">
         <PatchSummaryCard v-if="p.type === 'patch_review'" :payload="p" />
         <VersionCard v-else-if="p.type === 'version_applied'" :payload="p" />
+        <TaskCard v-else-if="p.type === 'sub_agent_started'" :payload="p" />
       </template>
     </template>
   </div>

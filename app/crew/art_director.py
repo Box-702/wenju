@@ -100,6 +100,38 @@ class ArtDirectorAgent(CrewAgent):
     label = "美术指导"
     emoji = "🎨"
 
+    # 实拍纹理词：动画/水墨画风的外貌锚里出现这些 = 画风串染（deepseek 实测会把
+    # 「写发色瞳色」的指令听成「写皮肤毛孔」）。锚是定妆图与视频提示词的唯一来源，
+    # 矛盾指令喂进模型，出来就是四不像——所以代码裁决，不靠提示词自律（D-05）。
+    _REALISTIC_MARKERS = (
+        "毛孔", "雀斑", "皮肤纹理", "油光", "日晒", "风吹", "粗糙", "皱纹",
+        "胡茬", "痘印", "老年斑", "皮肤真实", "实拍", "照片质感",
+    )
+
+    @classmethod
+    def _style_mismatch(cls, guide: "StyleGuide", visual_style: str | None) -> str | None:
+        """外貌锚与画风是否串味。None=干净；字符串=给重跑的修正指令。
+
+        只在非写实画风下生效（写实用这些词本来就该）；一个角色命中 2 个以上
+        实拍纹理词才算——单个「粗糙的布料」是正当描述，不冤枉。
+        """
+        from ..pipeline.visual_styles import visual_style_key
+
+        if visual_style_key(visual_style) == "realistic":
+            return None
+        bad: list[str] = []
+        for name, text in (guide.character_appearances or {}).items():
+            hits = [m for m in cls._REALISTIC_MARKERS if m in str(text or "")]
+            if len(hits) >= 2:
+                bad.append(f"{name}（{'、'.join(hits[:3])}）")
+        if not bad:
+            return None
+        return (
+            "上一版把这些角色的造型写成了实拍质感（" + "；".join(bad[:4]) + "）。"
+            "本作品是动画画风：造型要写**发色、瞳色、发型轮廓、服装配色、线条与上色方式**，"
+            "禁止皮肤毛孔、雀斑、油光、风吹日晒这类实拍纹理词。请重写这些角色的造型，其余保持不变。"
+        )
+
     def run(
         self,
         script: Script,
@@ -129,10 +161,28 @@ class ArtDirectorAgent(CrewAgent):
         try:
             raw = self._invoke_json(art_system(language), user_prompt)
             guide = self._parse_guide(raw, script, visual_style)
+            # 画风锚护栏：串味锚带进下游（定妆图/提示词）会一路四不像。
+            # 确定性检出 + 有界重跑一次；重跑仍不合格就保留（summary 里如实说）。
+            mismatch = self._style_mismatch(guide, visual_style)
+            retried = False
+            if mismatch:
+                log.warning("美术指导画风串染（%s），带修正指令重跑一次", mismatch[:80])
+                retry_prompt = (
+                    user_prompt
+                    + "\n\n上一版存在以下问题，请修正后重新输出完整 JSON：\n"
+                    + mismatch
+                )
+                raw2 = self._invoke_json(art_system(language), retry_prompt)
+                guide2 = self._parse_guide(raw2, script, visual_style)
+                retried = True
+                if not self._style_mismatch(guide2, visual_style):
+                    guide = guide2
             summary = (
                 f"美术指导完成风格指南：{len(guide.color_palette)} 色、"
                 f"{len(guide.character_appearances)} 角色造型、{len(guide.environment_descriptions)} 场景"
             )
+            if retried and mismatch:
+                summary += "（外貌锚初版串了实拍质感，已按动画画风重写）"
             return CrewTaskResult(data=guide, summary=summary)
         except Exception as e:  # noqa: BLE001
             log.warning("美术指导 Agent 失败：%s", e)

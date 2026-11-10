@@ -215,3 +215,50 @@ def test_第一次改资产时整份老数据一起迁移():
     assert set(merged["reference_images"]) == {"char_002"}
     # 未被改动的值一个都没丢
     assert merged["character_appearances"]["char_002"] == "圆脸"
+
+
+# ---------- 美术指导：画风锚护栏（deepseek 给 anime 写实拍纹理的实测坑） ----------
+
+
+def test_动画画风下写出实拍纹理锚被检出():
+    from app.crew.art_director import ArtDirectorAgent
+    from app.domain import StyleGuide
+
+    guide = StyleGuide(
+        visual_style="anime",
+        character_appearances={
+            "char_001": "中年男性，肤色蜡黄带真实皮肤毛孔与细微油光，雀斑明显，细长眼",
+            "char_002": "十五六岁少年，黑色短发，灰蓝短打，线条干净",
+        },
+    )
+    mismatch = ArtDirectorAgent._style_mismatch(guide, "anime")
+    assert mismatch and "char_001" in mismatch
+    assert "毛孔" in mismatch  # 修正指令要点名串味词
+
+
+def test_写实画风不误伤_动画单纹理词也不冤枉():
+    from app.crew.art_director import ArtDirectorAgent
+    from app.domain import StyleGuide
+
+    # 写实：纹理词本来就该有
+    realistic = StyleGuide(
+        visual_style="realistic",
+        character_appearances={"char_001": "皮肤毛孔清晰，风吹日晒的粗糙质感"},
+    )
+    assert ArtDirectorAgent._style_mismatch(realistic, "realistic") is None
+
+    # 动画：单个「粗糙」（布料）是正当描述，不算串味
+    anime_ok = StyleGuide(
+        visual_style="anime",
+        character_appearances={"char_001": "土黄粗布短褂，布料粗糙，发色深棕"},
+    )
+    assert ArtDirectorAgent._style_mismatch(anime_ok, "anime") is None
+
+
+def test_质检问题里带画风标签():
+    """定妆图质检必须知道项目该长什么样——五张五种画风的事故就是这么漏进来的。"""
+    from app.media.refs import _QA_CHARACTER, _style_label
+
+    q = _QA_CHARACTER.format(expect="少年", style=_style_label("anime"))
+    assert "二次元（漫剧）" in q and "真人照片感" in q
+    assert _style_label(None) == "写实实拍"

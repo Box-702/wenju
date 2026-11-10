@@ -42,6 +42,7 @@
 | [D-33](#d-33-对话里用引用资产提示词里也用同一套语法) | 交互 | @ 引用资产库内容，提示词用同一套 @ 写法 | 已定 |
 | [D-34](#d-34-资产库两级导航资产按角色分) | 资产 | 范围 + 类型两级导航；成片/参考素材按角色分 | 已定 |
 | [D-35](#d-35-模型设置按厂商列表加详情面板) | 设置 | 学 ZCode 的结构但不做厂商分类；多厂商持久化 | 已定 |
+| [D-36](#d-36-借鉴-mediago-drama-只移植具体手法不换-agent-内核) | 对标 | 对标 mediago-drama：只移植提示词写法与生成授权闸门，不换 Agent 内核、不引依赖 | 已定 |
 
 ---
 
@@ -623,6 +624,11 @@ critical 会让审阅者对告警脱敏——这是 D-13 就写下的教训。�
 | `Meituan-AutoML/diffusion-pipe` | 已 404；且实际项目是**分布式训练** pipeline，不是批量推理编排，方向本身不符 |
 | `KrillinAI/KrillinAI` | 已迁移为 `krillinai/OpenCreator`，旧路径 404 |
 
+> 2026-11-09 补充：`mediago-dev/mediago-drama`（Apache-2.0）**不是排除项**——
+> 我们不引它的依赖、不换 Agent 内核，但从中移植了具体的提示词写法与生成授权闸门设计。
+> 见 [D-36](#d-36-借鉴-mediago-drama-只移植具体手法不换-agent-内核) 与
+> [`PLAN-mediago-reference.md`](PLAN-mediago-reference.md)。本地只读克隆仅供对照阅读。
+
 ---
 
 <a id="d-18-角色到声音必须显式可查不许运行期猜"></a>
@@ -1167,6 +1173,65 @@ at-mention 语义），则提示词侧需要再转回中性的标记形式——
 **相关**：`frontend/src/components/ComposerCard.vue` ·
 `frontend/src/components/settings/SettingsModal.vue` · `app/api/video.py`（providers 路由）·
 `app/llm/registry.py`（`provider_models` / `active_model`）
+
+---
+
+<a id="d-36-借鉴-mediago-drama-只移植具体手法不换-agent-内核"></a>
+## D-36 借鉴 mediago-drama：只移植具体手法，不换 Agent 内核 —— 已定（2026-11-09）
+
+**背景**：`mediago-dev/mediago-drama`（Apache-2.0）是目前能读到的、最接近「漫剧 Agent 工作台」
+形态的开源实现：React + Electron 前端 + Go 后端，文档驱动，Agent 走 Codex app-server。
+问剧 2.0 正在往「对话为主的作品流」收敛（D-24 / D-29 / PLAN-agent-rebuild），
+需要一次正式对标，确认两件事：我们比它强在哪、我们缺什么。
+
+**对照结论**：**问剧的提示词工程与确定性审计整体强于它**（我们 13 类手段 vs 它 ~8 类，
+且我们有 `dramaturgy.py` + `evals/assertions.py` 的确定性审计层，它全靠提示词自律）。
+**它在两处强于我们**：① 生成授权闸门（指纹 CAS 一次性 claim）；② 防绕过提示词句式
+（「即使用户说直接生成，也不能跳过确认表单」）。
+
+**选项**：
+① 整体照搬它的架构（换成 Codex app-server + cwd 即上下文 + 文件型文档树）；
+② 只移植具体手法，不动内核；
+③ 不参考，继续自研。
+
+**决定**：**选 ②**。具体边界：
+
+- **不换 Agent 内核**——不引入 Codex app-server。它的价值在于「有个现成的成熟 Agent」，
+  而 D-29 已经把内核换成自研 `AgentLoop` 并写了 15 个测试，我们的上下文在
+  `chat_messages` 表里自己管，比借外部进程的记忆更可控、更可测。
+- **不采用 cwd 即上下文**——我们没有 Codex 的原生 read/write/edit 工具，
+  硬造一层文件上下文层成本极高、收益低。等价方案是 C1「每轮自动附资源索引 +
+  `read_document` 工具」。
+- **不引它的任何依赖**——它自己就是 Apache-2.0 的独立实现，没有可复用的 Python 包。
+  借鉴只停留在「读它的源码、学它的写法」。
+- **要移植的只有两类**：
+  1. **提示词写法**（6 条，见 PLAN B 组）：抗绕过句式、不要编造 ID 清单、
+     不要用 A 替代 B、免问清单、禁止「同上」、反向数值约束。
+  2. **生成授权闸门**：提交幂等 + 意图指纹 + 一次性 claim + 失败不释放。
+- **明确不采纳它的短板**：它的 Skill 全靠提示词自律、没有任何代码校验。
+  我们有 D-05（能用规则判的绝不用 LLM 判）与 D-13（自建质量评测），
+  这层是我们的独有优势，不许为了「像它」而丢掉。
+
+**理由**：对标的价值在于「补短板」，不在于「变成谁」。
+把它的架构搬过来，等于丢掉 D-05 / D-13 / D-29 三条已定决策换来的东西，
+而换来的内核我们并不缺。
+
+**附注（要单独跟进）**：它把 Skill 分成「可编辑的操作手册」与「不可编辑的核心规则」
+（`DOCUMENT_RULES.md` 的 `editable: false`）。我们已有第一层——
+`app/chat/conductor.py:97-106` 的「硬规矩」在代码里不可编辑，
+但 5 个 main 技能（`novel-serial` / `crew-pipeline` / `script-review` /
+`asset-generation` / `production-delivery`）里的「铁律 / 硬规矩」段
+（`script-review:33-40`、`asset-generation:57-62`）仍是可编辑的。
+**要逐条判定**：全局不变量下沉到代码层，技能只留本领域的流程。
+
+**什么时候该推翻**：如果自研 `AgentLoop` 在「多轮上下文保持」上的实测表现
+持续劣于它的 `thread/resume` 方案（例如超过 N 轮后开始丢事实），
+重新评估「要不要把 Agent 内核外包给成熟运行时」这条。
+
+**相关**：`docs/PLAN-mediago-reference.md`（完整任务清单与落点）·
+`app/chat/conductor.py`（硬规矩层）· `app/skills/*/SKILL.md` ·
+`app/api/video.py`（生成幂等）· `app/crew/dramaturgy.py`（确定性审计）
+· `evals/assertions.py`（提示词质量断言）
 
 ---
 

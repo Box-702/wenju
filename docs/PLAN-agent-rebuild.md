@@ -197,3 +197,10 @@ when_to_use: 用户上传小说/要求把文字作品转成短剧时
 1. **pi-agent 是 TypeScript 生态**，我们后端是 Python——plan 按「借鉴设计、Python 自研」走；若你本意是直接嵌入 pi-agent-core（Node 侧跑 agent），需要提前说，架构会不同
 2. 通用 Agent + 短剧 Skill 的产品边界：非短剧请求做到「能用」水平即可，不追 iMini 的全能
 3. 工具消息落库会放大存储，注意 chat_messages 表的体积控制（工具结果截断存储）
+
+## 九、相关计划
+
+- [`PLAN-mediago-reference.md`](PLAN-mediago-reference.md) —— 对标 mediago-drama 的待办清单：
+  生成提交幂等（会重复扣钱的洞）、防绕过提示词句式、Agent 可读项目文档。
+  见 [D-36](DECISIONS.md#d-36-借鉴-mediago-drama-只移植具体手法不换-agent-内核)。
+

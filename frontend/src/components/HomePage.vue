@@ -334,9 +334,13 @@ function formatDate(iso) {
   display: flex;
   flex-wrap: nowrap;
   gap: 14px;
+  /* overflow-x 会把四个方向都变成裁剪边界：卡片 hover 上浮 1px、
+     Tab 聚焦的焦点环（:focus-visible 的 4px box-shadow）都会被切掉上边。
+     外扩 6px 裁剪余量（负 margin 抵消占位，卡片仍与标题对齐）。 */
   overflow-x: auto;
   scrollbar-width: none;
-  padding-bottom: 2px;
+  padding: 6px;
+  margin: -6px;
 }
 .works-grid::-webkit-scrollbar { display: none; }
 .works-grid > .work-card { flex: 0 0 212px; }

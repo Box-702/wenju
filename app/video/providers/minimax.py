@@ -63,6 +63,19 @@ def _invalid_task(data: Any) -> bool:
     return False
 
 
+def _has_task_object(data: Any) -> bool:
+    """查询响应里是否直接带着「任务本身」。
+
+    带任务就是事实，**必须先于 key 判据处理**：任务失败的死因写在
+    task.error 里（如 1008 insufficient balance），这段 JSON 里恰好也有
+    "1008" 字样——不先拦下来，body 扫描的 key 判据会把它当成「这把 key 坏了」，
+    把好端端的 key 环全部冷却，最后报「所有 key 都不可用」。
+    完整跑（2026-11-10）实测：账号没钱让两把 key 双双进 600s 冷却，
+    真实死因（insufficient balance）反而被埋掉了。
+    """
+    return isinstance(data, dict) and isinstance(data.get("task"), dict)
+
+
 class MiniMaxProvider(VideoProvider):
     """MiniMax H3（海螺）视频生成，V2 任务接口。"""
 
@@ -135,7 +148,12 @@ class MiniMaxProvider(VideoProvider):
                     resp = await client.post(url, headers=headers, json=body)
 
                 data = _payload(resp)
-                if key_failure(resp.status_code, data):
+                # 带回任务对象的响应 = 事实，先交给调用方映射，别过 key 判据。
+                # （任务的失败码长什么样都不该让一把好 key 背锅冷却。）
+                # 查询（GET）如此；创建被限流时 MiniMax 也会回 {"task":…}——同理，
+                # poll 早就有 type==error 的分支兜住提交侧的真错误。
+                # 不带 task 的纯错误信封（type==error）仍走 key 判据——那才是 key 的事。
+                if not _has_task_object(data) and key_failure(resp.status_code, data):
                     reason = error_message(data, resp.status_code)
                     ring.mark_bad(
                         key, reason,
@@ -349,12 +367,28 @@ class MiniMaxProvider(VideoProvider):
             if isinstance(content, dict):
                 video_url = content.get("url")
 
+        # 失败原因在**任务对象**里：{"task":{"status":"failed","error":{"code":"1008",
+        # "message":"insufficient balance"}}}。曾经从外层 data 找 error（那里没有），
+        # 结果是任务明明死因明确（账号没钱），用户看到的却是空的 failed——
+        # 完整跑（2026-11-10）时撞出来的：排查全靠人工再查一遍厂商接口。
+        error_message: str | None = None
+        if mapped == "failed":
+            task_err = task.get("error")
+            if isinstance(task_err, dict):
+                code = str(task_err.get("code") or "").strip()
+                message = str(task_err.get("message") or "").strip()
+                error_message = f"{message} ({code})" if code else message
+            elif task_err:
+                error_message = str(task_err)
+            if not error_message:
+                error_message = str(data.get("error") or "").strip() or None
+
         return VideoJobStatus(
             external_task_id=external_task_id,
             status=mapped,
             progress=1.0 if mapped == "succeeded" else 0.5 if mapped == "generating" else 0.0,
             video_url=video_url,
-            error_message=str(data.get("error", "")) or None if mapped == "failed" else None,
+            error_message=error_message,
             raw=data,
         )
 

@@ -338,6 +338,48 @@ def test_查询任务_2013_不判_key_失效(monkeypatch):
     assert all(s["healthy"] for s in provider._ring().snapshot())
 
 
+def test_查询带回任务就不判_key_坏(monkeypatch):
+    """任务级的失败事实 ≠ key 坏了。完整跑（2026-11-10）撞出来的坑。
+
+    账号没钱时 MiniMax 回：HTTP 200 + {"task": {"status":"failed",
+    "error":{"code":"1008","message":"insufficient balance"}}}。
+    body 扫描的 key 判据在 JSON 文本里看到 "1008" 就把两把好 key 全冷却，
+    最后报「所有 key 都不可用」——真实死因（余额不足）反而被埋掉，
+    用户只能人工再查一遍厂商接口才知道。
+    """
+
+    def handler(method, url, body):
+        return _resp(200, {"task": {
+            "id": "task-9", "status": "failed",
+            "error": {"code": "1008", "message": "insufficient balance"},
+        }})
+
+    provider = _provider(monkeypatch, handler, "account-a,account-b")
+    status = asyncio.run(provider.poll_job("task-9"))
+
+    # 事实如实上报：failed + 厂商原话（不是空的，也不是「所有 key 都不可用」）
+    assert status.status == "failed"
+    assert "insufficient balance" in (status.error_message or "")
+    # key 一根汗毛都不能掉
+    assert all(s["healthy"] for s in provider._ring().snapshot())
+
+
+def test_查询_type_error_仍然判_key_坏(monkeypatch):
+    """反向护栏：**不带** task 的纯错误信封（1004）仍走 key 判据。
+
+    上一条的修复不能把真 key 错误也放过——放过了坏 key 会永远轮在头上。
+    """
+
+    def handler(method, url, body):
+        return _resp(200, {"type": "error",
+                           "error": {"message": "invalid api key (1004)"}})
+
+    provider = _provider(monkeypatch, handler, "account-a,account-b")
+    with pytest.raises(RuntimeError, match="所有 key 都不可用"):
+        asyncio.run(provider.poll_job("task-9"))
+    assert all(not s["healthy"] for s in provider._ring().snapshot())
+
+
 # ---------------- 配音的轮换 ----------------
 
 

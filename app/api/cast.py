@@ -230,9 +230,10 @@ def discover_voices() -> dict[str, Any]:
     try:
         voices = client.list_system_voices()
     except NotImplementedError:
-        raise HTTPException(501, "当前语音厂商不支持音色列表查询")
+        # 厂商压根没实现这个查询——原始异常对用户无意义，501 的语义已完整
+        raise HTTPException(501, "当前语音厂商不支持音色列表查询") from None
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"查询音色列表失败：{e}")
+        raise HTTPException(502, f"查询音色列表失败：{e}") from e
     if not voices:
         raise HTTPException(502, "厂商返回空的音色列表")
     store.upsert_voice_pool(voices)

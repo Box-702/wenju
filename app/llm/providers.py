@@ -60,6 +60,11 @@ def build_chat_model(config: ModelConfig) -> BaseChatModel:
         # 必须开流式：对话 conductor 用 langgraph messages 模式把增量推给前端，
         # 不开的话回复（含思考内容）在整轮结束时一次性到达，前端没有流式观感。
         "streaming": True,
+        # 超时与重试（2026-11-11 审计）：此前不传，走 SDK 默认（10 分钟 × 重试），
+        # 对话一轮最多 8 步工具，最坏情况一个请求能挂很久。卡住的请求
+        # 120 秒断开、快速失败一次，让上层能如实报错而不是让用户干等。
+        "timeout": 120,
+        "max_retries": 1,
     }
     base_url = (config.base_url or (spec.default_base_url if spec else "")).rstrip("/")
     if base_url:

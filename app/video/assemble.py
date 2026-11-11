@@ -58,12 +58,24 @@ def get_video_info(path: str, ffmpeg_path: str | None = None) -> dict[str, Any]:
         data = json.loads(result.stdout)
         streams = data.get("streams", [])
         video_stream = next((s for s in streams if s.get("codec_type") == "video"), {})
+        # r_frame_rate 形如 "30/1"：以前用 eval() 算这个分数——对用户可影响的
+        # 数据做 eval 是任意代码执行原语（2026-11-11 权限审计），改成显式解析。
+        fps = 0.0
+        rate = str(video_stream.get("r_frame_rate") or "")
+        if "/" in rate:
+            num, _, den = rate.partition("/")
+            try:
+                d = float(den)
+                if d > 0:
+                    fps = float(num) / d
+            except ValueError:
+                fps = 0.0
         return {
             "duration": float(data.get("format", {}).get("duration", 0)),
             "width": video_stream.get("width", 0),
             "height": video_stream.get("height", 0),
             "codec": video_stream.get("codec_name", ""),
-            "fps": eval(video_stream.get("r_frame_rate", "0/1")) if "/" in str(video_stream.get("r_frame_rate", "")) else 0,
+            "fps": fps,
         }
     except Exception as e:  # noqa: BLE001
         return {"error": str(e)}

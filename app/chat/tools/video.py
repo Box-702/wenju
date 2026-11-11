@@ -12,10 +12,9 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from .context import ToolContext, short
+from .context import PROMPT_STATUS_LABELS, ToolContext, short
 
-# 提示词状态 / 任务状态 -> 中文展示。get_status 与逐镜清单共用。
-PROMPT_STATUS_LABELS = {"draft": "待审", "needs_revision": "需修改", "approved": "已批准"}
+# 任务状态 -> 中文展示。提示词状态用 context.PROMPT_STATUS_LABELS（单一来源）。
 JOB_STATUS_LABELS = {
     "pending": "排队中", "queued": "排队中", "generating": "生成中",
     "succeeded": "已出片", "failed": "失败", "cancelled": "已取消",
@@ -28,37 +27,39 @@ def build(ctx: ToolContext) -> list:
 
     @tool
     def approve_video_prompts(project_id: str, shot_ids: str = "") -> str:
-        """批准镜头的提示词，使其可以提交视频生成（批准后生成新的镜头版本，可回滚）。注意：这是用户的正式决定，只在用户明确说「批准」时才调用。参数：project_id=项目 id；shot_ids=镜头 id 列表（逗号分隔），留空=批准全部有待审提示词的镜头。"""
+        """发起「批准镜头提示词」的请求——批准正式生效需要用户确认（点对话里的确认卡片，或回复「批准」）。注意：出片花钱，最终决定权在服务端硬闸门手里，你只能发起，不能代替用户批准。参数：project_id=项目 id；shot_ids=镜头 id 列表（逗号分隔），留空=请求批准全部有待审提示词的镜头。"""
         p = ctx.project(project_id)
         current = ctx.latest_video_version(p)
         if current is None or not current.shots:
             return "还没有镜头方案——需要先「拆解镜头」再「撰写镜头提示词」。"
-        from ...crew.dramaturgy import refresh_prompt_audits
 
         wanted = {s.strip() for s in shot_ids.split(",") if s.strip()}
-        shots = [dict(s) for s in current.shots if isinstance(s, dict)]
         targets = [
-            s for s in shots
-            if s.get("id") and s.get("video_prompt")
+            s for s in current.shots
+            if isinstance(s, dict) and s.get("id") and s.get("video_prompt")
             and (not wanted or s["id"] in wanted)
             and s.get("prompt_status") != "approved"
         ]
         if not targets:
             return "没有可批准的镜头（可能都已批准，或选中镜头没有提示词）。"
-        for s in targets:
-            s["prompt_status"] = "approved"
-            s["prompt_review_note"] = "对话中批准"
-        refresh_prompt_audits(
-            shots,
-            style_context=(current.style_guide.camera_style if current.style_guide else ""),
+        ids = [s["id"] for s in targets]
+        conv = ctx.collector.get("conversation_id") or ""
+        request = store.create_pending_approval(
+            project_id=p.id, conversation_id=conv,
+            version_id=current.id, shot_ids=ids,
         )
-        version = store.create_video_version(
-            project_id=p.id, shots=shots, style_guide=current.style_guide,
-            source_type="manual", label="对话中批准镜头提示词",
-            notes=None, parent_version_id=current.id,
+        ctx.collector["payloads"].append({
+            "type": "prompt_approval",
+            "approval_id": request.id,
+            "project_id": p.id,
+            "version_id": current.id,
+            "shot_ids": ids,
+            "status": "pending",
+        })
+        return (
+            f"已发起批准请求（{len(ids)} 个镜头），下面是对话里的确认卡片。"
+            "**批准还没有生效**——要用户点「确认批准」或回复「批准」后才会写入批准状态，然后才能出片。"
         )
-        names = "、".join(s["id"] for s in targets)
-        return f"已批准 {len(targets)} 个镜头的提示词（{names}），新镜头版本 {version.id}。现在可以说「出片」来提交视频生成。"
 
     @tool
     def submit_videos(project_id: str, shot_ids: str = "") -> str:
@@ -75,8 +76,7 @@ def build(ctx: ToolContext) -> list:
         ]
         if not approved:
             return "没有可提交的镜头：提示词需要先经过人工批准。可以说「批准全部提示词」，或先看看镜头清单。"
-        from ...api.schemas import VideoJobCreate
-        from ...api.video import generate_batch, submit_video_job
+        from ...video.service import VideoJobCreate, generate_batch, submit_video_job
 
         try:
             if wanted:
@@ -101,7 +101,7 @@ def build(ctx: ToolContext) -> list:
                             "（没有重复提交）。稍后可问我进度。")
                 return f"已提交 {created} 个指定镜头的视频生成，稍后可问我进度。"
             # 整片：走批次（串行推进，前一镜成片自动作为后一镜接力参考）。
-            from ...api.video import BatchCreateRequest
+            from ...video.service import BatchCreateRequest
 
             batch = generate_batch(p.id, BatchCreateRequest(version_id=v.id))
         except Exception as e:  # noqa: BLE001  FastAPI HTTPException 也走这里，转成用户可读文本
@@ -128,8 +128,7 @@ def build(ctx: ToolContext) -> list:
         if shot is None:
             return f"没有找到镜头 {shot_id}，可以先查镜头清单确认 id。"
         job = ctx.latest_job_by_shot(p.id).get(shot_id)
-        from ...api.schemas import VideoJobCreate
-        from ...api.video import retry_video_job, submit_video_job
+        from ...video.service import VideoJobCreate, retry_video_job, submit_video_job
 
         try:
             if job is not None and job.status in ("failed", "cancelled"):
@@ -150,6 +149,60 @@ def build(ctx: ToolContext) -> list:
         except Exception as e:  # noqa: BLE001
             detail = getattr(e, "detail", None) or str(e)
             return f"重跑失败：{detail}"
+
+    @tool
+    def edit_shot_prompt(project_id: str, shot_id: str, prompt: str) -> str:
+        """修改某个镜头的视频提示词（生成新的镜头版本）。编辑会使批准失效：该镜头回到待审状态，需用户重新批准后才能提交出片。参数：project_id=项目 id；shot_id=镜头 id（形如 shot_scene001_001）；prompt=新提示词全文（按用户的意思写，不要自行压缩成另一段）。"""
+        p = ctx.project(project_id)
+        v = ctx.latest_video_version(p)
+        if v is None or not v.shots:
+            return "还没有镜头方案：请先「拆解镜头」「撰写镜头提示词」。"
+        new_prompt = (prompt or "").strip()
+        if not new_prompt:
+            return "新的提示词不能为空。"
+        shots = [dict(s) for s in v.shots if isinstance(s, dict)]
+        target = next((s for s in shots if s.get("id") == shot_id.strip()), None)
+        if target is None:
+            return f"没有找到镜头 {shot_id}，可以先用 get_status(detail=\"shots\") 确认 id。"
+        was_approved = target.get("prompt_status") == "approved"
+        target["video_prompt"] = new_prompt
+        target["prompt_status"] = "needs_review"
+        target["prompt_review_note"] = "对话中编辑，待审"
+        from ...crew.dramaturgy import refresh_prompt_audits
+
+        # style_guide 是 dict property：安全取 camera_style（审计排除用）。
+        style_ctx = str((v.style_guide or {}).get("camera_style") or "")
+        refresh_prompt_audits(shots, style_context=style_ctx)
+        version = store.create_video_version(
+            project_id=p.id, shots=shots, style_guide=v.style_guide,
+            source_type="manual", label="对话中编辑镜头提示词",
+            notes=None, parent_version_id=v.id,
+        )
+        tail = "（该镜头之前是已批准状态，编辑后需要重新走用户批准。）" if was_approved else ""
+        return (f"已更新镜头 {target['id']} 的提示词（新镜头版本 {version.id}），"
+                f"状态重置为待审，等用户批准后才可以出片。{tail}")
+
+    @tool
+    def cancel_video_job(project_id: str, shot_id: str) -> str:
+        """取消某个镜头正在进行的视频生成任务（排队中/生成中）。用户说「取消/停掉这一镜」时调用；对成片不满意想立刻重出时，先取消再 rerun_video。参数：project_id=项目 id；shot_id=镜头 id。"""
+        p = ctx.project(project_id)
+        sid = shot_id.strip()
+        job = store.find_active_video_job(p.id, sid)
+        if job is None:
+            latest = ctx.latest_job_by_shot(p.id).get(sid)
+            if latest is None:
+                return f"镜头 {sid} 没有提交过视频任务，无需取消。"
+            return (f"镜头 {sid} 的任务已是终态（{JOB_STATUS_LABELS.get(latest.status, latest.status)}），"
+                    "不用取消；想重出一版直接说重跑。")
+        from ...video.service import cancel_video_job as _api_cancel_job
+
+        try:
+            _api_cancel_job(job.id)
+        except Exception as e:  # noqa: BLE001
+            detail = getattr(e, "detail", None) or str(e)
+            return f"取消失败：{detail}"
+        return (f"已取消镜头 {sid} 的生成任务（{job.id}）。镜头方案与已批准的提示词保持不变，"
+                "随时可以重跑或继续其他镜头。")
 
     @tool
     def finalize_film(project_id: str, subtitles: bool = True, dubbing: bool = True) -> str:
@@ -244,9 +297,10 @@ def build(ctx: ToolContext) -> list:
                 f"{r.get('shots_used', 0)}/{r.get('shots_total', 0)} 镜，{'/'.join(flags)}）"
             )
 
-        # 后台任务
+        # 后台任务：只报本作品的（2026-11-11 审计：此前拿全局任务表前 3 条，
+        # A 作品的对话会把 B 作品的出片任务名与结果报给用户）。
         if runner is not None:
-            tasks = runner.list_tasks()[:3]
+            tasks = runner.list_tasks(project_id=pid)[:3]
             if tasks:
                 items = []
                 for t in tasks:
@@ -266,5 +320,7 @@ def build(ctx: ToolContext) -> list:
         approve_video_prompts,
         submit_videos,
         rerun_video,
+        edit_shot_prompt,
+        cancel_video_job,
         finalize_film,
     ]

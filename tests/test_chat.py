@@ -165,19 +165,115 @@ def test_get_status_reports_shots(store, llm, sample_text):
     assert "已批准 1" in summary
     assert "shot_scene001_000" not in summary       # 概况不逐镜展开
     full = tools["get_status"].invoke({"project_id": pid, "detail": "shots"})
-    assert "shot_scene001_000" in full and "待审" in full
+    # 统一标签表（context.PROMPT_STATUS_LABELS）：draft 显示「草稿」，
+    # 不再与 needs_review（待审）混叫——四态各有其词是这次审计修掉的问题之一。
+    assert "shot_scene001_000" in full and "草稿" in full
 
 
-def test_approve_video_prompts_creates_version(store, llm, sample_text):
-    tools, _, pid = _make_video_project(store, llm, sample_text)
+def test_approve_video_prompts_requests_then_confirms(store, llm, sample_text):
+    """批准是两步硬闸门（D-43）：工具只发起请求，用户确认后 approved 才写入。"""
+    from app.chat.approvals import apply_approval, detect_confirmation
+
+    tools, collector, pid = _make_video_project(store, llm, sample_text)
     r = tools["approve_video_prompts"].invoke({"project_id": pid, "shot_ids": "shot_scene001_000"})
-    assert "已批准 1 个" in r
+    assert "已发起批准请求" in r
+    # 模型调完工具时状态没变——它不能声称「已批准」。
+    versions = sorted(store.list_video_versions(pid), key=lambda v: v.created_at)
+    shot = next(s for s in versions[-1].shots if s["id"] == "shot_scene001_000")
+    assert shot["prompt_status"] == "draft"
+    # 确认卡片带 approval_id 进 payload
+    card = [p for p in collector["payloads"] if p.get("type") == "prompt_approval"]
+    assert card and card[0]["shot_ids"] == ["shot_scene001_000"]
+    approval = store.get_pending_approval(card[0]["approval_id"])
+    assert approval is not None and approval.status == "pending"
+    # 确定性路径：用户确认后才真批准，生成新版本
+    result = apply_approval(store, approval.project_id, approval.version_id, approval.shot_ids)
+    assert result["ok"] and result["approved_count"] == 1
     versions = sorted(store.list_video_versions(pid), key=lambda v: v.created_at)
     shot = next(s for s in versions[-1].shots if s["id"] == "shot_scene001_000")
     assert shot["prompt_status"] == "approved"
-    # 已批准的再批一次：无可批准
+    # 已批准的再发起一次：无可批准
     r2 = tools["approve_video_prompts"].invoke({"project_id": pid, "shot_ids": "shot_scene001_000"})
     assert "没有可批准" in r2
+    # 文本确认检测（保守）：肯定短句算，否定/疑问/长句不算
+    assert detect_confirmation("批准")
+    assert detect_confirmation("全部批准")
+    assert not detect_confirmation("不批准")
+    assert not detect_confirmation("哪些没批准？")
+    assert not detect_confirmation("先不批准")
+    assert not detect_confirmation("等我看完再批准")
+    assert not detect_confirmation("如果没什么大问题的话就批准吧，不过我还是想先仔细看看第三镜的提示词到底怎么写的再决定")
+
+
+def test_approve_requests_replace_previous(store, llm, sample_text):
+    """同一会话重复发起：只保留最新一条待确认请求，旧的置 expired。"""
+    tools, _, pid = _make_video_project(store, llm, sample_text)
+    tools["approve_video_prompts"].invoke({"project_id": pid})
+    first = store.latest_pending_approval(project_id=pid, conversation_id="")
+    tools["approve_video_prompts"].invoke({"project_id": pid})
+    second = store.latest_pending_approval(project_id=pid, conversation_id="")
+    assert first is not None and second is not None and first.id != second.id
+    assert store.get_pending_approval(first.id).status == "expired"
+
+
+# ---------- D-43 批准硬闸门：确定性路径全链路（chat_once 入口） ----------
+
+
+def _make_pending(store, llm, sample_text, conversation_id=""):
+    """造项目 + 镜头方案 + 一条待确认批准请求，返回 (pid, approval_id)。"""
+    collector = {"project_id": None, "payloads": [], "conversation_id": conversation_id}
+    tools = {t.name: t for t in build_chat_tools(store, llm, collector)}
+    tools["create_project"].invoke({"title": "雨夜", "adaptation_type": "short_drama", "raw_text": sample_text})
+    pid = collector["project_id"]
+    store.create_video_version(project_id=pid, shots=[
+        {"id": "shot_a", "video_prompt": "A man enters.", "prompt_status": "draft"},
+    ], source_type="agent", label="导演拆解")
+    r = tools["approve_video_prompts"].invoke({"project_id": pid})
+    assert "已发起批准请求" in r
+    return pid, collector["payloads"][-1]["approval_id"]
+
+
+def test_approval_confirm_via_meta(store, llm, settings, sample_text):
+    """前端卡片「确认批准」→ meta 确定性路径：模型缺席也能批准生效（闸门不依赖 LLM）。"""
+    pid, approval_id = _make_pending(store, llm, sample_text)
+    out = chat_once(store, llm, settings, conversation_id=None, project_id=pid, message="",
+                    meta={"intent": "approve_prompts", "approval_id": approval_id, "action": "confirm"})
+    assert "已批准" in out["reply"], out
+    assert store.get_pending_approval(approval_id).status == "confirmed"
+    v = sorted(store.list_video_versions(pid), key=lambda x: x.created_at)[-1]
+    assert next(s for s in v.shots if s["id"] == "shot_a")["prompt_status"] == "approved"
+
+
+def test_approval_confirm_via_text(store, llm, settings, sample_text):
+    """用户回一句「批准」：确定性检测直接生效，不进 LLM（无模型环境也能走通就是证据）。"""
+    pid, approval_id = _make_pending(store, llm, sample_text, conversation_id="conv_x")
+    out = chat_once(store, llm, settings, conversation_id="conv_x", project_id=pid, message="批准", meta=None)
+    assert "已批准" in out["reply"] and "没有配置对话模型" not in out["reply"]
+    assert store.get_pending_approval(approval_id).status == "confirmed"
+
+    # 没有待确认请求时，「批准」两个字只是普通聊天（交回 LLM 路径）。
+    out2 = chat_once(store, llm, settings, conversation_id="conv_x", project_id=pid, message="批准", meta=None)
+    assert "没有配置对话模型" in out2["reply"]
+
+
+def test_approval_negative_text_not_confirmed(store, llm, settings, sample_text):
+    """否定/疑问措辞绝不触发批准：「不批准」只是聊天，请求保持 pending。"""
+    pid, approval_id = _make_pending(store, llm, sample_text, conversation_id="conv_y")
+    for phrase in ("不批准", "哪些没批准？", "先不批准，等我看看"):
+        out = chat_once(store, llm, settings, conversation_id="conv_y", project_id=pid, message=phrase, meta=None)
+        assert "没有配置对话模型" in out["reply"], phrase  # 走了 LLM 回退 = 没触发确定性批准
+    assert store.get_pending_approval(approval_id).status == "pending"
+
+
+def test_approval_cancel_via_meta(store, llm, settings, sample_text):
+    """卡片「先不批准」：请求终结为 cancelled，镜头状态不变。"""
+    pid, approval_id = _make_pending(store, llm, sample_text)
+    out = chat_once(store, llm, settings, conversation_id=None, project_id=pid, message="",
+                    meta={"intent": "approve_prompts", "approval_id": approval_id, "action": "cancel"})
+    assert "已取消" in out["reply"]
+    assert store.get_pending_approval(approval_id).status == "cancelled"
+    v = sorted(store.list_video_versions(pid), key=lambda x: x.created_at)[-1]
+    assert next(s for s in v.shots if s["id"] == "shot_a")["prompt_status"] == "draft"
 
 
 def test_get_status_before_any_job_and_rerun_unknown(store, llm, sample_text):
@@ -198,6 +294,8 @@ def test_submit_videos_requires_approval(store, llm, sample_text):
 
 
 def test_get_status_includes_background_tasks(store, llm, sample_text):
+    """get_status 报后台任务且**按项目过滤**（2026-11-11 审计：此前全局取前 3 条，
+    A 作品的对话会看到 B 作品的任务名与结果）。"""
     from app.agent.tasks import SubAgentRunner, SubAgentTask
     from app.chat import build_chat_tools
 
@@ -206,9 +304,18 @@ def test_get_status_includes_background_tasks(store, llm, sample_text):
     tools = {t.name: t for t in build_chat_tools(store, llm, collector, runner=runner)}
     tools["create_project"].invoke({"title": "雨夜", "raw_text": sample_text})
     pid = collector["project_id"]
-    runner._tasks["task_x"] = SubAgentTask(id="task_x", name="导演场景拆解", status="done", result="已拆出 4 个镜头")
+    runner._tasks["task_x"] = SubAgentTask(
+        id="task_x", name="导演场景拆解", status="done",
+        result="已拆出 4 个镜头", project_id=pid,
+    )
+    # 别的项目的任务：不得出现在本项目的 get_status 里
+    runner._tasks["task_y"] = SubAgentTask(
+        id="task_y", name="别的作品的出片", status="done",
+        result="另一个成片", project_id="proj_other",
+    )
     r = tools["get_status"].invoke({"project_id": pid})
     assert "导演场景拆解" in r and "已完成" in r and "4 个镜头" in r
+    assert "别的作品的出片" not in r
 
 
 def test_trajectory_note_compacts_events():
@@ -292,7 +399,11 @@ def test_compress_history_truncates_without_llm(store):
 
 
 def test_compress_history_rolls_summary(store):
-    """假 LLM：达到阈值时压缩旧消息，摘要落库，covered_count 正确。"""
+    """假 LLM：达到阈值时压缩旧消息，摘要落库，covered_until_id 锚点正确。
+
+    锚点是最后一条已并入摘要的消息 id（2026-11-11 改用 id 锚点替代绝对计数：
+    计数版在总条数超 200 后与读库窗口错位，摘要永久停摆、中段历史静默丢失）。
+    """
     from app.memory import RECENT_KEEP, compress_history_if_needed
 
     class _FakeLLM:
@@ -307,16 +418,61 @@ def test_compress_history_rolls_summary(store):
 
     conv = store.create_conversation(project_id=None, title="长对话")
     total = RECENT_KEEP + 12  # 超过触发线
+    ids: list[str] = []
     for i in range(total):
-        store.save_chat_message(thread_id=conv.id, role="user", content=f"消息{i}", payload=[], events=[])
+        ids.append(store.save_chat_message(thread_id=conv.id, role="user", content=f"消息{i}", payload=[], events=[]).id)
     summary, recent = compress_history_if_needed(store, _FakeLLM(), conv.id)
     assert "事实清单" in summary
     assert len(recent) == RECENT_KEEP
     conv = store.get_conversation(conv.id)
-    assert conv.summary["covered_count"] == total - RECENT_KEEP
-    # 攒不够新内容时沿用旧摘要，不再调 LLM
-    summary2, _ = compress_history_if_needed(store, _FakeLLM(), conv.id)
+    # 覆盖到最后一条 pending（窗口前那段），锚点就是它的 id
+    assert conv.summary["covered_until_id"] == ids[total - RECENT_KEEP - 1]
+    # 攒不够新内容时沿用旧摘要，不再调 LLM；但覆盖点到窗口之间那几条并进窗口，不暂时失忆
+    summary2, recent2 = compress_history_if_needed(store, _FakeLLM(), conv.id)
     assert summary2 == summary
+    assert len(recent2) == RECENT_KEEP
+    # 再攒 5 条（不足触发阈值）：覆盖点之后、窗口之前的 5 条必须并进返回窗口，
+    # 否则它们既不在摘要也不在上下文——「暂时失忆」（旧版行为）。
+    for i in range(5):
+        store.save_chat_message(thread_id=conv.id, role="user", content=f"补{i}", payload=[], events=[])
+    summary3, recent3 = compress_history_if_needed(store, _FakeLLM(), conv.id)
+    assert summary3 == summary  # 不重新调 LLM
+    assert len(recent3) == RECENT_KEEP + 5
+    assert recent3[-1].content == "补4"
+
+
+def test_compress_summary_advances_beyond_window(store):
+    """长对话回归：>200 条后摘要必须**继续前进**，不再停摆丢中段。
+
+    此前 covered_count（绝对计数）撞上 list_chat_messages 的 200 条窗口：
+    covered 钳到 200、pending 恒为空切片，200 条窗口之外、摘要之外的历史
+    静默蒸发。锚点版把「滚出窗口的覆盖点」退化成窗口内全量重摘（合并式
+    摘要天然去重），摘要每轮照常推进。
+    """
+    from app.memory import RECENT_KEEP, compress_history_if_needed
+
+    class _FakeLLM:
+        available = True
+
+        class _Chat:
+            def invoke(self, msgs):
+                return type("R", (), {"content": "事实清单：持续推进"})()
+
+        def chat(self):
+            return self._Chat()
+
+    conv = store.create_conversation(project_id=None, title="超长对话")
+    for i in range(230):
+        store.save_chat_message(thread_id=conv.id, role="user", content=f"消息{i}——带一点内容让它像真消息", payload=[], events=[])
+    s1, _ = compress_history_if_needed(store, _FakeLLM(), conv.id)
+    state1 = store.get_conversation(conv.id).summary
+    # 再灌 20 条：窗口整体滑动，覆盖点滚出 200 条窗口之外
+    for i in range(20):
+        store.save_chat_message(thread_id=conv.id, role="user", content=f"新消息{i}", payload=[], events=[])
+    s2, _ = compress_history_if_needed(store, _FakeLLM(), conv.id)
+    state2 = store.get_conversation(conv.id).summary
+    assert "事实清单" in s2
+    assert state2.get("covered_until_id") != state1.get("covered_until_id"), "锚点应继续前进（旧版这里永冻）"
 
 
 def test_compress_survives_llm_failure(store, caplog):

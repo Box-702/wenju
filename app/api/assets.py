@@ -134,6 +134,22 @@ async def upload_image(project_id: str, file: UploadFile = File(...)) -> dict[st
     return _asset_dict(asset)
 
 
+def _workspace_file(file_path: str) -> Path | None:
+    """把素材记录里的相对路径解析到工作区内真实文件（防目录穿越）。
+
+    DB 里的 file_path 来自历史磁盘素材；没有 containment 校验的话，
+    一条带 ../ 的记录能让删除接口打到工作区外的文件（2026-11-11 权限审计）。
+    模式同 workspace.resolve_file：resolve 后必须仍在工作区根之下。
+    """
+    root = Path(deps.settings().effective_workspace_root).resolve()
+    try:
+        target = (root / file_path).resolve()
+        target.relative_to(root)
+    except (ValueError, OSError):
+        return None
+    return target
+
+
 @router.delete("/assets/{asset_id}")
 def delete_asset(asset_id: str) -> dict[str, Any]:
     """删除素材记录；上传类文件尽力清理磁盘。
@@ -145,11 +161,14 @@ def delete_asset(asset_id: str) -> dict[str, Any]:
     if asset is None:
         raise HTTPException(404, "素材不存在")
     if asset.file_path:
-        p = Path(deps.settings().effective_workspace_root) / asset.file_path
-        try:
-            p.unlink(missing_ok=True)
-        except OSError as e:
-            log.warning("素材文件未能删除（可能正被回放占用）：%s -> %s", p, e)
+        p = _workspace_file(asset.file_path)
+        if p is None:
+            log.warning("素材 %s 的 file_path 越出工作区，跳过磁盘清理", asset_id)
+        else:
+            try:
+                p.unlink(missing_ok=True)
+            except OSError as e:
+                log.warning("素材文件未能删除（可能正被回放占用）：%s -> %s", p, e)
     return {"deleted": asset_id}
 
 
@@ -170,8 +189,8 @@ def get_asset_file(asset_id: str) -> Response:
         )
     if not asset.file_path:
         raise HTTPException(404, "素材不存在")
-    p = Path(deps.settings().effective_workspace_root) / asset.file_path
-    if not p.is_file():
+    p = _workspace_file(asset.file_path)
+    if p is None or not p.is_file():
         raise HTTPException(404, "素材文件已丢失")
     return FileResponse(p, media_type=_MEDIA_TYPES.get(p.suffix.lower(), "application/octet-stream"),
                         filename=asset.name)

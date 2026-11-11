@@ -35,8 +35,8 @@ def store() -> Store:
 
 @lru_cache
 def llm() -> LLM:
-    # 传入 store 后模型配置也可来自数据库（前端「设置 → 模型」里配的 provider）；
-    # .env 仍是第一优先级（见 app/llm/registry.py）。
+    # 模型配置权威是数据库 api_providers（D-41 翻转）；.env 只在空库时兜底。
+    # 用户在「设置 → 模型」改动后走 reset_llm() 重建本单例。
     return build_llm(settings(), store())
 
 

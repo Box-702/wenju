@@ -173,28 +173,7 @@ class VideoPromptBulkReview(BaseModel):
     note: str = Field(default="", max_length=2000)
 
 
-class VideoJobCreate(BaseModel):
-    """视频生成任务。
-
-    除文本 prompt 外，开放多模态输入入口（对应 MiniMax H3 等
-    多模态模型的 content 数组）：首帧图 / 尾帧图 / 参考图 /
-    参考音频，以及原生 content 数组直通。
-
-    参考视频**不在这里传**：它由镜头自己带的「参考素材」决定
-    （见 app/api/video.py 的 _auto_references）。对外不再留
-    「手填一条公网 URL 当参考视频」的口子——服务商只认 http(s) 或
-    data:base64，而本机回放地址它拉不到（见 app/media/inline.py）。
-    """
-
-    shot_id: str = Field(min_length=1)
-    provider: str = Field(min_length=1)
-    model: str = Field(min_length=1)
-    prompt: str = Field(default="", max_length=8000)  # 纯图 / 视频驱动时可为空
-    params: dict[str, Any] = Field(default_factory=dict)
-    version_id: str | None = None
-    # ---- 多模态入口 ----
-    first_frame_image: str | None = None       # 首帧图 URL（图生视频）
-    last_frame_image: str | None = None        # 尾帧图（首尾帧控制）
-    reference_images: list[str] = Field(default_factory=list)  # 参考图（≤9）
-    reference_audios: list[str] = Field(default_factory=list)  # 参考音频（≤3）
-    content: list[dict[str, Any]] | None = None  # 原生多模态数组直通（优先级最高）
+# VideoJobCreate 是出片提交的请求模型，业务归属在 app/video/service.py
+# （2026-11-11 随提交逻辑一起下沉，避免 video 层反向 import api 层）。
+# 这里再导出，保持 `from app.api.schemas import VideoJobCreate` 旧路径不破。
+from ..video.service import VideoJobCreate  # noqa: E402,F401

@@ -329,6 +329,38 @@ class ChatImage(Base):
     created_at: Mapped[datetime] = mapped_column(default=_now)
 
 
+class PendingApproval(Base):
+    """待用户确认的提示词批准请求（D-43 服务端硬闸门）。
+
+    为什么需要这张表：`approve_video_prompts` 原本是普通工具——模型可以
+    同一轮先批准再出片，「不替用户做最终决定」只是提示词级约束，服务端
+    无法区分「用户说批准」和「模型自批」。现在工具只能**发起请求**（落这里），
+    真正写 approved 状态只有两条确定性路径：
+
+      1. 用户点对话里的确认卡片（meta.intent=approve_prompts，来自浏览器）；
+      2. 用户下一条消息被确定性确认检测命中（消息来自 API 请求体，模型伪造不了）。
+
+    生命周期：pending → confirmed / cancelled / expired（新请求替换旧请求；
+    镜头方案在确认前又出了新版本，旧请求作废）。
+    """
+
+    __tablename__ = "pending_approvals"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    project_id: Mapped[str] = mapped_column(index=True)
+    conversation_id: Mapped[str] = mapped_column(default="")
+    version_id: Mapped[str] = mapped_column(default="")
+    shot_ids_json: Mapped[str] = mapped_column(default="[]")  # [] = 当时全部待批
+    note: Mapped[str] = mapped_column(default="")
+    status: Mapped[str] = mapped_column(default="pending")  # pending|confirmed|cancelled|expired
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    resolved_at: Mapped[datetime | None] = mapped_column(default=None)
+
+    @property
+    def shot_ids(self) -> list[str]:
+        return _json_load(self.shot_ids_json, [])
+
+
 class Memory(Base):
     """用户级三层记忆（替代 RAG 的结构化记忆）。
 
@@ -550,6 +582,7 @@ class SubAgentTaskRow(Base):
     id: Mapped[str] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(default="")
     status: Mapped[str] = mapped_column(default="pending")  # pending|running|done|failed
+    project_id: Mapped[str] = mapped_column(default="", index=True)
     steps_json: Mapped[str] = mapped_column(default="[]")
     result: Mapped[str | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(default=_now)
@@ -644,6 +677,13 @@ class Store:
                 if "summary_json" not in cols_conv:
                     with self.engine.begin() as conn:
                         conn.execute(text("ALTER TABLE conversations ADD COLUMN summary_json VARCHAR DEFAULT '{}'"))
+
+            # ---- subagent_tasks 表：任务归属项目列（老库补列，2026-11-11 审计）----
+            if "subagent_tasks" in tables:
+                cols_task = {c["name"] for c in insp.get_columns("subagent_tasks")}
+                if "project_id" not in cols_task:
+                    with self.engine.begin() as conn:
+                        conn.execute(text("ALTER TABLE subagent_tasks ADD COLUMN project_id VARCHAR DEFAULT ''"))
 
             # ---- chat_messages 表：消息附带图片列（老库补列）----
             if "chat_messages" in tables:
@@ -1244,6 +1284,74 @@ class Store:
                 return
             c.summary_json = json.dumps(summary, ensure_ascii=False)
             s.commit()
+
+    # ---- PendingApproval（提示词批准硬闸门，D-43）----
+
+    def create_pending_approval(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        version_id: str,
+        shot_ids: list[str],
+        note: str = "",
+    ) -> PendingApproval:
+        """登记一条待用户确认的批准请求。
+
+        同一（作品, 会话）同时只保留一条 pending：新请求把旧请求置 expired——
+        提示词可能又出了新版本，用户只需要确认最新那一条，避免旧卡片误批。
+        """
+        with self.session() as s:
+            s.query(PendingApproval).filter(
+                PendingApproval.project_id == project_id,
+                PendingApproval.conversation_id == (conversation_id or ""),
+                PendingApproval.status == "pending",
+            ).update({PendingApproval.status: "expired", PendingApproval.resolved_at: _now()},
+                     synchronize_session=False)
+            row = PendingApproval(
+                id=gen_id("appr"),
+                project_id=project_id,
+                conversation_id=conversation_id or "",
+                version_id=version_id,
+                shot_ids_json=json.dumps(list(shot_ids or []), ensure_ascii=False),
+                note=note,
+            )
+            s.add(row)
+            s.commit()
+            s.refresh(row)
+            return row
+
+    def get_pending_approval(self, approval_id: str) -> PendingApproval | None:
+        with self.session() as s:
+            return s.get(PendingApproval, approval_id)
+
+    def latest_pending_approval(
+        self, *, project_id: str, conversation_id: str,
+    ) -> PendingApproval | None:
+        """本会话最新的待确认请求（没有返回 None）。"""
+        with self.session() as s:
+            return (
+                s.query(PendingApproval)
+                .filter(
+                    PendingApproval.project_id == project_id,
+                    PendingApproval.conversation_id == (conversation_id or ""),
+                    PendingApproval.status == "pending",
+                )
+                .order_by(PendingApproval.created_at.desc())
+                .first()
+            )
+
+    def resolve_pending_approval(self, approval_id: str, status: str) -> PendingApproval | None:
+        """把一条请求置为 confirmed / cancelled。非 pending 的不再改（幂等）。"""
+        with self.session() as s:
+            row = s.get(PendingApproval, approval_id)
+            if row is None or row.status != "pending":
+                return row
+            row.status = status
+            row.resolved_at = _now()
+            s.commit()
+            s.refresh(row)
+            return row
 
     # ---- Memory（三层用户记忆）----
 
@@ -1867,6 +1975,7 @@ class Store:
                 s.add(row)
             row.name = task.get("name", "")
             row.status = task.get("status", "pending")
+            row.project_id = task.get("project_id", "")
             row.steps_json = json.dumps(task.get("steps") or [], ensure_ascii=False)
             row.result = task.get("result")
             created = _as_datetime(task.get("created_at"))
@@ -1898,6 +2007,7 @@ def _subagent_task_dict(row: SubAgentTaskRow) -> dict[str, Any]:
         "id": row.id,
         "name": row.name,
         "status": row.status,
+        "project_id": row.project_id or "",
         "steps": _json_load(row.steps_json, []),
         "result": row.result,
         "created_at": row.created_at.isoformat(),

@@ -48,6 +48,7 @@
 | [D-40](#d-40-byok-的能力清单由厂商发现用户勾选而不是我们硬编码) | 设置/模型 | BYOK：音色与对话模型都「拿 key 问厂商 → 勾选启用」；视频模型不可发现则保持手填 | 已定 |
 | [D-41](#d-41-配置权威从-env-翻转为-db-现有-key-幂等入库) | 设置/模型 | DB 是唯一权威、env 降为空库兜底；启动时 .env key 幂等入库（只补缺不覆盖） | 已定 |
 | [D-42](#d-42-内置厂商目录加一步流选厂商填key拉模型勾选) | 设置/模型 | 内置厂商目录 + 一步流：点厂商→贴 key→当场拉模型勾选；拉不到用内置清单兜底；「添加厂商」改「自定义供应商」 | 已定 |
+| [D-43](#d-43-提示词批准改为服务端硬闸门模型只能发起用户确认才生效) | 出片/安全 | 批准改服务端硬闸门：模型只能发起请求，用户点卡片或文本确认才生效；REST 出片闸门 fail-closed + prompt 等值校验 | 已定 |
 | [D-38](#d-38-出片幂等用数据库claim会话互斥用进程内锁) | 稳定性 | 出片用 claim 表（比「查在途」多挡崩溃窗口），会话用进程内锁（run 不跨请求） | 已定 |
 
 ---
@@ -1502,6 +1503,52 @@ cogview（生图专用）、minimax（对话与视频共用一把 key，走视�
 （`/providers/specs`、`/providers/probe`）· `app/llm/base.py`（`chat_models` 字段）·
 `frontend/src/components/settings/SettingsModal.vue`（一步流 UI）·
 `tests/test_provider_catalog.py`（6 用例）· D-40 · D-41 · D-01
+
+---
+
+<a id="d-43-提示词批准改为服务端硬闸门模型只能发起用户确认才生效"></a>
+## D-43 提示词批准改为服务端硬闸门：模型只能发起，用户确认才生效 —— 已定（2026-11-11）
+
+**背景**：全面体检发现「批准 → 出片」这条花钱链路的约束全是提示词级的——
+`approve_video_prompts` 是普通工具，模型理论上可以同一轮自己批准、自己出片
+（8 步工具预算完全够）；小说原文会进上下文，注入面真实存在；编造拦截只拦
+「没调工具却声称做了」，不拦「越权调了工具」。同时 REST 侧出片闸门本身可绕过：
+`submit_video_job` 的校验写成 `if shot and ...`，传一个不属于该作品/不存在的
+version_id 或 shot_id 时 shot 解析为 None，整段闸门被跳过，任意未批准的
+prompt 能直接付费出片。
+
+**选项**：
+① 维持提示词约束，只修 REST 绕过漏洞；
+② 服务端硬闸门：工具只能「发起批准请求」（落 pending_approvals 表 + 对话确认卡片），
+   真正写 approved 只有两条确定性路径——用户点卡片（meta.intent，浏览器发的）
+   或用户下一条消息被保守的确定性检测命中（消息来自 API 请求体，模型伪造不了）；
+③ 每次批准弹浏览器原生 confirm。
+
+**决定**：选 ②，并同步把 REST 闸门改成 fail-closed。
+
+**理由**：①的软约束在「模型可被原文注入」的前提下不成立；③打断对话流且
+无法承载「批准哪些镜头」的信息。②复用改编审阅 resume 的确定性路径模式
+（同一套 meta 机制），多一步交互换来「花钱动作必须有用户的服务端证据」。
+fail-closed 闸门再加一道等值校验：提交的 prompt 必须与该镜头已批准的 prompt
+逐字一致（所有合法调用方传的都是库里那条，只挡「换一条没批过的词硬塞」）。
+`edit_shot_prompt` 编辑后状态重置 needs_review——编辑使批准失效，语义闭环。
+
+**副作用与边界**：
+- 确认检测（`detect_confirmation`）刻意保守：短消息（≤30 字）+ 含确认词 +
+  无否定/疑问标记才算。宁可漏判（用户再点一次卡片）也不误判放行付费。
+- 同会话新请求把旧 pending 置 expired：提示词又出新版本时，旧卡片不该再能批。
+- UI 工作台的逐镜批准按钮不经闸门（点击本身就是用户意愿），保持原样。
+- 历史回放时卡片状态从 DB 回填，刷新后不会挂着失效按钮。
+
+**什么时候该推翻**：若将来引入鉴权/多用户，「用户发起」可以直接由会话身份
+证明，确定性文本检测可退役，只留卡片路径。
+
+**相关**：`app/chat/approvals.py`（apply_approval + detect_confirmation）·
+`app/store.py`（PendingApproval 表）· `app/chat/conductor.py`
+（_handle_approval / _run_deterministic_turn）· `app/chat/tools/video.py`
+（approve 只发起 / edit_shot_prompt / cancel_video_job）· `app/video/service.py`
+（fail-closed 闸门）· `frontend/src/components/ApprovalCard.vue` ·
+`tests/test_chat.py`（7 用例）· `tests/test_video_idempotency.py`（绕过回归 6 用例）· D-36 · D-38
 
 ---
 

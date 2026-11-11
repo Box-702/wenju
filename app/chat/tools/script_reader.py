@@ -29,14 +29,11 @@ from ...media.assets import (
     lookup,
     normalize_style,
 )
-from .context import ToolContext
+from .context import PROMPT_STATUS_LABELS, ToolContext
 
 # 单次返回的软上限（字符）。超了截尾并明说截了——诚实的「略」比静默截断好
 # （与覆盖诚实化、generate_script 的截断话术同一原则）。
 _MAX_RETURN_CHARS = 6000
-
-# 镜头提示词状态的显示词
-_PROMPT_STATE = {"approved": "已批准", "needs_review": "待审", "draft": "草稿"}
 
 
 def build(ctx: ToolContext) -> list:
@@ -87,7 +84,9 @@ def build(ctx: ToolContext) -> list:
             video = "，未出片"
             if job is not None:
                 video = {"succeeded": "，已出片", "failed": "，出片失败"}.get(job.status, "，出片中")
-            state = _PROMPT_STATE.get(str(s.get("prompt_status") or ""), "无提示词")
+            # 统一标签表（context.PROMPT_STATUS_LABELS，四态全集）：此前这张表缺
+            # needs_revision，用户在 UI 标了「需修改」的镜头会被显示成「无提示词」。
+            state = PROMPT_STATUS_LABELS.get(str(s.get("prompt_status") or ""), "无提示词")
             bits = [
                 f"- {s.get('id')}（{s.get('shot_type') or '中景'}｜"
                 f"{float(s.get('duration_sec') or 5):g}s｜提示词{state}{video}）"

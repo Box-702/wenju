@@ -31,26 +31,36 @@ def build(ctx: ToolContext) -> list:
             return get_settings()
 
         def _run(task):
+            def _progress(stage: str, msg: str) -> None:
+                # runner 可能为 None（同步回退路径），update_step 前必须守卫——
+                # 此前无守卫，同步跑一旦上报进度就 AttributeError（2026-11-11 审计；
+                # 对照 screenplay.py 同款写法）。
+                if runner is not None:
+                    runner.update_step(task.id, msg, "running")
+
             return "；".join(run_production(
-                store, llm, _settings(), p.id,
-                on_progress=lambda stage, msg: runner.update_step(task.id, msg, "running"),
+                store, llm, _settings(), p.id, on_progress=_progress,
             ).get("notes") or [])
 
         if runner:
-            task_id = runner.start("生产流水线（小说→提示词）", _run)
+            task_id = runner.start("生产流水线（小说→提示词）", _run, project_id=p.id)
             ctx.collector["payloads"].append({
                 "type": "sub_agent_started",
                 "task_id": task_id,
                 "name": "生产流水线",
                 "project_id": p.id,
             })
-        else:
-            # 无 runner（测试 / 本地直跑）：同步执行，保证链路可单测。
-            _run(type("_T", (), {"id": "local"})())
+            return (
+                "生产流水线已启动：初始化剧本 → 导演拆解 → 视觉风格 → 人物白模与场景图 → 视频提示词，"
+                "已完成的阶段会自动复用。完成后提示词进入「待审」状态，"
+                "用户逐镜批准后我们再决定什么时候生成视频。"
+            )
+        # 无 runner（测试 / 本地直跑）：同步执行完再回复——话术必须与后台路径区分，
+        # 说「已启动」而实际已经跑完是失实汇报（审计修掉的同类问题）。
+        summary = _run(type("_T", (), {"id": "local"})())
         return (
-            "生产流水线已启动：初始化剧本 → 导演拆解 → 视觉风格 → 人物白模与场景图 → 视频提示词，"
-            "已完成的阶段会自动复用。完成后提示词进入「待审」状态，"
-            "你逐镜批准后我们再决定什么时候生成视频。"
+            f"生产流水线已跑完：{summary or '各阶段已就绪'}。"
+            "提示词处于「待审」状态，用户可以批准后决定什么时候出片。"
         )
 
     return [start_production]

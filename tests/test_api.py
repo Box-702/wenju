@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 import app.api as api_mod
 import app.api.video as video_api
+import app.video.service as video_service
 from app.agent.tasks import SubAgentRunner
 from app.main import create_app
 
@@ -21,6 +22,10 @@ def client(store, llm, settings, monkeypatch):
     monkeypatch.setattr(api_mod.deps, "store", lambda: store)
     monkeypatch.setattr(api_mod.deps, "llm", lambda: llm)
     monkeypatch.setattr(api_mod.deps, "settings", lambda: settings)
+    # 出片业务在 app/video/service.py，直接读 app.deps——两处都要替换（见 test_video_idempotency）。
+    import app.deps as app_deps
+    monkeypatch.setattr(app_deps, "store", lambda: store)
+    monkeypatch.setattr(app_deps, "settings", lambda: settings)
     # 后台任务 runner 也要绑到测试库，否则会去连 .env 里的开发库。
     monkeypatch.setattr(
         api_mod.deps, "subagent_runner", lambda: SubAgentRunner(storage=store)
@@ -118,7 +123,7 @@ def test_single_video_generation_requires_approved_prompt(client, sample_text, m
     )
     assert created.status_code == 200, created.text
 
-    monkeypatch.setattr(video_api, "_submit_video_job", lambda job: None)
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
     blocked = client.post(
         f"/api/projects/{project['id']}/video/generate",
         json={
@@ -279,7 +284,7 @@ def test_video_generation_carries_aspect_ratio(client, sample_text, monkeypatch)
     )
     assert created.status_code == 200, created.text
 
-    monkeypatch.setattr(video_api, "_submit_video_job", lambda job: None)
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
 
     # 单发走第二镜（批次第一镜是 shot_..._000，两条路径互不撞车）。
     single = client.post(
@@ -446,7 +451,7 @@ def test_出片时长用导演定的值而不是写死的六秒(client, sample_t
     )
     assert created.status_code == 200, created.text
     version_id = created.json()["id"]
-    monkeypatch.setattr(video_api, "_submit_video_job", lambda job: None)
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
 
     def _submit(params: dict) -> dict:
         r = client.post(

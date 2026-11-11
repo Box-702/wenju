@@ -70,7 +70,7 @@ def build(ctx: ToolContext) -> list:
 
     @tool
     def map_novel(project_id: str, rebuild: str = "") -> str:
-        """为长篇原文建立章节地图：逐章摘要 + 出场人物，作为「选段改编」的依据。超过约 1.5 万字的小说建议先建图。后台运行（章节数多时要几分钟）。已有地图时会拒绝重复建图，除非 rebuild=true（用户明确要求重建）。参数：project_id=项目 id；rebuild=传 "true" 强制重建。"""
+        """为长篇原文建立章节地图：逐章摘要 + 出场人物，作为「选段改编」的依据。超过约 1.4 万字的小说建议先建图（与 LONG_TEXT_CHARS 口径一致）。后台运行（章节数多时要几分钟）。已有地图时会拒绝重复建图，除非 rebuild=true（用户明确要求重建）。参数：project_id=项目 id；rebuild=传 "true" 强制重建。"""
         p = ctx.project(project_id)
         text = (p.raw_text or "").strip()
         if len(text) <= LONG_TEXT_CHARS:
@@ -97,7 +97,7 @@ def build(ctx: ToolContext) -> list:
             return f"章节地图已建成：共 {n} {kind}，可从中挑选改编段落。"
 
         if runner:
-            task_id = runner.start("章节地图", _run)
+            task_id = runner.start("章节地图", _run, project_id=p.id)
             ctx.collector["payloads"].append({
                 "type": "sub_agent_started", "task_id": task_id, "name": "章节地图", "project_id": p.id,
             })

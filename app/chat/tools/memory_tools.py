@@ -26,7 +26,11 @@ def build(ctx: ToolContext) -> list:
         text = (content or "").strip()
         if not text:
             return "要记住的内容不能为空。"
-        kind = kind if kind in ("preference", "decision", "feedback") else "preference"
+        # 非法 kind 直接报错、不静默降级（2026-11-11 审计）：把 feedback 悄悄存成
+        # preference 会让「只在本对话生效」变成「跨项目永久生效」——作用域是语义，
+        # 猜错比拒绝危险（与技能加载器「非法值必须吵」同一哲学）。
+        if kind not in MEMORY_KIND_LABELS:
+            return f"kind 只能是 {' / '.join(MEMORY_KIND_LABELS)}，收到的是「{kind}」。"
         pid = ctx.collector.get("project_id")
         tid = ctx.collector.get("conversation_id")
         scope = {"preference": "global", "decision": "project", "feedback": "conversation"}[kind]
@@ -41,7 +45,7 @@ def build(ctx: ToolContext) -> list:
 
     @tool
     def recall() -> str:
-        """列出当前生效的全部记忆（全局偏好 + 本项目决定 + 本对话反馈），用于回答「你记得什么 / 我之前说过什么」。无需参数。"""
+        """列出当前生效的全部记忆（全局偏好 + 本项目决定 + 本对话反馈），用于回答「你记得什么 / 我之前说过什么」。用户说「忘掉那条记忆」时，用这里给出的 id 调 forget。无需参数。"""
         rows = store.list_memories(
             project_id=ctx.collector.get("project_id"),
             conversation_id=ctx.collector.get("conversation_id"),
@@ -49,10 +53,21 @@ def build(ctx: ToolContext) -> list:
         if not rows:
             return "还没有任何记忆。用户明确说「记住…」时可以用 remember 保存。"
         lines = [
-            f"- （{MEMORY_KIND_LABELS.get(m.kind, m.kind)}）{m.content.strip()}"
+            f"- [{m.id}]（{MEMORY_KIND_LABELS.get(m.kind, m.kind)}）{m.content.strip()}"
             for m in rows[:20] if m.content.strip()
         ]
         return "当前生效的记忆：\n" + "\n".join(lines)
+
+    @tool
+    def forget(memory_id: str) -> str:
+        """删除一条记忆（用户说「忘掉 / 删掉那条「…」的记忆」时调用）。先用 recall 拿到 id 再删，不要凭记忆猜 id。参数：memory_id=recall 列出的方括号 id。"""
+        # store.delete_memory 早就有，此前没暴露成工具——remember 单向（审计缺口）。
+        mid = (memory_id or "").strip()
+        if not mid:
+            return "要删除的记忆 id 不能为空，先用 recall 查 id。"
+        if store.delete_memory(mid):
+            return f"已删除记忆 {mid}。"
+        return f"没有找到记忆 {mid}——先用 recall 确认可见的 id（已删的或不属于当前范围的去不掉）。"
 
     @tool
     def load_skill(name: str) -> str:
@@ -71,4 +86,4 @@ def build(ctx: ToolContext) -> list:
         extra = f"\n\n（该技能还有附属文件：{'、'.join(skill.files)}）" if skill.files else ""
         return skill.body + extra
 
-    return [load_skill, remember, recall]
+    return [load_skill, remember, recall, forget]

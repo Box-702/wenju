@@ -85,12 +85,12 @@ thing the video model sees — anything you leave out, it will invent):
 
 One shot carries one continuous action or one continuous stretch of dialogue.
 
-**硬性要求**：
-- {{lang_rule}}；{{json_note}}。
-- characters 必须是本场人物的子集，只列这一镜画面里真正出现的人。
-- 不要输出额外说明或 Markdown，只输出 JSON。
+**Hard requirements**:
+- {{lang_rule}}; {{json_note}}.
+- `characters` must be a subset of this scene's cast — list only who truly appears in this shot.
+- Output JSON only — no extra commentary or Markdown.
 
-输出 JSON：
+Output JSON:
 ```json
-{"scenes": [{"scene_id": "scene_001", "environment": "（仅有需要时填）", "characters": {"人物名": "（仅有需要时填）"}, "shots": [{"shot_id": "shot_scene_001_000", "characters": ["人物名"], "prompt_body": "（本镜画面调度 + 运镜）"}]}]}
+{"scenes": [{"scene_id": "scene_001", "environment": "(fill only when needed)", "characters": {"character name": "(fill only when needed)"}, "shots": [{"shot_id": "shot_scene_001_000", "characters": ["character name"], "prompt_body": "(this shot's staging + camera move)"}]}]}
 ```

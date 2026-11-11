@@ -81,7 +81,7 @@ def build(ctx: ToolContext) -> list:
                 store.set_version_breakdown(version.id, breakdown_data)
             return result.summary
 
-        task_id = runner.start("导演场景拆解", _run) if runner else "local"
+        task_id = runner.start("导演场景拆解", _run, project_id=p.id) if runner else "local"
         ctx.collector["payloads"].append({
             "type": "sub_agent_started",
             "task_id": task_id,
@@ -121,10 +121,15 @@ def build(ctx: ToolContext) -> list:
                 # 风格指南（含角色造型 / 环境描述）随项目持久化，是下游视觉锚的唯一来源。
                 # 必须 merge 而不是覆盖：资产库里人工指定的音色（voice_casting）与性别
                 # 也存在同一份 JSON 里，整体覆盖会把用户改过的选角冲掉。
-                store.merge_video_style(p.id, result.data.model_dump())
+                patch = result.data.model_dump()
+                # 美术指导**不生产**定妆图注册表，model_dump 永远带一个空
+                # reference_images——浅合并会把它 {} 盖进现值，等于清空整个
+                # 资产库定妆照（重跑一次风格指南就全丢，2026-11-11 审计发现）。
+                patch.pop("reference_images", None)
+                store.merge_video_style(p.id, patch)
             return result.summary
 
-        task_id = runner.start("美术指导", _run) if runner else "local"
+        task_id = runner.start("美术指导", _run, project_id=p.id) if runner else "local"
         ctx.collector["payloads"].append({
             "type": "sub_agent_started",
             "task_id": task_id,
@@ -135,7 +140,7 @@ def build(ctx: ToolContext) -> list:
 
     @tool
     def generate_video_prompts(project_id: str) -> str:
-        """启动摄影指导 Agent，为镜头方案中的每个镜头生成视频生成 Prompt（英文）。需要先完成导演场景拆解。在后台运行。参数：project_id=项目 id。"""
+        """启动摄影指导 Agent，为镜头方案中的每个镜头生成视频生成 Prompt（语言跟随视频厂商，MiniMax 用中文）。需要先完成导演场景拆解。在后台运行。参数：project_id=项目 id。"""
         p = ctx.project(project_id)
         version = store.latest_version(p)
         if version is None:
@@ -199,7 +204,7 @@ def build(ctx: ToolContext) -> list:
                 )
             return result.summary
 
-        task_id = runner.start("摄影指导", _run) if runner else "local"
+        task_id = runner.start("摄影指导", _run, project_id=p.id) if runner else "local"
         ctx.collector["payloads"].append({
             "type": "sub_agent_started",
             "task_id": task_id,
@@ -212,18 +217,20 @@ def build(ctx: ToolContext) -> list:
         )
 
     @tool
-    def generate_reference_assets(project_id: str, notes: str = "") -> str:
-        """启动参考资产流水线：为角色与场景生成定妆图，用视觉模型质检合格后注册为全局视觉参考，供视频生成锁住跨镜一致性。在后台运行。
+    def generate_reference_assets(project_id: str, notes: str = "", entities: str = "") -> str:
+        """启动参考资产流水线：为角色与场景生成定妆图，用视觉模型质检后注册为全局视觉参考，供视频生成锁住跨镜一致性。在后台运行。
 
-        参数：project_id=项目 id；notes=用户写的画面要求，多行，每行「角色名或场景名: 要求」
+        参数：project_id=项目 id；entities=只给这些角色/场景出图（逗号或顿号分隔的名字，
+        例如「林然,咸亨酒店」），留空=全部；notes=用户写的画面要求，多行，每行「角色名或场景名: 要求」
         （例如「林然: 三十五岁男性，深灰风衣，眼神疲惫」）。notes 会拼进对应角色的 prompt，
-        没写到的角色按风格指南里的锚生成。
+        没写到的角色按风格指南里的锚生成。用户点名几个就只生成几个，其余的已有定妆图保持不变。
         """
         p = ctx.project(project_id)
         version = store.latest_version(p)
         if version is None:
             return "还没有剧本版本，请先生成初稿。"
         script = version.script
+        only = [x.strip() for x in str(entities or "").replace("、", ",").split(",") if x.strip()]
 
         def _run(task):
             from ...domain import StyleGuide
@@ -240,20 +247,31 @@ def build(ctx: ToolContext) -> list:
                 script, guide,
                 on_progress=_progress,
                 notes=_parse_notes(notes),
+                entities=only or None,
             )
-            # 写回风格指南：reference_images 与风格锚一起持久化（无需改数据库表）
-            store.merge_video_style(p.id, {"reference_images": refs})
-            return f"已生成并注册 {len(refs)} 张参考资产：{'、'.join(refs)}"
+            if not refs and only:
+                _progress("名单里的名字都对不上现有角色/场景，没有生成任何图")
+                return "名单都对不上：没有生成任何参考图（没有误烧全量）。请核对角色/场景名字后重试。"
+            # 写回风格指南：reference_images 按实体 **深合并**（新图覆盖同实体，
+            # 未点名的旧图原样保留）——浅合并会整字典替换，用户点名 2 个角色
+            # 实际重生成并覆盖整个资产库（2026-11-11 审计修掉的烧钱行为）。
+            # 重读一次现值：生图在后台跑了几分钟，期间可能有人改过风格指南。
+            current = store.get_video_style(p.id) or {}
+            merged_refs = {**(current.get("reference_images") or {}), **refs}
+            store.merge_video_style(p.id, {"reference_images": merged_refs})
+            names = "、".join(refs)
+            return f"已生成并注册 {len(refs)} 张参考资产：{names}"
 
-        task_id = runner.start("参考资产", _run) if runner else "local"
+        task_id = runner.start("参考资产", _run, project_id=p.id) if runner else "local"
         ctx.collector["payloads"].append({
             "type": "sub_agent_started",
             "task_id": task_id,
             "name": "参考资产",
             "project_id": p.id,
         })
+        scope = f"（名单：{'、'.join(only)}）" if only else "（全部角色与场景）"
         return (
-            "正在为角色与场景生成定妆图（会自动做质量把关）。"
+            f"正在生成定妆图{scope}，会自动做质量把关。"
             "完成后镜头会自动带上这些参考图，用于锁住跨镜头的角色与场景一致。"
         )
 

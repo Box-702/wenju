@@ -69,6 +69,16 @@ class ProviderRegistry:
             log.warning("实例化 Provider %s 失败：%s", name, e)
             return None
 
+    def reset(self) -> None:
+        """清空已实例化的 Provider（保留类注册）。
+
+        用户改了 api_providers 表里的 key/base_url 后必须调它：
+        `get_provider` 对已缓存实例只在 api_key 为空时补 key（见上方注释），
+        不调 reset 的话，在跑的 MiniMax 实例会继续用旧 key 出片直到进程重启
+        （chat 侧有 reset_llm 收口，video 侧此前没有对等机制）。
+        """
+        self._instances.clear()
+
     def list_available(self) -> list[dict[str, Any]]:
         """列出所有已注册的 Provider 信息（不含 API Key）。"""
         result: list[dict[str, Any]] = []

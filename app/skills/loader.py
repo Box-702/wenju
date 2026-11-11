@@ -188,13 +188,17 @@ def parse_skill_text(raw: str, *, name_hint: str = "") -> Skill:
 
 
 def _db_skills() -> dict[str, Skill]:
-    """用户导入的技能（存数据库）。数据库不可用时返回空，不影响内置技能。"""
-    try:
-        from ..config import get_settings
-        from ..store import Store
+    """用户导入的技能（存数据库）。数据库不可用时返回空，不影响内置技能。
 
-        store = Store(get_settings().database_url)
-        rows = store.list_user_skills()
+    复用 deps 的 Store 单例而不是每次新建：此前每次调用都
+    ``Store(get_settings().database_url)`` 新建引擎并跑 create_all +
+    _ensure_columns 迁移检查——system_prompt()/load_skill 每个对话轮都要读目录，
+    等于每轮白建一遍数据库引擎（2026-11-11 审计）。
+    """
+    try:
+        from ..deps import store as _store
+
+        rows = _store().list_user_skills()
     except Exception as e:  # noqa: BLE001
         log.warning("读取用户技能失败（忽略）: %s", e)
         return {}

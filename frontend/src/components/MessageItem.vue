@@ -13,6 +13,7 @@ import { computed, ref, watch, onUnmounted } from 'vue'
 import PatchSummaryCard from './PatchSummaryCard.vue'
 import VersionCard from './VersionCard.vue'
 import TaskCard from './TaskCard.vue'
+import ApprovalCard from './ApprovalCard.vue'
 import { mdToHtml, esc } from '../utils/markdown'
 import { STAGE_LABELS } from '../stores/app'
 
@@ -217,6 +218,7 @@ onUnmounted(() => clearTimeout(copiedTimer))
         <PatchSummaryCard v-if="p.type === 'patch_review'" :payload="p" />
         <VersionCard v-else-if="p.type === 'version_applied'" :payload="p" />
         <TaskCard v-else-if="p.type === 'sub_agent_started'" :payload="p" />
+        <ApprovalCard v-else-if="p.type === 'prompt_approval'" :payload="p" />
       </template>
     </template>
   </div>

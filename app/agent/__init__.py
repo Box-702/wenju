@@ -7,7 +7,7 @@
 #   nodes.py   各节点实现（提示词、结构化输出、校验、落版）
 #   tools.py   ReAct 工具集（剧本查询 / 原文检索 / 作者风格 / 版本）
 #   runner.py  薄服务层：对接 HTTP、checkpointer 与运行记录
-#   skills.py  后台任务运行器（剧组工具的任务管理与进度上报）
+#   tasks.py   后台任务运行器（剧组工具的任务管理与进度上报）
 #
 # 为避免循环导入，本 __init__ 不做任何子模块导入；
 # 使用方请显式 `from app.agent.graph import ...`。

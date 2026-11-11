@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.api as api_mod
+import app.video.service as video_service
 from app.agent.tasks import SubAgentRunner
 from app.main import create_app
 from app.media.inline import inline_asset_url, inline_media_urls
@@ -29,6 +30,10 @@ def client(store, llm, settings, monkeypatch):
     monkeypatch.setattr(api_mod.deps, "store", lambda: store)
     monkeypatch.setattr(api_mod.deps, "llm", lambda: llm)
     monkeypatch.setattr(api_mod.deps, "settings", lambda: settings)
+    # 出片业务在 app/video/service.py，直接读 app.deps——两处都要替换（见 test_video_idempotency）。
+    import app.deps as app_deps
+    monkeypatch.setattr(app_deps, "store", lambda: store)
+    monkeypatch.setattr(app_deps, "settings", lambda: settings)
     monkeypatch.setattr(
         api_mod.deps, "subagent_runner", lambda: SubAgentRunner(storage=store)
     )
@@ -151,7 +156,7 @@ def test_manual_assets_merge_with_auto_chain_under_cap(store, client, sample_tex
     )
     store.update_video_job(prev.id, status="succeeded", video_url="https://cdn.example.com/prev.mp4")
 
-    monkeypatch.setattr(video_api, "_submit_video_job", lambda job: None)
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
     resp = client.post(
         f"/api/projects/{pid}/video/generate",
         json={

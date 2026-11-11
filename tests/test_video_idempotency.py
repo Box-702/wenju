@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 import app.api as api_mod
 import app.api.video as video_api
+import app.video.service as video_service
 from app.agent.tasks import SubAgentRunner
 from app.main import create_app
 from app.video.batch import BatchManager
@@ -26,6 +27,13 @@ def client(store, llm, settings, monkeypatch):
     monkeypatch.setattr(api_mod.deps, "store", lambda: store)
     monkeypatch.setattr(api_mod.deps, "llm", lambda: llm)
     monkeypatch.setattr(api_mod.deps, "settings", lambda: settings)
+    # 出片业务已下沉到 app/video/service.py，它直接读 app.deps（全项目装配点）——
+    # api.deps 只是薄转发，两处名字独立，必须都替换。
+    import app.deps as app_deps
+    monkeypatch.setattr(app_deps, "store", lambda: store)
+    monkeypatch.setattr(app_deps, "settings", lambda: settings)
+    monkeypatch.setattr(app_deps, "video_manager", api_mod.deps.video_manager)
+    monkeypatch.setattr(app_deps, "batch_manager", lambda: batch_manager)
     monkeypatch.setattr(
         api_mod.deps, "subagent_runner", lambda: SubAgentRunner(storage=store)
     )
@@ -78,7 +86,7 @@ def _submit(client, project_id, version_id, shot_id, **extra):
 
 def test_repeat_submit_does_not_create_second_job(client, sample_text, monkeypatch):
     """同一镜头重复提交只建一个任务——第二次返回既有任务（reused=True）。"""
-    monkeypatch.setattr(video_api, "_submit_video_job", lambda job: None)
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
 
     project = _project(client, sample_text)
     version_id = _version(client, project["id"], [_shot("shot_a")])
@@ -99,7 +107,7 @@ def test_repeat_submit_does_not_create_second_job(client, sample_text, monkeypat
 
 def test_submit_after_success_creates_new_job(client, sample_text, monkeypatch):
     """上一版已出片的镜头再次提交是合法的「重出片」，不能被幂等挡住。"""
-    monkeypatch.setattr(video_api, "_submit_video_job", lambda job: None)
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
 
     project = _project(client, sample_text)
     version_id = _version(client, project["id"], [_shot("shot_a")])
@@ -122,7 +130,7 @@ def test_submit_after_success_creates_new_job(client, sample_text, monkeypatch):
 
 def test_different_shots_are_not_deduplicated(client, sample_text, monkeypatch):
     """幂等只针对同一镜头：不同镜头各建各的任务。"""
-    monkeypatch.setattr(video_api, "_submit_video_job", lambda job: None)
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
 
     project = _project(client, sample_text)
     version_id = _version(
@@ -130,7 +138,10 @@ def test_different_shots_are_not_deduplicated(client, sample_text, monkeypatch):
     )
 
     assert _submit(client, project["id"], version_id, "shot_a").status_code == 200
-    assert _submit(client, project["id"], version_id, "shot_b").status_code == 200
+    # shot_b 提交它自己存的那条 Prompt：出片闸门（fail-closed）要求提交内容
+    # 与该镜头已批准的 Prompt 等值，拿默认 prompt 投 shot_b 会被 409 挡下。
+    assert _submit(client, project["id"], version_id, "shot_b",
+                   prompt="A wide shot of the street.").status_code == 200
 
     jobs = client.get(f"/api/projects/{project['id']}/video/jobs").json()
     assert len(jobs) == 2
@@ -142,7 +153,7 @@ def test_changed_params_create_new_job(client, sample_text, monkeypatch):
     反过来也成立：显式传的时长**等于**默认建议值时，两次请求是等价的，
     仍然算「同一件事」——幂等比的是最终参数，不是字面参数。
     """
-    monkeypatch.setattr(video_api, "_submit_video_job", lambda job: None)
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
 
     project = _project(client, sample_text)
     version_id = _version(client, project["id"], [_shot("shot_a")])
@@ -161,7 +172,7 @@ def test_changed_params_create_new_job(client, sample_text, monkeypatch):
 
 def test_equal_effective_params_are_deduplicated(client, sample_text, monkeypatch):
     """两次请求最终参数相同 → 视为同一件事，只建一个任务。"""
-    monkeypatch.setattr(video_api, "_submit_video_job", lambda job: None)
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
 
     project = _project(client, sample_text)
     version_id = _version(client, project["id"], [_shot("shot_a")])
@@ -184,7 +195,7 @@ def test_equal_effective_params_are_deduplicated(client, sample_text, monkeypatc
 
 def test_changed_reference_videos_create_new_job(client, sample_text, monkeypatch):
     """换了参考素材再提交也是重出片——不能拿旧任务糊弄过去。"""
-    monkeypatch.setattr(video_api, "_submit_video_job", lambda job: None)
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
 
     project = _project(client, sample_text)
     version_id = _version(client, project["id"], [_shot("shot_a")])
@@ -203,7 +214,7 @@ def test_changed_reference_videos_create_new_job(client, sample_text, monkeypatc
 def test_nonclaim_inflight_job_is_reused(client, sample_text, monkeypatch):
     """非 claim 路径建的在途任务（成片质检测 roll 就直建不占 claim），
     用户再点「出片」时必须复用，不能第三次建档让同一镜头两条任务并行烧钱。"""
-    monkeypatch.setattr(video_api, "_submit_video_job", lambda job: None)
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
 
     project = _project(client, sample_text)
     version_id = _version(client, project["id"], [_shot("shot_a")])
@@ -344,7 +355,7 @@ def test_find_active_video_job_empty_args(store):
 
 def test_second_batch_is_rejected_while_one_is_running(client, sample_text, monkeypatch):
     """同一项目同时只允许一个批次在推进——两个批次会重复提交同一批镜头。"""
-    monkeypatch.setattr(video_api, "_submit_video_job", lambda job: None)
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
 
     project = _project(client, sample_text)
     _version(client, project["id"], [_shot("shot_a"), _shot("shot_b", "A wide shot.")])
@@ -361,3 +372,91 @@ def test_second_batch_is_rejected_while_one_is_running(client, sample_text, monk
     )
     assert second.status_code == 409, second.text
     assert "重复计费" in second.json()["detail"]
+
+
+# ---------- 出片闸门 fail-closed（2026-11-11 审计回归） ----------
+#
+# 旧实现的漏洞：`if shot and shot.get("video_prompt") and ...` —— 解析不到
+# 镜头时整个闸门被跳过。传不存在的 version_id / 别的项目的 version_id /
+# 不存在的 shot_id，都能带着**任意未批准的 prompt** 直接提交付费生成。
+# 下面每条用例锁死一个绕过向量。
+
+
+def test_submit_rejects_missing_version_id(client, sample_text, monkeypatch):
+    """不带 version_id 直接拒绝（旧版会回落到最新版本然后按 shot 解析跳过闸门）。"""
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
+    project = _project(client, sample_text)
+    r = client.post(
+        f"/api/projects/{project['id']}/video/generate",
+        json={"shot_id": "shot_a", "provider": "minimax", "model": "default",
+              "prompt": "anything at all"},
+    )
+    assert r.status_code == 400
+    assert "version_id" in r.json()["detail"]
+
+
+def test_submit_rejects_unknown_version(client, sample_text, monkeypatch):
+    """不存在的 version_id：旧版解析成 None → 闸门整段跳过；现在必须 404。"""
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
+    project = _project(client, sample_text)
+    r = client.post(
+        f"/api/projects/{project['id']}/video/generate",
+        json={"shot_id": "shot_a", "provider": "minimax", "model": "default",
+              "prompt": "anything at all", "version_id": "vver_does_not_exist"},
+    )
+    assert r.status_code == 404
+    assert "不属于该作品" in r.json()["detail"]
+
+
+def test_submit_rejects_cross_project_version(client, sample_text, monkeypatch):
+    """拿 B 作品的已批准版本在 A 作品下提交：必须 404（跨作品混数据 + 计费错乱）。"""
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
+    proj_a = _project(client, sample_text)
+    proj_b = client.post("/api/projects/import",
+                         data={"raw_text": sample_text, "title": "另一部"}).json()
+    version_b = _version(client, proj_b["id"], [_shot("shot_a")])
+
+    r = client.post(
+        f"/api/projects/{proj_a['id']}/video/generate",
+        json={"shot_id": "shot_a", "provider": "minimax", "model": "default",
+              "prompt": "A close-up shot of Qi Xia.", "version_id": version_b},
+    )
+    assert r.status_code == 404
+
+
+def test_batch_rejects_cross_project_version(client, sample_text, monkeypatch):
+    """批次同款闸门：B 作品的 version_id 不能在 A 作品下开批次。"""
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
+    proj_a = _project(client, sample_text)
+    proj_b = client.post("/api/projects/import",
+                         data={"raw_text": sample_text, "title": "另一部"}).json()
+    version_b = _version(client, proj_b["id"], [_shot("shot_a")])
+
+    r = client.post(
+        f"/api/projects/{proj_a['id']}/video/generate-batch",
+        json={"mode": "auto", "provider": "minimax", "model": "default",
+              "version_id": version_b},
+    )
+    assert r.status_code == 404
+    assert "不属于该作品" in r.json()["detail"]
+
+
+def test_submit_rejects_unknown_shot_in_version(client, sample_text, monkeypatch):
+    """版本存在但 shot_id 不在里面：旧版 shot=None → 跳过闸门；现在 404。"""
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
+    project = _project(client, sample_text)
+    version_id = _version(client, project["id"], [_shot("shot_a")])
+    r = _submit(client, project["id"], version_id, "shot_not_in_version")
+    assert r.status_code == 404
+    assert "不在该方案里" in r.json()["detail"]
+
+
+def test_submit_rejects_prompt_not_matching_approved(client, sample_text, monkeypatch):
+    """提交内容与已批准 Prompt 不一致 = 换一条没批过的词硬塞：409。"""
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
+    project = _project(client, sample_text)
+    version_id = _version(client, project["id"], [_shot("shot_a")])
+    r = _submit(client, project["id"], version_id, "shot_a",
+                prompt="A totally different, never-approved prompt.")
+    assert r.status_code == 409
+    assert "不一致" in r.json()["detail"]

@@ -37,7 +37,7 @@ def start_production(project_id: str) -> dict[str, object]:
         )
         return "；".join(result.get("notes") or [])
 
-    task_id = runner.start("生产流水线（小说→提示词）", _run)
+    task_id = runner.start("生产流水线（小说→提示词）", _run, project_id=project_id)
     return {
         "task_id": task_id,
         "stages": [{"key": k, "label": v} for k, v in STAGE_LABELS.items()],
@@ -75,7 +75,7 @@ def start_reference_assets(project_id: str) -> dict[str, object]:
         store.merge_video_style(p.id, {"reference_images": refs})
         return f"已生成 {len(refs)} 张资产图：{'、'.join(refs)}"
 
-    task_id = runner.start("生成资产图", _run)
+    task_id = runner.start("生成资产图", _run, project_id=p.id)
     return {"task_id": task_id, "started": True}
 
 

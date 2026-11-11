@@ -38,6 +38,9 @@ class SubAgentTask:
     status: str = "pending"  # pending / running / done / failed
     steps: list[AgentStep] = field(default_factory=list)
     result: str | None = None
+    # 任务归属的作品（2026-11-11 权限审计）：此前任务表无项目标签，
+    # get_status 拿全局 list_tasks() 会把 A 作品的出片任务报进 B 作品的对话。
+    project_id: str = ""
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
 
@@ -46,6 +49,7 @@ class SubAgentTask:
             "id": self.id,
             "name": self.name,
             "status": self.status,
+            "project_id": self.project_id,
             "steps": [{"label": s.label, "status": s.status, "detail": s.detail} for s in self.steps],
             "result": self.result,
             "created_at": self.created_at.isoformat(),
@@ -91,19 +95,22 @@ class SubAgentRunner:
             log.warning("后台任务 %s 落库失败：%s", task.id, e)
 
     def _gen_id(self) -> str:
-        self._counter += 1
-        return f"task_{self._counter:04d}"
+        # 自增在锁内（2026-11-11 审计）：此前在锁外，并发 start 理论上撞 id。
+        with self._lock:
+            self._counter += 1
+            return f"task_{self._counter:04d}"
 
     def start(
         self,
         name: str,
         fn: Callable[[SubAgentTask], str],
         *,
+        project_id: str = "",
         on_done: Callable[[SubAgentTask], None] | None = None,
     ) -> str:
-        """启动一个后台任务。返回 task_id。"""
+        """启动一个后台任务。返回 task_id。project_id 标记归属（进度按项目过滤用）。"""
         task_id = self._gen_id()
-        task = SubAgentTask(id=task_id, name=name, status="running")
+        task = SubAgentTask(id=task_id, name=name, status="running", project_id=project_id)
         with self._lock:
             self._tasks[task_id] = task
         self._persist(task)
@@ -131,9 +138,14 @@ class SubAgentRunner:
         with self._lock:
             return self._tasks.get(task_id)
 
-    def list_tasks(self, *, active_only: bool = False) -> list[SubAgentTask]:
+    def list_tasks(self, *, active_only: bool = False, project_id: str | None = None) -> list[SubAgentTask]:
+        """列任务。project_id 给了就只列该作品的（get_status 用，防跨作品泄露）；
+        顺手清理超龄的已完成任务（此前 cleanup() 无人调用，_tasks 无限增长）。"""
+        self.cleanup()
         with self._lock:
             tasks = list(self._tasks.values())
+        if project_id is not None:
+            tasks = [t for t in tasks if t.project_id == project_id]
         if active_only:
             tasks = [t for t in tasks if t.status in ("pending", "running")]
         tasks.sort(key=lambda t: t.created_at, reverse=True)

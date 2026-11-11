@@ -82,7 +82,7 @@ def _wire_video_qa() -> None:
     """
     import logging
 
-    from .api.video import _job_params, _resolve_video_provider
+    from .video.service import _job_params, _resolve_video_provider
     from .deps import store as get_store
     from .deps import video_manager
     from .video.qa import reroll_if_needed
@@ -192,10 +192,16 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
-    # 开发环境 CORS（前端可能用不同端口）。
+    # CORS：只放行 Vite 开发源（5173）。生产是同源托管，不走 CORS。
+    # 此前 allow_origins=["*"] + credentials：任意打开的网页都能跨源操控本机
+    # 服务（读剧本、删作品、付费出片、改厂商 base_url 外带 key）——收紧白名单
+    # 是 2026-11-11 权限审计的第一项。服务绑 127.0.0.1 只防局域网，防不了浏览器。
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

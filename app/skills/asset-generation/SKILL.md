@@ -45,12 +45,17 @@ audience: main
 
 ## 三、生成
 
-- **定妆照 / 场景图**：`generate_reference_assets(project_id, notes)`
+- **定妆照 / 场景图**：`generate_reference_assets(project_id, notes, entities)`
+  - `entities`：**点名范围**（逗号分隔的角色名/场景名）——只生成点名的那几个，
+    未点名的已有定妆图原样保留；留空才等于全部。确认清单里有谁，这里就填谁。
   - `notes` 每行一条：`名字: 要求`（名字用角色名/场景名，或 id）。
-  - 要求会拼进该对象自己的 prompt；没写到的对象按风格指南的锚生成。
+  - 要求会拼进该对象自己的 prompt；点名了但没写要求的对象按风格指南的锚生成。
+  - 名单里的名字都对不上角色/场景时，工具会**什么都不生成**并如实报告——
+    不要改成不传 entities 来「试试」，那会变成全量重生成（花用户的钱）。
 - **音色**：`clone_voice(project_id, character, sample_asset_id, description, name)`
-  - `sample_asset_id` 是资产库里那段样本音频的 id——先让用户在资产库「导入」里上传音频，
-    再把 id 传进来（不要让模型自己编 id）。
+  - `sample_asset_id` 是资产库里那段样本音频的 id——用 `list_assets(project_id, kind="audio")`
+    查真实 id（用户没上传就先请他在资产库「导入」里上传）；不要让模型自己编 id。
+    样本必须属于本项目，跨项目的 id 会被拒绝。
   - `description` 是用户写的声音描述，会作为克隆时的参考文本。
 
 一次只生成用户确认过的那一批；不要顺手多生成几个。
@@ -76,4 +81,4 @@ audience: main
 
 # 相关工具
 
-`generate_reference_assets` · `clone_voice` · `get_status` · `load_skill`
+`generate_reference_assets` · `clone_voice` · `list_assets` · `get_status` · `load_skill`

@@ -29,6 +29,18 @@ ADAPT_TYPE_LABELS = {
     "other": "自定义",
 }
 
+# 镜头提示词状态 -> 中文标签：**单一事实来源**（2026-11-11 权限审计）。
+# 此前 video.py 与 script_reader.py 各有一份标签表、枚举还互相缺项——
+# 生产端写 needs_review、UI 审阅写 needs_revision，两边各认一头：
+# 用户在界面标了「需修改」的镜头，read_script 会显示成「无提示词」。
+# 四态全集：draft（DP 草稿）/ needs_review（待审）/ needs_revision（用户要求修改）/ approved。
+PROMPT_STATUS_LABELS = {
+    "draft": "草稿",
+    "needs_review": "待审",
+    "needs_revision": "需修改",
+    "approved": "已批准",
+}
+
 
 class Collector(TypedDict, total=False):
     """工具通过闭包写入的运行期收集器（图状态保持干净可序列化）。"""
@@ -92,7 +104,6 @@ def main_skill_names() -> set[str]:
     return {m.name for m in list_skills("main")}
 
 
-def short(text: str, limit: int) -> str:
-    """截断展示文本：压平空白，超长加省略号。工具轨迹与逐镜清单共用。"""
-    text = " ".join((text or "").split())
-    return text if len(text) <= limit else text[:limit] + "…"
+# 截断助手唯一实现在内核（chat/loop.short）：此前这里与 loop._brief 是两份
+# 逐字重复的函数（2026-11-11 审计去重）。工具侧 import 路径不变。
+from ..loop import short  # noqa: E402,F401

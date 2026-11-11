@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
@@ -38,6 +39,27 @@ MAX_TOOL_STEPS = 8
 
 #: 消息里的文本截断长度（事件上报用）
 _EVENT_TEXT_LIMIT = 160
+
+#: 轮内上下文的字符预算。按字符估算而不是 token（2026-11-11）：全仓不引
+#: tiktoken——它也不覆盖 deepseek / 智谱 / MiniMax 的词表，算出来的数只会
+#: 给人一种虚假的精确；中文场景下字符数是够用且保守的近似（约 1 字 ≈ 1 token）。
+#: 超预算时从最早的历史开始降级丢弃（保 system / 摘要 / 本轮输入 / 最近轨迹）。
+_TURN_CHAR_BUDGET = 120_000
+
+#: 回灌给模型的工具结果上限。读类工具自带限额（read_source 4000 字等），
+#: 这条兜底防的是**没有自觉限额的工具**把整份大产物（分镜表 JSON 之类）
+#: 原样灌进轮内上下文——每一步都会重发它。
+_TOOL_RESULT_LIMIT = 6000
+
+#: 回灌前 tool_calls 参数里超长字符串的截断点。create_project 的 raw_text
+#: 是整部小说（可能几万字），执行用的是完整 args，但留在 messages 里给
+#: 模型「看参数」的副本只需要证明它做过这件事——整本小说每步重发一遍
+#: 是轮内上下文最猛的一个爆炸源（见 loop.py 审计注释）。
+_ARG_TEXT_LIMIT = 200
+
+#: 单轮对话的 wall-clock 预算（秒）：8 步工具 × 每步一次模型调用 + 可能的
+#: 编造拦截重跑，没有整轮预算的话一个请求可以挂很久（模型 SDK 默认超时很长）。
+_TURN_WALL_CLOCK = 300.0
 
 
 # ---------------------------------------------------------------------
@@ -221,6 +243,10 @@ class AgentLoop:
             return
 
         bound = model.bind_tools(self.tools) if self.tools else model
+        # 整轮时间预算：超限按「工具轮数超限」同款方式优雅收尾（保正文、不再开新步）。
+        deadline = time.monotonic() + _TURN_WALL_CLOCK
+        # 基线边界：进来时已有 system/摘要/历史/本轮输入；预算兜底只动这个边界之前。
+        keep_from = len(messages)
 
         for _step in range(self.max_steps + 1):
             # 最后一轮不再执行工具：把预算收在回答上，而不是又开一轮工具。
@@ -230,7 +256,14 @@ class AgentLoop:
                 yield LoopEvent("_complete", {"text": text})
                 yield LoopEvent("token", {"delta": text})
                 return
+            if time.monotonic() > deadline:
+                text = "这一轮跑的时间有点长，先停在这里。你可以继续说一句，我接着处理。"
+                yield LoopEvent("_truncated", {})
+                yield LoopEvent("_complete", {"text": text})
+                yield LoopEvent("token", {"delta": text})
+                return
 
+            keep_from = _fit_turn_budget(messages, keep_from)
             resp = yield from self._call(bound, messages, stream=stream)
             text = _msg_text(getattr(resp, "content", None))
             calls = list(getattr(resp, "tool_calls", None) or [])
@@ -246,18 +279,18 @@ class AgentLoop:
                 call_id = str(call.get("id") or "")
                 yield LoopEvent("tool_call", {
                     "name": name,
-                    "args": _brief(json.dumps(args, ensure_ascii=False), 200),
+                    "args": short(json.dumps(args, ensure_ascii=False), 200),
                 })
                 result = self._invoke_tool(name, args)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call_id,
                     "name": name,
-                    "content": result,
+                    "content": _clamp(result, _TOOL_RESULT_LIMIT, keep_newlines=True),
                 })
                 yield LoopEvent("tool_result", {
                     "name": name,
-                    "summary": _brief(result, _EVENT_TEXT_LIMIT),
+                    "summary": short(result, _EVENT_TEXT_LIMIT),
                 })
 
     def _call(self, bound: Any, messages: list[dict[str, Any]], *, stream: bool):
@@ -290,7 +323,11 @@ class AgentLoop:
                 {
                     "id": str(c.get("id") or ""),
                     "name": str(c.get("name") or ""),
-                    "args": c.get("args") if isinstance(c.get("args"), dict) else {},
+                    # 参数副本做超长截断：create_project(raw_text=整部小说) 的 args
+                    # 会随每一步 _to_lc_messages 原样重发——执行用的是调用循环里的
+                    # 完整 args（_invoke_tool 先于这条 append 之外拿到 calls），
+                    # 这里只是留在上下文里给模型「回看自己说过什么」的存根。
+                    "args": _clamp_args(c.get("args") if isinstance(c.get("args"), dict) else {}),
                 }
                 for c in calls
             ]
@@ -302,13 +339,15 @@ class AgentLoop:
         if tool is None:
             return f"未知工具：{name}。可用工具：{', '.join(sorted(self._by_name)) or '无'}"
         # 模型常把 project_id 漏掉或传空（实测：get_status("") 会答「还没有剧本版本」）。
-        # 这里是唯一的收口处：所有作品级工具统一补上当前作品。
-        # 当前作品**动态读 collector**：首页直聊时本轮 create_project 之后，
+        # 这里是唯一的收口处：所有声明了 project_id 的作品级工具统一补上当前作品。
+        # 当前作品**动态读 collector**：本轮 create_project 之后，
         # 同一轮里的后续工具（generate_script 等）漏传 project_id 也能兜到新作品上。
+        # 此前只补「键存在但为空」，模型整个漏键时必传参数的工具仍在 pydantic
+        # 校验层报缺参（注释里宣称的「唯一收口处」言过其实，2026-11-11 补全）。
         pid = self.current_project_id or (self.collector or {}).get("project_id") or ""
-        if pid:
+        if pid and "project_id" in (getattr(tool, "args", None) or {}):
             args = dict(args or {})
-            if "project_id" in args and not str(args.get("project_id") or "").strip():
+            if not str(args.get("project_id") or "").strip():
                 args["project_id"] = pid
         try:
             result = tool.invoke(args)
@@ -320,8 +359,81 @@ class AgentLoop:
         return str(result)
 
 
-def _brief(text: Any, limit: int) -> str:
-    """压成一行短文本（事件里展示用）。"""
+# ---------------------------------------------------------------------
+# 截断小件（内核专用；tools/context.short 从这里再导出，一份实现）
+# ---------------------------------------------------------------------
+
+
+def _msg_chars(m: dict[str, Any]) -> int:
+    """一条消息的字符规模估算：文本长度；内容块里的图片按 2000 字当量粗估。"""
+    content = m.get("content")
+    total = 0
+    if isinstance(content, str):
+        total += len(content)
+    elif isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    total += len(str(block.get("text") or ""))
+                elif block.get("type") == "image_url":
+                    total += 2000
+    for c in m.get("tool_calls") or []:
+        if isinstance(c, dict):
+            total += sum(len(str(v)) for v in (c.get("args") or {}).values())
+    return total
+
+
+def _clamp(text: str, limit: int, *, keep_newlines: bool = False) -> str:
+    """截断长文本并如实标注（诚实的「已截断」比静默截断好——同 refs 的原则）。"""
+    if len(text) <= limit:
+        return text
+    tail = "\n（结果过长已截断；需要细节请用对应读取工具分段查看）" if keep_newlines \
+        else " …（参数过长已截断，全文以工具返回为准）"
+    return text[:limit] + tail
+
+
+def _clamp_args(args: dict[str, Any]) -> dict[str, Any]:
+    """tool_calls 参数副本：超长字符串（整本小说）截成存根，短值原样。"""
+    return {
+        k: (v if not isinstance(v, str) or len(v) <= _ARG_TEXT_LIMIT else _clamp(v, _ARG_TEXT_LIMIT))
+        for k, v in args.items()
+    }
+
+
+def _fit_turn_budget(messages: list[dict[str, Any]], keep_from: int) -> int:
+    """轮内字符预算兜底：超预算时丢**基线历史**里最早的消息。返回新的 keep_from。
+
+    keep_from = 本轮开始时的消息条数（基线边界）：只动边界之前的历史，
+    本轮轨迹（assistant + tool 成对）绝不碰——拆开会让 OpenAI 协议报错。
+    system 消息（含 [此前对话摘要]）也不动。正常轮内消息到不了这个量
+    （工具结果有 _TOOL_RESULT_LIMIT、参数有 _ARG_TEXT_LIMIT），触发即说明
+    出现了没自觉限额的大产物——丢最旧历史保当前轮可用。
+    """
+    guard = 0
+    while sum(_msg_chars(m) for m in messages) > _TURN_CHAR_BUDGET and guard < 200:
+        guard += 1
+        dropped = False
+        for i, m in enumerate(messages[:keep_from]):
+            if m.get("role") not in ("user", "assistant"):
+                continue
+            # 本轮输入（基线里最后一条 user 消息）不能丢——丢了模型就不知道用户说了什么。
+            if i == keep_from - 1 and m.get("role") == "user":
+                break
+            del messages[i]
+            keep_from -= 1
+            dropped = True
+            break
+        if not dropped:
+            break
+    return keep_from
+
+
+def short(text: Any, limit: int) -> str:
+    """压成一行短文本并截断（工具轨迹、事件展示共用）。
+
+    唯一实现（2026-11-11 去重）：此前 loop._brief 与 tools/context.short
+    是两份逐字相同的函数。context 层从这里再导出，保持工具侧 import 不破。
+    """
     s = " ".join(str(text or "").split())
     return s if len(s) <= limit else s[: limit - 1] + "…"
 
@@ -332,6 +444,7 @@ __all__ = [
     "LoopResult",
     "MAX_TOOL_STEPS",
     "assistant_message",
+    "short",
     "system_message",
     "user_message",
 ]

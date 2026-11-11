@@ -11,7 +11,7 @@
 资产与版本全部落库。
 
 ```
-用户 ←→ 对话 Agent（手写工具循环，23 个工具）
+用户 ←→ 对话 Agent（手写工具循环，27 个工具）
           ├── 改编工作流（LangGraph 7 节点 + interrupt 人审）→ 剧本版本
           ├── 剧组三函数（导演 → 美术 → 摄影）→ 分镜 / 视觉锚 / 视频提示词
           ├── 出片（Provider 抽象 → 队列 → 巡检 → 拼接 → 配音字幕）
@@ -39,7 +39,7 @@
 | 想改 | 去哪 |
 |---|---|
 | 写作 / 分镜规则 | `app/skills/*/SKILL.md`（不用动代码，改完跑 `python -m evals.run`） |
-| 对话行为与工具 | `app/chat/loop.py`（内核）+ `app/chat/tools/*`（23 个工具按域拆） |
+| 对话行为与工具 | `app/chat/loop.py`（内核）+ `app/chat/tools/*`（27 个工具按域拆） |
 | 改编流程 | `app/agent/graph.py` + `nodes.py` |
 | 模型厂商 | `app/llm/providers.py` 加一条 `ProviderSpec` |
 | 出片供应商 | `app/video/providers/` + `registry.py` |
@@ -77,11 +77,11 @@ app/
 | `api/` | 2646 | 9 个域模块（+ common/schemas/deps），83 条路由 |
 | `video/` | 2518 | Provider 适配 + 队列 + 巡检 + 拼接 + 合成 |
 | `crew/` | 2262 | 三个剧组角色的编排（提示词正文已外置到 `skills/`） |
-| `chat/` | 2528 | 内核 332 行 + 编排 826 行 + 23 个工具实现 |
+| `chat/` | 2528 | 内核 332 行 + 编排 826 行 + 27 个工具实现 |
 | `media/` | 1846 | 参考资产 / 配音 / 字幕 / 资产实体层 |
 | `agent/` | 1678 | 7 节点图 + 后台任务运行器 |
 | `llm/` | 1302 | 门面 + 厂商表 + 视觉/文生图/TTS 客户端 |
-| `skills/` | 284 | 只有加载器；**长指令在 8 个 SKILL.md 里**（不计入 Python 行数） |
+| `skills/` | 284 | 只有加载器；**长指令在 9 个 SKILL.md 里**（不计入 Python 行数） |
 | `store.py` | 1795 | 16 张表的持久化层（含出片意图 claim 表 `video_job_claims`，见 D-38） |
 | `domain.py` | 614 | Pydantic 领域模型（含 id 格式约束） |
 
@@ -230,7 +230,7 @@ OpenAI 兼容服务都支持它——**MiniMax 实测报 `2013 unknown response_
 
 先给结论，因为这块最容易想歪：
 
-> **只有一个 LLM Agent（对话编排层），调度 23 个工具。剧组三个「角色」是函数，不是进程。**
+> **只有一个 LLM Agent（对话编排层），调度 27 个工具。剧组三个「角色」是函数，不是进程。**
 > **「按需加载」只发生在主 Agent 那一层；剧组三个角色的技能是每次全量拼进系统提示的。**
 
 为什么不做进程级多 Agent（每个角色独立上下文、独立工具集、互相通信）：它们各自只做
@@ -242,7 +242,7 @@ OpenAI 兼容服务都支持它——**MiniMax 实测报 `2013 unknown response_
 
 | Agent | 角色 | 职责 |
 |---|---|---|
-| **ChatConductor** | 前厅 / 调度 | 绑定 23 个工具理解用户意图，把请求路由到确定性流水线或后台剧组任务 |
+| **ChatConductor** | 前厅 / 调度 | 绑定 27 个工具理解用户意图，把请求路由到确定性流水线或后台剧组任务 |
 
 **内核是手写的显式循环**（`app/chat/loop.py`，2026-11-05 替换掉 LangGraph 的 StateGraph + ToolNode）：
 
@@ -262,19 +262,27 @@ for step in range(max_steps):        # 上限 8 轮，防止无限工具调用
 关键设计：**审阅动作走确定性路径**（accept/reject 不经过 LLM），避免「对话式工具调用不可靠」导致误操作。
 
 系统提示分两层：**触发器留在提示词**（决定该调哪个工具，每轮都要用），**执行细则进技能**
-（`audience: main` 的四个 SKILL.md，由 `load_skill` 工具按需拉）。见 [`DECISIONS.md` D-14](DECISIONS.md)。
+（`audience: main` 的五个 SKILL.md，由 `load_skill` 工具按需拉）。见 [`DECISIONS.md` D-14](DECISIONS.md)。
 
-23 个工具的实现按域拆在 `app/chat/tools/`（conductor 只留编排，`build_chat_tools` 是装配壳）：
-`screenplay.py`（项目与改编）/ `crew.py`（剧组）/ `video.py`（出片与素材）/ `memory_tools.py`（记忆与技能），
-跨域小件（ToolContext、状态标签、文本截断）收在 `context.py`。分组（2026-11-01 由 26 个合到 19 个，此后随新增工具回到 22 个）：
+27 个工具的实现按域拆在 `app/chat/tools/`（conductor 只留编排，`build_chat_tools` 是装配壳）：
+`screenplay.py`（项目与改编）/ `source.py`（读原文）/ `script_reader.py`（读作品）/
+`production.py`（一键流水线）/ `crew.py`（剧组）/ `asset.py`（资产与音色）/
+`video.py`（出片与素材）/ `memory_tools.py`（记忆与技能），
+跨域小件（ToolContext、状态标签、文本截断）收在 `context.py`。分组（2026-11-11 补全为 27 个）：
 
 | 组 | 工具 |
 |---|---|
 | 项目与改编 | `create_project` `map_novel` `propose_arcs` `generate_script` `run_adaptation` `ask` |
-| 剧组与素材 | `breakdown_scenes` `generate_style_guide` `generate_video_prompts` `generate_reference_assets` |
-| 出片 | `approve_video_prompts` `submit_videos` `rerun_video` `finalize_film` |
-| 状态与记忆 | `get_status` `remember` `recall` |
+| 读原文 / 读作品 | `read_source` `search_source` `read_script` |
+| 剧组与素材 | `breakdown_scenes` `generate_style_guide` `generate_video_prompts` `generate_reference_assets` `clone_voice` `list_assets` |
+| 一键流水线 | `start_production` |
+| 出片 | `approve_video_prompts` `submit_videos` `rerun_video` `edit_shot_prompt` `cancel_video_job` `finalize_film` |
+| 状态与记忆 | `get_status` `remember` `recall` `forget` |
 | 技能 | `load_skill` |
+
+**批准是服务端硬闸门（D-43）**：`approve_video_prompts` 只「发起批准请求」（落 pending + 对话确认卡片），
+真正写 `approved` 只有两条确定性路径——用户点卡片或回复「批准」（见 `app/chat/approvals.py`）。
+模型不能自己批准自己出片。`edit_shot_prompt` 改完该镜回到待审，需重新批准。
 
 **查询只有一个入口 `get_status(project_id, detail="summary|shots")`。** 原来的五个查询工具
 （`get_script_overview` / `list_video_shots` / `get_video_jobs` / `check_finalize` /
@@ -561,6 +569,23 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
 | `app/api/video.py` | `cancel` 只改本地状态，未通知服务商 | 先尽力调用 provider 的 `cancel_job`，失败不影响本地状态收尾 |
 | `app/api/system.py` | `/status` 用 openai/deepseek 三元表达式猜模型名（漏了智谱） | 改为读 `LLM.describe()` 的解析结果，另附视觉模型状态 |
 
+本轮（2026-11-11 全面体检）修掉的安全与一致性问题：
+
+| 位置 | 原问题 | 处理 |
+|---|---|---|
+| `app/api/video.py` → `app/video/service.py` | 出片闸门可绕过：解析不到镜头就跳过校验，任意未批准 prompt 能付费出片 | 闸门 fail-closed（必须带 version_id、镜头必须存在且已批准、prompt 与批准内容等值）；业务下沉到 `video/service.py`，消除 sweeper / chat 工具对 api 层的反向依赖 |
+| `app/main.py` | CORS `allow_origins=["*"]` + credentials：任意网页可跨源操控本机服务 | 收紧为 Vite dev 源白名单（生产同源托管不走 CORS） |
+| 批准链路 | `approve_video_prompts` 是普通工具，模型可同轮自批自出（只有提示词约束） | 服务端硬闸门 D-43：工具只发起请求，用户点卡片/文本确认才生效 |
+| `app/memory.py` | 滚动摘要 `covered_count` 绝对计数与 200 条读库窗口错位，长对话摘要永久停摆、中段历史静默丢失 | 改 `covered_until_id` 消息锚点；锚点滚出窗口退化为窗口内重摘（合并式摘要去重） |
+| `app/chat/loop.py` | 工具结果/整本小说参数原样回灌上下文，无 token 预算、无超时 | 工具结果 6000 字截断、超长参数截成存根、120k 字符预算丢最旧历史、模型 timeout=120s + 整轮 300s wall-clock |
+| `app/chat/tools/crew.py` | `generate_reference_assets` 无范围参数：用户确认 2 个角色实际全库重生成并覆盖 | 加 `entities` 参数；写回改按实体深合并（顺带修掉美术指导 `model_dump()` 空 `reference_images` 浅合并清空定妆照注册表的 bug） |
+| `app/video/assemble.py` | `eval()` 作用于 ffprobe 解析用户上传视频的字段（任意代码执行原语） | 改 `split("/")` 显式解析帧率 |
+| 多处 | `prompt_status` 枚举三处漂移（needs_review/needs_revision/draft 各认一头），UI 标「需修改」的镜头在 read_script 显示「无提示词」 | 四态标签表统一收进 `tools/context.py` 单一来源 |
+| `app/agent/tasks.py` | 后台任务无项目标签，A 作品对话能看到 B 作品任务 | `SubAgentTask.project_id` + `list_tasks(project_id=)` 过滤 |
+| `app/chat/tools/asset.py` | `clone_voice` 不校验样本归属，可拿 B 作品音频给 A 角色克隆 | 加 `asset.project_id == project_id` 校验 |
+| `app/api/assets.py` | 素材删除/回放直接拼 `file_path`，DB 里带 `../` 可删工作区外文件 | `_workspace_file()` containment 校验（同 `workspace.resolve_file` 模式） |
+| `app/video/registry.py` | 改 key 后已缓存的 MiniMax 实例继续用旧 key 出片到重启 | `reset()` + provider 增删改时清实例缓存（与 `reset_llm` 对齐） |
+
 仍有待处理：
 
 | 位置 | 问题 | 影响 | 建议 |
@@ -568,7 +593,7 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
 | 全仓 | `ruff` 全量检查有 431 处存量（大头是 `E501` 长行 348 处、`I001` 导入序 39 处）——**2026-11-10 已把「致命集」进 CI**：`ruff check --select E9,F63,F7,F82,B`（语法错误、未定义名、bugbear）只拦真 bug，全量规则照旧红 | 全量进 CI 会红到没人愿意修；致命集先让「真 bug 会被拦住」这件事成立 | 存量债逐步清：`--fix` 可自动修 76 处（导入序/未用导入），长行需要人工判断拆法。`app/api/`、`app/llm/` 这两个新目录目前是全绿的 |
 | `app/chat/` | 每轮对话重建 `AgentLoop` 与全部工具闭包 | 实测开销可忽略（纯对象装配，无 I/O；LLM 调用才是耗时大头） | 仅在压测显示瓶颈后再做，需要先把 collector 从闭包挪进显式状态 |
 | `app/agent/tasks.py` | 进行中的任务只有内存态（历史已落库） | 重启后运行中的任务面板清空——这是真实情况，不假装还活着 | 若要多实例部署再接队列 |
-| `app/api/` | 全部路由无鉴权，且默认可设置任意工作目录 | 仅限本机使用 | 已默认 `API_HOST=127.0.0.1`；若要做多用户需先加鉴权 |
+| `app/api/` | 全部路由无鉴权，且默认可设置任意工作目录 | 仅限本机使用 | CORS 已收紧为 Vite dev 白名单（2026-11-11，堵掉任意网页跨源操控）；绑定地址仍靠命令行 `--host 127.0.0.1`（`API_HOST` 配置项无消费点，属安慰剂）；若要做多用户需先加鉴权 |
 
 本轮（2026-10-29）全链路体检修掉的「静默失败」：
 

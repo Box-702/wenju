@@ -1,11 +1,12 @@
 # =====================================================================
-# registry.py —— 配置解析（.env / DB → ModelConfig）
+# registry.py —— 配置解析（DB / .env → ModelConfig）
 #
 # 上层业务永远不直接读环境变量或数据库：只问这里要一个 ModelConfig。
-# 两条配置来源，优先级明确：
+# 配置权威是**数据库**（D-41 翻转，api_providers / model_preferences，
+# 即前端「设置 → 模型」里配的那份）；.env 只在空库时兜底：
 #   1. 显式指定（CHAT_PROVIDER / VISION_PROVIDER / IMAGE_PROVIDER）；
-#   2. .env 的厂商优先级链（保持历史行为：OPENAI > ZHIPUAI > DEEPSEEK）；
-#   3. 数据库 api_providers / model_preferences（前端「设置」里配的）。
+#   2. 数据库 api_providers / model_preferences；
+#   3. .env 的厂商优先级链（空库回退：OPENAI > ZHIPUAI > DEEPSEEK）。
 #
 # 每一维（chat / vision / image）各自解析，互不干扰：对话用 DeepSeek、
 # 质检用智谱视觉、文生图用 CogView 这种混搭是允许的。

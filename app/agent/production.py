@@ -179,7 +179,11 @@ def build_production_graph(
         if not result.success:
             raise ValueError(f"风格指南生成失败：{result.summary}")
         # merge 而不是覆盖：人工改过的音色（voice_casting）不能被冲掉。
-        store.merge_video_style(p.id, result.data.model_dump())
+        # 美术指导不生产定妆图注册表，model_dump 永远带空 reference_images——
+        # 浅合并会清空资产库已注册的定妆照（2026-11-11 审计，同 chat/tools/crew.py）。
+        patch = result.data.model_dump()
+        patch.pop("reference_images", None)
+        store.merge_video_style(p.id, patch)
         _report("style", f"风格指南完成：{len(result.data.character_appearances)} 人物锚 / "
                          f"{len(result.data.environment_descriptions)} 环境锚")
         return {

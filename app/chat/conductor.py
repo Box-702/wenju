@@ -99,31 +99,29 @@ SYSTEM_PROMPT_TEMPLATE = (
     "所有动作都通过工具完成，不要凭空叙述已经做过的事。\n"
     "\n"
     "【触发 → 动作】\n"
-    "· 新建作品（新建项目 / 新建剧本 / 新开一部）→ create_project；缺标题、改编类型或原文时先问清楚\n"
+    "· 新建作品（新建项目 / 新建剧本 / 新开一部）→ create_project；缺标题或原文先问清楚\n"
     "· 生成初稿（生成 / 初稿 / 第一版 / 出剧本）→ generate_script\n"
-    "· 读作品（那场戏怎么写的 / 有哪些场 / 镜头批准没 / 造型与音色档案）→ read_script，先 outline 再 scenes+query\n"
+    "· 读作品（那场戏怎么写的 / 有哪些场 / 造型与音色档案）→ read_script，先 outline 再 scenes+query\n"
     "· 改编（改对白 / 改节奏 / 压缩 / 反转 / 口语化）→ run_adaptation，细则见 script-review 技能\n"
     "· 咨询（剧本怎么样）→ ask，凭剧本概况与作者风格给有依据的回答\n"
-    "· 读原文（原文里怎么写的某句话）→ read_source 分段读、search_source 定位；原文长先搜再读\n"
-    "· 拆镜头（拆解 / 分镜 / 设计镜头 / 场景拆解）→ breakdown_scenes\n"
-    "· 风格指南（视觉风格 / 角色造型 / 画面风格）→ generate_style_guide\n"
+    "· 读原文 → search_source 定位、read_source 分段读；原文长先搜后读\n"
+    "· 拆镜头（拆解 / 分镜）→ breakdown_scenes\n"
+    "· 风格指南（视觉风格 / 角色造型）→ generate_style_guide\n"
     "· 定妆图（参考图 / 人物形象图 / 视觉参考）→ generate_reference_assets\n"
-    "· 生成资产（定妆照 / 角色画像 / 场景图 / 音色）→ 先 load_skill 'asset-generation' 再动手\n"
-    "· 视频 prompt（生成 prompt / 镜头描述）→ generate_video_prompts\n"
-    "· 开始制作（一键制作 / 跑完整流程 / 出一版提示词）→ start_production，"
-    "五阶段（剧本→拆解→风格→资产图→提示词）自动跑完，已完成的阶段自动复用\n"
-    "· 问进度（到哪了 / 拆好了吗 / 出片了吗 / 合成好了没 / 哪些还没批准）→ get_status，一次问清\n"
-    "· 批准提示词 → approve_video_prompts（只在用户明确说「批准」时）\n"
-    "· 出片（出片 / 生成视频 / 提交视频）→ submit_videos；重试或重 roll 某镜 → rerun_video\n"
+    "· 生成资产（定妆照 / 场景图 / 音色）→ 先 load_skill 'asset-generation' 再动手\n"
+    "· 视频 prompt（镜头描述）→ generate_video_prompts\n"
+    "· 开始制作（一键制作 / 跑完整流程）→ start_production，剧本→拆解→风格→资产→提示词五阶段自动跑\n"
+    "· 问进度（到哪了 / 拆好了吗 / 出片了吗 / 哪些还没批准）→ get_status，不要凭记忆报\n"
+    "· 批准提示词 → approve_video_prompts：只能发起请求，生效要用户确认（硬闸门），不要自己声称已批准\n"
+    "· 改提示词 → edit_shot_prompt（改后该镜回到待审）；列资产库与 id → list_assets\n"
+    "· 出片（生成视频 / 提交视频）→ submit_videos；重 roll → rerun_video；取消在途 → cancel_video_job\n"
     "· 合成成片（拼成片 / 出完整视频）→ finalize_film\n"
-    "· 记忆：系统提示里的「用户记忆」要主动遵循；说「记住… / 以后都…」→ remember；问「你记得什么」→ recall\n"
+    "· 记忆：系统提示里的「用户记忆」要主动遵循；说「记住… / 以后都…」→ remember；说「忘掉」→ forget\n"
     "· 长篇小说（原文超过约 1.4 万字）→ 先加载 novel-serial 技能，不要直接 generate_script\n"
     "\n"
-    "【可用技能】触发器只告诉你该做哪件事，怎么做的细则在技能里，\n"
-    "   · 动手之前先 load_skill：只要本轮要执行某个领域的动作（生成 / 改编 / 拆解 / 提交 / 批准 / 合成），"
-    "本轮第一个工具调用就应该是 load_skill，拿完细则再动手；\n"
-    "   · 例外：纯只读的盘点（看镜头进度、看哪些提示词待批、查后台任务）可以先查，但一旦要动手，先补上 load_skill；\n"
-    "   · 只加载与本轮任务相关的那个技能，不要为求保险全加载一遍；同一轮加载过的不必重复。\n"
+    "【可用技能】动手之前先 load_skill：本轮要执行某领域动作（生成 / 改编 / 拆解 / 提交 / 批准 / 合成）时，"
+    "第一个工具调用就应该是 load_skill 拿细则；纯只读盘点可先查，一旦动手再补。\n"
+    "   只加载与本轮任务相关的那个技能，不要为求保险全加载一遍；同一轮加载过的不必重复。\n"
     "{skill_index}\n"
     "\n"
     "【硬规矩】\n"
@@ -133,7 +131,9 @@ SYSTEM_PROMPT_TEMPLATE = (
     "1. 汇报以工具返回为准：说「已生成 / 已建成 / 已挑出 / 已提交 / 已出片」之前，本轮必须真的调用过对应工具；"
     "严禁凭对话历史编造版本号（ver_xxx）、场次、进度或任务结果。没调工具就直说还没做，或者先做再说。\n"
     "1b. 同样禁止编造角色/地点/节拍/镜头 id、音色 id、素材 id、任务 id、参数名——只能取工具返回值。\n"
-    "2. 不替用户做最终决定：接受、拒绝、批准永远由用户发起，你只负责解释影响和引导。\n"
+    "2. 不替用户做最终决定：接受、拒绝、批准永远由用户发起，你只负责解释影响和引导。"
+    "批准有服务端闸门：approve_video_prompts 只是发起请求，「已批准」永远要等用户确认后由系统写入——"
+    "在它之前说自己已批准是违规的。\n"
     "3. 剧组任务（拆解 / 风格 / 定妆图 / 提示词）与出片都在后台运行，启动后告知用户可在右栏查看进度。\n"
     "4. 回复简洁、口语化、用简体中文；不确定时先问；不要虚构剧本内容。\n"
     "5. 出片走 MiniMax，需要用户先配置自己的 API Key。\n"
@@ -206,20 +206,29 @@ def build_agent_loop(
 def load_history(store: Store, conversation_id: str | None) -> list[dict[str, Any]]:
     """读取某条会话线程（= Conversation id）的历史消息（用于前端首屏渲染）。"""
     thread = conversation_id or GLOBAL_THREAD
-    return [
-        {
+    out = []
+    for m in store.list_chat_messages(thread):
+        payloads = m.payload
+        # 批准卡片（D-43）的状态以 DB 为准回填：payload 是发消息那一刻的快照，
+        # 用户点过卡片 / 回复确认之后，刷新页面若还渲染 pending，旧卡会挂着
+        # 按钮骗人一点再报「已处理」。卡片数量少，逐张查一次可接受。
+        for p in payloads or []:
+            if isinstance(p, dict) and p.get("type") == "prompt_approval" and p.get("status") == "pending":
+                row = store.get_pending_approval(str(p.get("approval_id") or ""))
+                if row is not None:
+                    p["status"] = row.status
+        out.append({
             "id": m.id,
             "role": m.role,
             "content": m.content,
             # 字段名与前端契约保持一致：payloads（复数）。此前误作 payload（单数），
             # 历史消息里的审阅卡片载荷从未被前端读到。
-            "payloads": m.payload,
+            "payloads": payloads,
             "events": m.events,
             "images": m.images,
             "created_at": m.created_at.isoformat(),
-        }
-        for m in store.list_chat_messages(thread)
-    ]
+        })
+    return out
 
 
 # ---------- 图片（多模态上下文） ----------
@@ -649,6 +658,121 @@ def _handle_resume(
     return {"reply": reply, "payloads": payloads, "result": result}
 
 
+# ---------- 批准硬闸门（D-43）：确定性确认路径 ----------
+
+
+def _handle_approval(
+    store: Store,
+    *,
+    project_id: str | None,
+    conversation_id: str | None,
+    message: str,
+    meta: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """提示词批准的确定性执行路径（不进 LLM），返回 {reply, payloads, user_note} 或 None。
+
+    为什么模型不能直接批准：出片花钱，approve 若只是普通工具，模型可以同轮
+    自批自出（小说原文进上下文还有注入面）。工具只能发起 PendingApproval；
+    真正落 approved 只有两条路，都走这里：
+      1. 用户点对话里的确认卡片（meta.intent=approve_prompts，浏览器发的）；
+      2. 用户下一条消息被 detect_confirmation 判为确认（保守：短、肯定、非疑问）。
+    消息来自 API 请求体——模型伪造不了，这就是「用户发起」的服务端证据。
+    """
+    from .approvals import apply_approval, detect_confirmation
+
+    # 待确认请求登记时全局线程存的是空串（approve 工具读 collector），这里同口径；
+    # 消息落库用 GLOBAL_THREAD 是另一套约定，两边不能混用否则查不到。
+    conv = conversation_id or ""
+    approval = None
+    action = ""
+    if meta and meta.get("intent") == "approve_prompts":
+        approval = store.get_pending_approval(str(meta.get("approval_id") or ""))
+        action = str(meta.get("action") or "confirm")
+    elif project_id and detect_confirmation(message):
+        approval = store.latest_pending_approval(project_id=project_id, conversation_id=conv)
+        action = "confirm"
+        if approval is None:
+            return None  # 只是嘴上说批准但没有待确认请求：交回 LLM 正常对话
+    else:
+        return None
+    if approval is None or approval.status != "pending":
+        return {"reply": "这条批准请求不存在或已处理过，无需重复操作。",
+                "payloads": [], "user_note": "处理批准请求"}
+
+    if action == "cancel":
+        store.resolve_pending_approval(approval.id, "cancelled")
+        return {"reply": "已取消这次批准请求，提示词状态保持不变。",
+                "payloads": [], "user_note": "取消批准请求"}
+
+    result = apply_approval(store, approval.project_id, approval.version_id, approval.shot_ids)
+    # 请求总是终结（要么批准落地、要么发现已无内容可批）；失败时置 cancelled，
+    # 不留 pending 挡后面的新请求——旧卡片本来就代表旧方案。
+    store.resolve_pending_approval(approval.id, "confirmed" if result["ok"] else "cancelled")
+    if result["ok"]:
+        try:
+            store.add_memory(
+                kind="decision", scope="project", project_id=approval.project_id,
+                content=f"批准了 {result['approved_count']} 个镜头的提示词——可以出片。",
+                source="auto",
+            )
+        except Exception as e:  # noqa: BLE001  记忆是副产品，不挡主流程
+            log.warning("批准决定落记忆失败（不阻断）：%s", e)
+        payloads = [{
+            "type": "version_applied", "version_id": result["version_id"],
+            "fallback": False, "validation_issues": [],
+        }]
+    else:
+        payloads = []
+    return {"reply": result["message"], "payloads": payloads, "user_note": "确认批准镜头提示词"}
+
+
+def _run_deterministic_turn(
+    store: Store, llm: LLM, settings: Settings, *,
+    conversation_id: str | None, project_id: str | None,
+    message: str, meta: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """一轮里不经过 LLM 的确定性动作：审阅 resume（卡片）+ 批准确认（卡片/文本）。
+
+    两条服务入口（_run_turn / chat_stream）共用：此前 resume 分支在两边逐字重复，
+    加批准路径若照抄会三份重复。返回 None = 本轮不是确定性动作，走 LLM。
+    """
+    thread = conversation_id or GLOBAL_THREAD
+
+    if meta and meta.get("intent") == "resume":
+        handled = _handle_resume(
+            store, llm, settings,
+            run_id=str(meta.get("run_id") or ""),
+            action=str(meta.get("action") or "accept"),
+            patch_indexes=meta.get("patch_indexes"),
+            feedback=meta.get("feedback"),
+            patch=meta.get("patch"),
+            conversation_id=conversation_id,
+        )
+        user_text = _humanized_user_message(meta, message)
+        payloads = handled["payloads"]
+        reply = handled["reply"]
+    else:
+        approval = _handle_approval(
+            store, project_id=project_id, conversation_id=conversation_id,
+            message=message, meta=meta,
+        )
+        if approval is None:
+            return None
+        user_text = message or approval["user_note"]
+        payloads = approval["payloads"]
+        reply = approval["reply"]
+
+    store.save_chat_message(thread_id=thread, role="user", content=user_text, payload=[meta or {}])
+    store.save_chat_message(thread_id=thread, role="assistant", content=reply, payload=payloads, events=[])
+    return {
+        "reply": reply,
+        "payloads": payloads,
+        "events": [],
+        "project_id": project_id,
+        "thread_id": thread,
+    }
+
+
 def _run_turn(
     store: Store,
     llm: LLM,
@@ -663,27 +787,14 @@ def _run_turn(
     refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """执行一轮对话（非流式），返回 {reply, payloads, events, project_id, thread_id}。"""
-    # 审阅动作走确定性路径。
-    if meta and meta.get("intent") == "resume":
-        handled = _handle_resume(
-            store, llm, settings,
-            run_id=str(meta.get("run_id") or ""),
-            action=str(meta.get("action") or "accept"),
-            patch_indexes=meta.get("patch_indexes"),
-            feedback=meta.get("feedback"),
-            patch=meta.get("patch"),
-            conversation_id=conversation_id,
-        )
-        thread = conversation_id or GLOBAL_THREAD
-        store.save_chat_message(thread_id=thread, role="user", content=_humanized_user_message(meta, message), payload=[meta])
-        store.save_chat_message(thread_id=thread, role="assistant", content=handled["reply"], payload=handled["payloads"], events=[])
-        return {
-            "reply": handled["reply"],
-            "payloads": handled["payloads"],
-            "events": [],
-            "project_id": project_id,
-            "thread_id": thread,
-        }
+    # 确定性动作（审阅 resume / 批准确认）不进 LLM。
+    handled = _run_deterministic_turn(
+        store, llm, settings,
+        conversation_id=conversation_id, project_id=project_id,
+        message=message, meta=meta,
+    )
+    if handled is not None:
+        return handled
 
     image_refs = _resolve_image_refs(store, images)
     turn_images = [
@@ -752,29 +863,15 @@ def chat_stream(
     """SSE 流式对话：逐条 yield {event, data} 事件。
 
     事件序列：tool_call / tool_result（工具轨迹）-> token（正文增量）
-    -> done（完整结果）。审阅动作直接返回 done（无 LLM）。
+    -> done（完整结果）。确定性动作（审阅 / 批准）直接返回 done（无 LLM）。
     """
-    # 审阅动作：确定性执行，直接产出 done。
-    if meta and meta.get("intent") == "resume":
-        handled = _handle_resume(
-            store, llm, settings,
-            run_id=str(meta.get("run_id") or ""),
-            action=str(meta.get("action") or "accept"),
-            patch_indexes=meta.get("patch_indexes"),
-            feedback=meta.get("feedback"),
-            patch=meta.get("patch"),
-            conversation_id=conversation_id,
-        )
-        thread = conversation_id or GLOBAL_THREAD
-        store.save_chat_message(thread_id=thread, role="user", content=_humanized_user_message(meta, message), payload=[meta])
-        store.save_chat_message(thread_id=thread, role="assistant", content=handled["reply"], payload=handled["payloads"], events=[])
-        yield {"event": "done", "data": {
-            "reply": handled["reply"],
-            "payloads": handled["payloads"],
-            "events": [],
-            "project_id": project_id,
-            "thread_id": thread,
-        }}
+    handled = _run_deterministic_turn(
+        store, llm, settings,
+        conversation_id=conversation_id, project_id=project_id,
+        message=message, meta=meta,
+    )
+    if handled is not None:
+        yield {"event": "done", "data": handled}
         return
 
     image_refs = _resolve_image_refs(store, images)
@@ -831,6 +928,15 @@ def chat_stream(
         raise
     except Exception as e:  # noqa: BLE001
         log.warning("对话流式运行失败：%s", e)
+        # 与非流式一致：错误文本落 assistant 消息（此前只发 error 事件直接 return，
+        # 刷新页面后这轮对话在历史里凭空消失，用户只看到自己说的话）。
+        err_text = f"对话运行出错了：{e}"
+        if final_text:
+            err_text = final_text + "\n\n" + err_text
+        store.save_chat_message(
+            thread_id=thread, role="assistant", content=err_text,
+            payload=collector.get("payloads") or [], events=events,
+        )
         yield {"event": "error", "data": {"message": str(e)}}
         return
 

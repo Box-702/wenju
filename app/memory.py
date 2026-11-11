@@ -114,9 +114,17 @@ def compress_history_if_needed(
     - 消息不多或模型不可用：原样返回最近 RECENT_KEEP 条，摘要为空；
     - 达到阈值：把「已摘要覆盖之外、最近窗口之前」的消息合并进旧摘要，
       存回 conversations.summary_json。LLM 失败则回落为截断，不阻塞对话。
+
+    覆盖进度用 **covered_until_id 锚点**（最后一条已并入摘要的消息 id），
+    不再用绝对计数：此前 covered_count 是「从会话开头累计的条数」，而读库
+    只取最新 200 条——总条数超 200 后 `covered` 钳到窗口头、pending 永远空，
+    摘要从此停摆，第 200 条窗口之外、摘要覆盖之外的中段历史**静默丢失**
+    （2026-11-11 审计修掉的 bug；锚点滚出窗口时退化为「窗口内未保留段
+    全部重摘」，合并式摘要天然去重，宁多读一遍不丢事实）。
     """
     messages = store.list_chat_messages(conversation_id, limit=200)
-    recent = messages[-RECENT_KEEP:]
+    recent_start = max(0, len(messages) - RECENT_KEEP)
+    recent = messages[recent_start:]
     if len(messages) <= RECENT_KEEP + COMPRESS_TRIGGER:
         return "", recent
     if not getattr(llm, "available", False):
@@ -125,23 +133,37 @@ def compress_history_if_needed(
     conv = store.get_conversation(conversation_id)
     state = (conv.summary if conv else {}) or {}
     old_summary = str(state.get("summary") or "")
-    covered = int(state.get("covered_count") or 0)
-    covered = min(covered, len(messages))  # 历史被清理/截断时兜底
+    covered_until_id = str(state.get("covered_until_id") or "")
+    if not covered_until_id and state.get("covered_count") is not None:
+        # 一次性换算旧格式（covered_count 绝对计数）：能对上窗口内就续用，
+        # 对不上（老库窗口外）退回窗口开头——下一轮摘要会把未覆盖段并回去。
+        legacy = int(state.get("covered_count") or 0)
+        covered_until_id = messages[legacy - 1].id if 0 < legacy <= len(messages) else ""
 
-    pending = messages[covered:len(messages) - RECENT_KEEP]
+    anchor_pos = next(
+        (i for i, m in enumerate(messages) if m.id == covered_until_id),
+        -1,
+    )
+    pending_start = anchor_pos + 1 if anchor_pos >= 0 else 0
+
+    pending = messages[pending_start:recent_start]
     if len(pending) < COMPRESS_TRIGGER:
-        # 没攒够新内容：沿用旧摘要。
-        return old_summary, recent
+        # 没攒够新内容：沿用旧摘要。此前 pending 段（覆盖点之后、最近窗口之前）
+        # 既不在摘要也不进上下文——不足触发阈值时它「暂时失忆」。现在把它并进
+        # 返回窗口：条数少（<10），成本可忽略，事实不丢。
+        return old_summary, messages[pending_start:]
 
     try:
         new_summary = _summarize(llm, old_summary, pending)
     except Exception as e:  # noqa: BLE001
+        # 回落截断：锚点不动，这一段下轮攒够还会上摘（合并式摘要去重），
+        # 只是这一轮中段暂缺——比把十几条原文全塞进上下文划算。
         log.warning("会话摘要生成失败（本次回落截断）：%s", e)
         return old_summary, recent
 
     store.set_conversation_summary(conversation_id, {
         "summary": new_summary,
-        "covered_count": covered + len(pending),
+        "covered_until_id": pending[-1].id,
     })
     return new_summary, recent
 

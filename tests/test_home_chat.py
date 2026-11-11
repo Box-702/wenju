@@ -83,6 +83,8 @@ class _PidTool:
 
     name = "needs_pid"
     description = "需要 project_id"
+    # 与真实 LangChain @tool 对齐：loop 兜底按 .args 判断工具是否声明 project_id。
+    args = {"project_id": {"type": "string"}}
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
@@ -136,6 +138,48 @@ def test_loop_falls_back_to_collector_project_id():
     loop.run([{"role": "user", "content": "帮我做成短剧"}])
     # 漏传（空串）被兜成 collector 里的新作品 id
     assert tool.calls and tool.calls[0].get("project_id") == "proj_new"
+
+
+def test_loop_falls_back_when_key_missing_entirely():
+    """模型整个漏掉 project_id 键（不是传空串）时也要兜底。
+
+    2026-11-11 审计：此前兜底只补「键存在但为空」，必传 project_id 的工具
+    在 pydantic 校验层直接报缺参，loop 层根本没机会兜——模型最常见的漏法
+    恰恰是整个键不写。
+    """
+    tool = _PidTool()
+    model = _FakeModel([
+        AIMessage(content="", tool_calls=[
+            {"name": "needs_pid", "args": {}, "id": "c1"},   # 键缺失
+        ]),
+        AIMessage(content="完成"),
+    ])
+    loop = AgentLoop(_FakeLLM(model), [tool], current_project_id="proj_static")
+    loop.run([{"role": "user", "content": "x"}])
+    assert tool.calls[0].get("project_id") == "proj_static"
+
+
+def test_loop_does_not_inject_for_tool_without_project_id():
+    """没声明 project_id 的工具（load_skill/remember 等）不被乱塞键。"""
+    calls: list[dict] = []
+
+    class _NoPidTool:
+        name = "no_pid"
+        description = "不需要 project_id"
+        args = {"query": {"type": "string"}}
+
+        def invoke(self, args):  # noqa: ANN001
+            calls.append(dict(args or {}))
+            return "ok"
+
+    tool = _NoPidTool()
+    model = _FakeModel([
+        AIMessage(content="", tool_calls=[{"name": "no_pid", "args": {"query": "abc"}, "id": "c1"}]),
+        AIMessage(content="完成"),
+    ])
+    loop = AgentLoop(_FakeLLM(model), [tool], current_project_id="proj_static")
+    loop.run([{"role": "user", "content": "x"}])
+    assert calls == [{"query": "abc"}], "不该给无 project_id 的工具注入该键"
 
 
 def test_loop_collector_none_falls_back_to_static():

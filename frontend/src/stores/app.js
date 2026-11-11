@@ -651,7 +651,6 @@ export const STAGE_LABELS = {
   get_scene_detail: '细读场景',
   get_source_text: '查阅原著',
   search_source: '在原著中查找资料',
-  web_search: '联网查找资料',
   get_author_style: '分析作者文风',
   list_versions: '整理版本历史',
   validate_tool: '检查剧本一致性',
@@ -671,6 +670,11 @@ export const STAGE_LABELS = {
   load_skill: '读取技能细则',
   remember: '记住这条偏好',
   recall: '回忆你的偏好',
+  forget: '删除这条记忆',
+  edit_shot_prompt: '修改镜头提示词',
+  cancel_video_job: '取消出片任务',
+  list_assets: '盘点资产库',
+  approve_video_prompts: '发起批准请求',
 }
 
 /** 聚焦底部输入框（开始页主按钮等调用）。 */
@@ -863,6 +867,41 @@ export async function resumeReview(runId, action, opts = {}) {
     reply.streaming = false
     store.streaming = false
     store.drawer.open = false
+  }
+}
+
+// ---------------------------------------------------------------------
+// 批准硬闸门（D-43）：确认卡片 → /chat 确定性路径（不经过 LLM）
+// ---------------------------------------------------------------------
+/** 用户点批准卡片的「确认批准 / 先不批准」：走 meta 确定性路径，
+ *  卡片本身就地更新状态（后端把请求置 confirmed/cancelled，历史回放按此渲染）。 */
+export async function resolveApproval(approvalId, action) {
+  if (store.streaming || !approvalId) return
+  const meta = { intent: 'approve_prompts', approval_id: approvalId, action }
+  const reply = reactive({ role: 'assistant', content: '', events: [], payloads: [], streaming: true })
+  store.messages.push(reply)
+  store.streaming = true
+  try {
+    const r = await api('/chat', 'POST', { project_id: store.pid, conversation_id: store.convId, message: '', meta })
+    reply.content = r.reply
+    reply.events = r.events || []
+    reply.payloads = r.payloads || []
+    // 卡片就地终结：把对应 pending 卡片的状态改掉（历史里旧卡不再显示按钮）。
+    // confirm 成功与否以后端正文为准（「已批准 N 个镜头」才是成功），成功失败都终结卡片。
+    const confirmed = action === 'confirm' && (r.reply || '').includes('已批准')
+    for (const m of store.messages) {
+      for (const p of m.payloads || []) {
+        if (p.type === 'prompt_approval' && p.approval_id === approvalId) {
+          p.status = confirmed ? 'confirmed' : (action === 'cancel' ? 'cancelled' : 'expired')
+        }
+      }
+    }
+    await loadViewer()  // 批准会产生新镜头版本：刷新右栏镜头清单（与 resumeReview 同款）
+  } catch (e) {
+    reply.content = '操作失败：' + e.message
+  } finally {
+    reply.streaming = false
+    store.streaming = false
   }
 }
 

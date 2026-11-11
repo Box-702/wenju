@@ -57,7 +57,7 @@ def resume_orphans(
         store = store or get_store()
         manager = manager or video_manager()
     if resolve_provider is None:
-        from ..api.video import _resolve_video_provider
+        from .service import _resolve_video_provider
 
         resolve_provider = _resolve_video_provider
 

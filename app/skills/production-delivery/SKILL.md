@@ -7,9 +7,11 @@ audience: main
 
 # 出片前有三个前置，缺一个都白跑
 
-1. **提示词必须已批准**（`prompt_status=approved`）。提交时单镜和整片都会再校验一次，
-   没批准的镜头会被静默排除——如果用户以为「全都出片了」，实际只出了一部分。
-   用户说「出片」但还没批准 → 先 `get_status` 报出待审数量，引导他批准。
+1. **提示词必须已批准**（`prompt_status=approved`）。批准是服务端硬闸门（D-43）：
+   你调 `approve_video_prompts` 只是**发起批准请求**，真正生效要用户确认（点卡片或回复「批准」）。
+   提交时单镜和整片都会再校验一次：镜头必须存在、属于本作品、提示词已批准且与你提交的内容一致，
+   否则服务端直接拒绝（不会静默出一部分）。用户说「出片」但还没批准 → 先 `get_status`
+   报出待审数量，引导他批准。
 2. **要有镜头方案**：没拆解过就没有镜头可提交。
 3. **视频厂商要配置**：走 MiniMax，用户自带 API Key。没配就直说，不要反复试。
 
@@ -33,10 +35,17 @@ audience: main
   要看逐镜清单加 `detail="shots"`。
 - 用户问「出片了吗 / 到哪了」必须查工具，不能凭记忆说。
 
-# 重跑 `rerun_video`
+# 改提示词 `edit_shot_prompt`
 
-- 任务失败 → 重试。
-- 已出片但不满意 → 重出一版（生成新的镜头版本，旧的仍可回滚）。
+- 用户说「第 3 镜 prompt 改成…」→ `edit_shot_prompt(project_id, shot_id, prompt)` 直接改。
+- **编辑使批准失效**：改完该镜回到 `needs_review`，要重新走用户批准才能再出片（闸门语义闭环）。
+
+# 重跑 `rerun_video` 与取消 `cancel_video_job`
+
+- 任务失败 → 重试（沿用已批准的提示词）。
+- 已出片但不满意 → 重出一版：合成时取该镜最近一次成功的成片，重跑会替换它在成片里的位置
+  （镜头**提示词**版本可回滚，但视频成片本身不产生可回滚的版本，别承诺「旧成片还能换回来」）。
+- 想立刻换一版而旧任务还在跑 → 先 `cancel_video_job(project_id, shot_id)` 取消，再 `rerun_video`。
 - 一次只说一个镜头，别「顺手全重跑」——那是用户的钱。
 
 # 合成成片 `finalize_film`
@@ -68,4 +77,4 @@ audience: main
 # 相关工具
 
 `get_status` · `approve_video_prompts` · `submit_videos` ·
-`rerun_video` · `finalize_film`
+`edit_shot_prompt` · `rerun_video` · `cancel_video_job` · `finalize_film`

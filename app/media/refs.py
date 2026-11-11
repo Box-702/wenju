@@ -110,12 +110,16 @@ def build_reference_assets(
     max_retry: int = 2,
     on_progress: Any = None,
     notes: dict[str, str] | None = None,
+    entities: list[str] | None = None,
 ) -> dict[str, str]:
-    """为角色与场景生成定妆图并质检，返回 {名称: 图片URL}。
+    """为角色与场景生成定妆图并质检，返回 {实体id: 图片URL}。
 
     - 角色名 / 地点名与 StyleGuide 的键保持一致，方便回填时查表；
     - 质检不合格就重生成，最多 max_retry 次；仍不合格则保留最后一张（带警告）；
-    - 不传客户端时从 app/llm 解析当前配置（.env / DB 里的 provider）。
+    - 不传客户端时从 app/llm 解析当前配置（.env / DB 里的 provider）；
+    - entities：范围参数（名字或 id 列表）。只生成点名的实体——asset-generation
+      技能承诺「只生成用户确认的那批」，此前工具做不到（2026-11-11 补齐）；
+      留空 = 全部实体（老调用方行为不变）。
     """
     provider = image_client
     vision = vision_client
@@ -145,10 +149,32 @@ def build_reference_assets(
     # 画风决定出的是「剧照」还是「立绘」：漫剧用写实 prompt 会毁掉整片一致性。
     visual_style = getattr(style_guide, "visual_style", None) if style_guide else None
 
+    # 实体范围（entities 参数）：用户点名优先于 appearance 过滤——用户说
+    # 「给林然出定妆照」不该被「没有固定外貌锚」静默吞掉（锚缺失时本来就
+    # 退化为名字进 prompt）。对不上角色也不对上场景的点名，如实上报后跳过。
+    scoped = bool([e for e in (entities or []) if str(e or "").strip()])
+    all_ids = {c.id for c in script.characters} | {loc.id for loc in script.locations}
+    wanted: set[str] = set()
+    for raw in entities or []:
+        key = str(raw or "").strip()
+        if not key:
+            continue
+        eid = idx.resolve(key) or key
+        if eid in all_ids:
+            wanted.add(eid)
+        else:
+            _emit(f"名单里的「{key}」既不是角色也不是场景，已跳过")
+    if scoped and not wanted:
+        # 点名了却一个都对不上：**绝不**回退成全量生成——用户以为只出两个角色，
+        # 结果烧了整个资产库的钱，这正是要修的行为。返回空表，由调用方如实汇报。
+        return refs
+
     # 角色：优先用风格指南的固定外貌；缺失则退化为人物名（prompt 里永远写名字）
     char_ids = [c.id for c in script.characters]
-    if appearances:
+    if appearances and not wanted:
         char_ids = [cid for cid in char_ids if cid in appearances]
+    if wanted:
+        char_ids = [cid for cid in char_ids if cid in wanted]
     # 用户写的画面要求（按角色 id 或名字都能命中）追加在锚之后
     extra = _notes_by_entity(notes, idx)
     for cid in char_ids:
@@ -167,8 +193,10 @@ def build_reference_assets(
 
     # 场景：优先用风格指南的环境描述；缺失则退化为地点名
     loc_ids = [loc.id for loc in script.locations]
-    if environments:
+    if environments and not wanted:
         loc_ids = [lid for lid in loc_ids if lid in environments]
+    if wanted:
+        loc_ids = [lid for lid in loc_ids if lid in wanted]
     for lid in loc_ids:
         name = idx.display(lid)
         desc = environments.get(lid, "")

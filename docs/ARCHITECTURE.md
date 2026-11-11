@@ -206,6 +206,9 @@ ProviderSpec(
 4. 若它提供新的能力形态（例如 TTS），在 `base.py` 的 `Modality` 加维度 + 新客户端文件。
 5. 若它**不支持 `response_format=json_object`**，把 `ProviderSpec.supports_json_mode` 设为 `False`——
    `LLM.structured()` 会自动降级为「提示词要求 JSON + 容错解析 + 失败重采样」。
+6. 若它该出现在**设置页的内置厂商目录**（D-42），在 `api/video.py` 的
+   `provider_specs()` catalog 列表里加名字，并给 `chat_models` 填一份兜底清单
+   （厂商 `/models` 拉不到时顶上）；不加目录的厂商仍可走「自定义供应商」接入。
 
 ### 2.5 结构化输出的降级路径
 

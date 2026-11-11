@@ -50,18 +50,42 @@ class ImageClient(ABC):
         """
         ...
 
+    def _fallback_keys(self) -> list[str]:
+        """备用生图 key：MiniMax 主 key 的 Token Plan 配额耗尽（429/2056）时轮换。
+
+        实测（2026-11-12）：主 key 报「已达到 Token Plan 用量上限」，
+        .env 的 MINIMAX_API_KEY_FALLBACKS 是独立账户、生图可用。
+        这类 429 是配额型不是节流型——同一把 key 退避重试永远不会好，
+        而且官方文档明确接口非幂等（超时/断开仍生成并计费），重试还有计费风险。
+        """
+        if (self.config.provider or "").strip().lower() != "minimax":
+            return []
+        import os
+        import re
+
+        fb = os.environ.get("MINIMAX_API_KEY_FALLBACKS", "")
+        return [k.strip() for k in re.split(r"[,;]", fb) if k.strip()]
+
     def _post(self, path: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
-        with httpx.Client(trust_env=False, timeout=timeout) as client:
-            resp = client.post(
-                self.config.endpoint(path),
-                headers={
-                    "Authorization": f"Bearer {self.config.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=body,
-            )
+        keys = [self.config.api_key] + [k for k in self._fallback_keys() if k != self.config.api_key]
+        last: httpx.Response | None = None
+        for i, key in enumerate(keys):
+            with httpx.Client(trust_env=False, timeout=timeout) as client:
+                resp = client.post(
+                    self.config.endpoint(path),
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=body,
+                )
+            if resp.status_code == 429 and i + 1 < len(keys):
+                log.warning("文生图 429（配额/限流），轮换备用 key（第 %d 把）", i + 2)
+                last = resp
+                continue
             resp.raise_for_status()
             return resp.json()
+        raise RuntimeError(f"文生图所有 key 均 429：{(last.text if last else '')[:200]}")
 
 
 class CogViewImageClient(ImageClient):
@@ -105,6 +129,9 @@ _CLIENTS: dict[str, type[ImageClient]] = {
     "cogview": CogViewImageClient,
     "zhipu": CogViewImageClient,
     "openai": OpenAIImageClient,
+    # MiniMax H3-Image：POST /v1/images/generations → data[0].url，与 CogView 协议同形
+    # （2026-11-11 实测：model=MiniMax-H3-Image，size/n 字段通用，negative_prompt 接受）。
+    "minimax": CogViewImageClient,
 }
 
 

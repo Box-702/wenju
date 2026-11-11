@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <div v-if="open" class="modal-backdrop" @click.self="$emit('close')">
-      <div class="modal-card wide">
+      <div class="modal-card wide settings-card">
         <div class="modal-head">
           <div>
             <h3 class="modal-title">模型与 API 设置</h3>
@@ -973,6 +973,29 @@ onMounted(() => {
 /* 外壳走 style.css 的 .modal-* 系列；这里只留设置页自己的东西。 */
 .settings-tabs { margin: 14px 0 16px; align-self: flex-start; }
 .modal-body { padding: 0; }
+
+/* 弹窗高度固定不随内容跳动：标题 + 页签钉住，body 吃满剩余高度自己滚。
+   外壳 .modal-card 的 max-height 只限上限，内容少时卡片会缩，
+   切页签 / 切厂商高度就跳；这里给固定高度，多余内容进滚动区。 */
+.settings-card {
+  height: min(720px, 88vh);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.settings-card .modal-body {
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+}
+/* 两栏各自滚：左厂商列表再长也不撑高弹窗，右详情独立滚动 */
+.settings-card .llm-split { min-height: 0; height: 100%; }
+.settings-card .llm-side {
+  min-height: 0; overflow-y: auto;
+  /* 加按钮钉在列表底部，列表本身滚 */
+}
+.settings-card .llm-detail {
+  min-height: 0; overflow-y: auto;
+  padding-right: 4px; /* 给滚动条留位，不压内容 */
+}
 .section h4 { margin: 0 0 14px; font-size: var(--fs-md); color: var(--ink); font-weight: 600; }
 
 .active-line {

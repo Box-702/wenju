@@ -517,6 +517,10 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 .modal-close {
   position: relative;
   margin-left: auto; width: 28px; height: 28px; flex: none;
+  /* padding 必须清零：全局 button 带 6px 12px，28px 小方块里内容盒只剩 2px，
+     grid 隐式列按图标宽度撑开、整列向右溢出——place-items:center 治不了轨道溢出，
+     这就是叉号「永远差一点居中」的根因。 */
+  padding: 0;
   border-radius: var(--radius-md); display: inline-grid; place-items: center;
   background: transparent; border: 1px solid var(--line); color: var(--muted);
   cursor: pointer;

@@ -86,6 +86,7 @@ def _register_builtins() -> None:
         vision_model="gpt-4o-mini",
         supports_image=True,
         image_model="gpt-image-1",
+        chat_models=("gpt-4o", "gpt-4o-mini", "gpt-4.1", "o3-mini"),
     ))
     register_provider(ProviderSpec(
         name="deepseek",
@@ -97,6 +98,7 @@ def _register_builtins() -> None:
         supports_vision=True,
         vision_model="deepseek-v4-flash-vision-exp",
         extra_body=_deepseek_extra_body,
+        chat_models=("deepseek-chat", "deepseek-reasoner"),
     ))
     register_provider(ProviderSpec(
         name="zhipu",
@@ -110,6 +112,7 @@ def _register_builtins() -> None:
         # 同一个 key 同时可调 GLM / CogView（文生图）/ CogVideoX（视频）。
         supports_image=True,
         image_model="cogview-3-flash",
+        chat_models=("glm-4.5", "glm-4.5-air", "glm-4-plus", "glm-4-flash"),
     ))
     register_provider(ProviderSpec(
         name="moonshot",
@@ -118,6 +121,8 @@ def _register_builtins() -> None:
         default_model="moonshot-v1-8k",
         env_key="MOONSHOT_API_KEY",
         docs="https://platform.moonshot.cn/console/api-keys",
+        chat_models=("kimi-k2-0905-preview", "kimi-thinking-preview",
+                     "moonshot-v1-8k", "moonshot-v1-32k"),
     ))
     register_provider(ProviderSpec(
         name="qwen",
@@ -128,6 +133,7 @@ def _register_builtins() -> None:
         docs="https://bailian.console.aliyun.com/",
         supports_vision=True,
         vision_model="qwen-vl-plus",
+        chat_models=("qwen-max", "qwen-plus", "qwen-turbo", "qwq-plus"),
     ))
     register_provider(ProviderSpec(
         name="ollama",
@@ -163,6 +169,45 @@ def _register_builtins() -> None:
         # （实测报 2013 unknown response_format type），所以结构化输出必须走
         # 「提示词 + 容错解析」这条路，见 client.LLM.structured()。
         supports_json_mode=False,
+        chat_models=("MiniMax-Text-01", "abab6.5s-chat"),
+    ))
+    # ---- 2026-11-11 新增内置厂商（用户点名：小米 / Anthropic / 豆包）----
+    # /models 与 /chat/completions 路由均已实测存在（401=拒鉴权而非 404）。
+    register_provider(ProviderSpec(
+        name="xiaomi",
+        label="小米 MiMo",
+        default_base_url="https://api.xiaomimimo.com/v1",
+        default_model="mimo-v2-flash",
+        env_key="XIAOMI_API_KEY",
+        docs="https://platform.xiaomimimo.com/",
+        chat_models=("mimo-v2-pro", "mimo-v2-flash"),
+    ))
+    register_provider(ProviderSpec(
+        name="anthropic",
+        label="Anthropic Claude",
+        # 官方已提供 OpenAI 兼容入口（/v1/chat/completions，实测路由存在、
+        # 鉴权层先挡）；个别高级参数仍以 Messages 协议为准。中转网关也能接。
+        default_base_url="https://api.anthropic.com/v1",
+        default_model="claude-sonnet-4-5",
+        env_key="ANTHROPIC_API_KEY",
+        docs="https://console.anthropic.com/settings/keys",
+        supports_vision=True,
+        vision_model="claude-sonnet-4-5",
+        chat_models=("claude-opus-4-1", "claude-sonnet-4-5", "claude-haiku-4-5"),
+    ))
+    register_provider(ProviderSpec(
+        name="doubao",
+        label="豆包（火山方舟）",
+        # 方舟的 OpenAI 兼容 base 带 /api/v3；model 参数要填「模型 ID」
+        # （endpoint 形如 ep-xxxx），发现清单里给的就是它。
+        default_base_url="https://ark.cn-beijing.volces.com/api/v3",
+        default_model="doubao-seed-1-6-flash-250715",
+        env_key="ARK_API_KEY",
+        docs="https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey",
+        supports_vision=True,
+        vision_model="doubao-seed-1-6-vision",
+        chat_models=("doubao-seed-1-6-250615", "doubao-seed-1-6-flash-250715",
+                     "doubao-1-5-pro-32k-250115"),
     ))
 
 

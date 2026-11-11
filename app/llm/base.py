@@ -71,6 +71,10 @@ class ProviderSpec:
     # 不支持时（如 MiniMax，实测报 2013 unknown response_format type），
     # 结构化输出自动降级为「提示词要求 JSON + 容错解析」。
     supports_json_mode: bool = True
+    # 内置厂商的「对话模型目录」：厂商 /models 接口不返全部或排序不友好时，
+    # 用它兜底展示（BYOK 流程：选厂商 → 填 key → 发现 → 勾选）。
+    # 发现成功时以厂商实时清单为准，这个目录只在发现失败/为空时顶上。
+    chat_models: tuple[str, ...] = ()
     # 部分厂商（如 DeepSeek 推理模型）需要额外的请求体参数。
     extra_body: Callable[[ModelConfig], dict[str, Any]] | None = None
 

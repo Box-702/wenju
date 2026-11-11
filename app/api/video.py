@@ -112,6 +112,58 @@ def list_providers(kind: str | None = None) -> list[dict[str, Any]]:
     ]
 
 
+@router.get("/providers/specs")
+def provider_specs() -> list[dict[str, Any]]:
+    """内置厂商目录（D-42）：设置页的「选厂商 → 填 key → 发现」一步流的数据源。
+
+    必须在 `/providers/{provider_id}` 之前注册——不然 "specs" 会被当成 id 匹配掉。
+    只含 OpenAI 兼容协议的对话厂商（cogview 是生图专用、minimax 的对话走
+    同一把视频 key 意义不大，都不进目录）。
+    """
+    from ..llm.providers import get_provider_spec
+
+    catalog = ["deepseek", "zhipu", "qwen", "moonshot", "xiaomi", "doubao",
+               "anthropic", "openai"]
+    out = []
+    for name in catalog:
+        spec = get_provider_spec(name)
+        if spec is None:
+            continue
+        out.append({
+            "name": spec.name,
+            "label": spec.label,
+            "base_url": spec.default_base_url,
+            "docs": spec.docs,
+            "env_key": spec.env_key,
+            "chat_models": list(spec.chat_models),
+        })
+    return out
+
+
+class ProbeRequest(BaseModel):
+    """不建行、直接拿表单里的 base_url + key 问厂商。"""
+
+    base_url: str = Field(min_length=1)
+    api_key: str = Field(min_length=1)
+
+
+@router.post("/providers/probe")
+async def probe_provider(payload: ProbeRequest) -> dict[str, Any]:
+    """「填 key 就能看有什么模型」：拿未保存的 base_url/key 真打一次 /models。
+
+    这是 D-42 一步流的核心——原来必须先建厂商行才能「发现模型」，
+    用户要在两个界面之间来回；现在目录里点厂商、贴 key，模型清单当场出来。
+    失败时 error 是人话（_probe 的 401/403 等语义直接透传）。
+    """
+    ok, detail, models = _probe_openai_compatible(payload.base_url, payload.api_key)
+    out: dict[str, Any] = {"ok": ok, "detail": detail}
+    if models:
+        out["models"] = models
+    if not ok:
+        out["error"] = detail
+    return out
+
+
 @router.get("/providers/{provider_id}")
 def get_provider(provider_id: str) -> dict[str, Any]:
     """获取 Provider 详情。"""

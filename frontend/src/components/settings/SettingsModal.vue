@@ -22,27 +22,81 @@
         </div>
 
         <div class="modal-body">
-          <!-- 对话模型：左厂商列表 + 右详情面板（学 ZCode 的结构，不做厂商分类） -->
+          <!-- 对话模型：内置厂商目录 + 一步流（选厂商 → 贴 key → 拉模型 → 勾选保存）。
+               左列是「目录 ∪ 已配置」的合并视图：内置厂商没配过显示「待配置」，
+               配过的显示真实厂商行（带模型数）。D-42。 -->
           <div v-if="tab === 'llm'" class="section llm-split">
-            <!-- 左：厂商（扁平，不分组） -->
             <aside class="llm-side">
               <button
-                v-for="p in llmProviders"
-                :key="p.id"
-                :class="['llm-side-item', { on: selectedProviderId === p.id }]"
+                v-for="it in leftItems"
+                :key="it.key"
+                :class="['llm-side-item', { on: itemSelected(it) }]"
                 type="button"
-                @click="selectedProviderId = p.id"
+                @click="selectItem(it)"
               >
-                <span class="side-dot" :class="{ on: p.configured }"></span>
-                <span class="side-name">{{ p.label || p.name }}</span>
-                <span class="side-count">{{ providerModels(p).length }}</span>
+                <span class="side-dot" :class="{ on: it.configured }"></span>
+                <span class="side-name">{{ it.label }}</span>
+                <span v-if="it.kind === 'row'" class="side-count">{{ it.count }}</span>
+                <span v-else class="side-tag">待配置</span>
               </button>
-              <div v-if="!llmProviders.length" class="pop-empty">还没有厂商</div>
-              <button class="llm-side-add" type="button" @click="openAddLlm()">+ 添加厂商</button>
+              <button class="llm-side-add" type="button" @click="openCustomForm()">+ 自定义供应商</button>
             </aside>
 
-            <!-- 右：选中厂商的设置 + 模型列表 -->
-            <div class="llm-detail">
+            <!-- A. 内置厂商（未配置）：一步流 -->
+            <div v-if="selSpec" class="llm-detail qc-panel">
+              <div class="detail-head">
+                <span class="dh-name">{{ selSpec.label }}</span>
+                <span class="dh-actions">
+                  <a v-if="selSpec.docs" class="small ghost" :href="selSpec.docs" target="_blank" rel="noopener">去拿 Key</a>
+                </span>
+              </div>
+              <p class="pref-hint">贴 API Key → 点「拉取模型」，厂商返回什么就勾什么；拉不到时用内置目录兜底。</p>
+              <div class="form-row">
+                <label>Base URL</label>
+                <input v-model.trim="qc.baseUrl" class="modal-input" placeholder="https://…" />
+              </div>
+              <div class="form-row">
+                <label>API Key</label>
+                <div class="key-row">
+                  <input
+                    :type="qc.showKey ? 'text' : 'password'"
+                    v-model="qc.apiKey"
+                    class="modal-input"
+                    placeholder="sk-…"
+                    @keyup.enter="qcProbe"
+                  />
+                  <button class="small ghost" @click="qc.showKey = !qc.showKey">{{ qc.showKey ? '隐藏' : '显示' }}</button>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button class="primary" type="button" :disabled="!qc.apiKey || qc.probing" @click="qcProbe">
+                  {{ qc.probing ? '查询厂商中…' : '拉取模型' }}
+                </button>
+              </div>
+              <p v-if="qc.error" class="test-result err">{{ qc.error }}</p>
+              <p v-if="qc.note" class="test-result">{{ qc.note }}</p>
+
+              <template v-if="qc.models.length">
+                <div class="detail-sub"><span class="ds-title">勾选要收进来的模型（{{ qc.picked.length }} / {{ qc.models.length }}）</span></div>
+                <div class="disc-list">
+                  <label v-for="m in qc.models" :key="m" class="disc-row">
+                    <input type="checkbox" :value="m" v-model="qc.picked" />
+                    <span class="dr-model">{{ m }}</span>
+                  </label>
+                </div>
+                <label class="qc-default-row">
+                  <input type="checkbox" v-model="qc.setAsDefault" /> 保存后设为默认对话模型
+                </label>
+                <div class="form-actions">
+                  <button class="primary" type="button" :disabled="!qc.picked.length || qc.saving" @click="qcSave">
+                    {{ qc.saving ? '保存中…' : `保存这 ${qc.picked.length} 个模型` }}
+                  </button>
+                </div>
+              </template>
+            </div>
+
+            <!-- B. 已配置厂商：设置 + 模型清单 -->
+            <div v-else class="llm-detail">
               <template v-if="selectedProvider">
                 <div class="detail-head">
                   <span class="dh-name">{{ selectedProvider.label || selectedProvider.name }}</span>
@@ -124,33 +178,21 @@
               </template>
               <div v-else class="pop-empty">左边选一个厂商。</div>
 
-              <!-- 添加/编辑厂商 -->
-              <div v-if="showAddLlm || editingLlmRow" class="sub-modal llm-form">
-                <h5>{{ editingLlmRow ? '编辑厂商' : '添加厂商' }}</h5>
+              <!-- 自定义供应商：没有内置目录，贴 key 后靠厂商 /models 发现 -->
+              <div v-if="showCustomForm" class="sub-modal llm-form">
+                <h5>自定义供应商</h5>
+                <p class="pref-hint">OpenAI 兼容协议（/v1/chat/completions）的服务都能接：中转站、自建网关、本地推理服务。</p>
                 <div class="form-row">
-                  <label>厂商预设</label>
-                  <select v-model="llmForm.preset" class="modal-select" :disabled="!!editingLlmRow" @change="applyPreset()">
-                    <option value="deepseek">DeepSeek</option>
-                    <option value="zhipu">智谱 (BigModel)</option>
-                    <option value="openai">OpenAI 兼容</option>
-                    <option value="custom">自定义</option>
-                  </select>
-                </div>
-                <div v-if="llmForm.preset === 'custom'" class="form-row">
                   <label>名称（唯一标识）</label>
                   <input v-model.trim="llmForm.name" class="modal-input" placeholder="my-provider" />
                 </div>
                 <div class="form-row">
                   <label>显示名</label>
-                  <input v-model.trim="llmForm.label" class="modal-input" placeholder="我的模型" />
+                  <input v-model.trim="llmForm.label" class="modal-input" placeholder="我的中转站" />
                 </div>
                 <div class="form-row">
                   <label>Base URL</label>
-                  <input v-model.trim="llmForm.baseUrl" class="modal-input" placeholder="https://api.deepseek.com/v1" />
-                </div>
-                <div class="form-row">
-                  <label>模型名</label>
-                  <input v-model.trim="llmForm.model" class="modal-input" placeholder="deepseek-flash" />
+                  <input v-model.trim="llmForm.baseUrl" class="modal-input" placeholder="https://你的网关/v1" />
                 </div>
                 <div class="form-row">
                   <label>API Key</label>
@@ -159,15 +201,15 @@
                       :type="showKey ? 'text' : 'password'"
                       v-model="llmForm.apiKey"
                       class="modal-input"
-                      :placeholder="editingLlmRow ? '留空 = 保持不变' : 'sk-...'"
+                      placeholder="sk-…"
                     />
                     <button class="small ghost" @click="showKey = !showKey">{{ showKey ? '隐藏' : '显示' }}</button>
                   </div>
                 </div>
                 <div v-if="llmFormError" class="test-result err">{{ llmFormError }}</div>
                 <div class="form-actions">
-                  <button class="primary" @click="saveLlm" :disabled="savingLlm">
-                    {{ savingLlm ? '保存中…' : '保存' }}
+                  <button class="primary" @click="saveCustomProvider" :disabled="savingLlm">
+                    {{ savingLlm ? '保存中…' : '保存并进入模型勾选' }}
                   </button>
                   <button class="ghost" @click="closeLlmForm">取消</button>
                 </div>
@@ -340,13 +382,14 @@ const VIDEO_MODEL_OPTIONS = [
   { value: 'I2V-01', label: 'I2V-01（图生视频）' },
 ]
 
-// ---- 对话模型 ----
+// ---- 对话模型：内置目录 + 一步流（D-42）----
 const showKey = ref(false)
-const llmForm = reactive({ provider: 'openai', apiKey: '', baseUrl: '', model: '' })
 const llmProviders = ref([])
+const specs = ref([])          // GET /providers/specs：内置厂商目录
 
-// ---- 右侧详情面板：选中的厂商 + 待保存的字段 ----
+// 右侧详情面板：选中的厂商行 + 待保存的字段
 const selectedProviderId = ref('')
+const selectedSpecName = ref('')
 const providerDraft = reactive({ base_url: '', api_key: '' })
 const showProviderKey = ref(false)
 const savingProvider = ref(false)
@@ -356,21 +399,154 @@ const selectedProvider = computed(
   () => (llmProviders.value || []).find((p) => p.id === selectedProviderId.value) || null,
 )
 
+/** specName → 已配置的 llm 行（同名的内置厂商只认第一行）。 */
+function rowForSpec(name) {
+  return (llmProviders.value || []).find((p) => p.name === name) || null
+}
+
+/** 左列 = 内置目录 ∪ 已配置行：目录按推荐顺序，自定义行（不在目录里的）追加在后。 */
+const leftItems = computed(() => {
+  const items = []
+  const seen = new Set()
+  for (const sp of specs.value) {
+    seen.add(sp.name)
+    const row = rowForSpec(sp.name)
+    if (row) {
+      items.push({ key: 'row:' + row.id, kind: 'row', id: row.id, label: row.label || sp.label,
+        configured: row.configured, count: providerModels(row).length })
+    } else {
+      items.push({ key: 'spec:' + sp.name, kind: 'spec', spec: sp, label: sp.label, configured: false })
+    }
+  }
+  for (const p of llmProviders.value) {
+    if (!seen.has(p.name)) {
+      items.push({ key: 'row:' + p.id, kind: 'row', id: p.id, label: p.label || p.name,
+        configured: p.configured, count: providerModels(p).length })
+    }
+  }
+  return items
+})
+
+/** 当前右侧渲染的是不是「内置厂商快速配置」面板。 */
+const selSpec = computed(() => {
+  if (!selectedSpecName.value) return null
+  return specs.value.find((s) => s.name === selectedSpecName.value) || null
+})
+
+function itemSelected(it) {
+  return it.kind === 'row'
+    ? !selectedSpecName.value && it.id === selectedProviderId.value
+    : it.spec.name === selectedSpecName.value
+}
+
+function selectItem(it) {
+  showCustomForm.value = false
+  if (it.kind === 'spec') {
+    selectedSpecName.value = it.spec.name
+    selectedProviderId.value = ''
+    resetQc(it.spec)
+  } else {
+    selectedSpecName.value = ''
+    selectedProviderId.value = it.id
+  }
+}
+
+// 快速配置（内置未配置厂商）：贴 key → probe → 勾选 → 保存。
+const qc = reactive({
+  baseUrl: '', apiKey: '', showKey: false,
+  probing: false, models: [], picked: [],
+  error: '', note: '', saving: false, setAsDefault: true,
+})
+
+function resetQc(spec) {
+  qc.baseUrl = spec.base_url || ''
+  qc.apiKey = ''
+  qc.showKey = false
+  qc.probing = false
+  qc.models = []
+  qc.picked = []
+  qc.error = ''
+  qc.note = ''
+  qc.saving = false
+  qc.setAsDefault = true
+}
+
+async function qcProbe() {
+  const spec = selSpec.value
+  if (!spec || !qc.apiKey.trim()) return
+  qc.probing = true
+  qc.error = ''
+  qc.note = ''
+  qc.models = []
+  qc.picked = []
+  try {
+    const res = await api('/providers/probe', 'POST', {
+      base_url: qc.baseUrl.trim(), api_key: qc.apiKey.trim(),
+    })
+    if (res.ok && (res.models || []).length) {
+      qc.models = res.models
+      qc.picked = res.models.slice(0, 5)   // 默认勾前 5 个（厂商按新→旧排），少点几下
+    } else if (spec.chat_models && spec.chat_models.length) {
+      // 厂商不支持列表 / key 被拒但目录在：用内置清单兜底，如实说明。
+      qc.models = spec.chat_models
+      qc.picked = spec.chat_models.slice(0, 2)
+      qc.note = res.ok
+        ? '厂商不支持模型列表，下面用内置目录，勾要收的即可。'
+        : `厂商没连通（${res.error || '未知'}）。若确认 key 无误，可先勾内置目录保存，之后用「测试连接」复查。`
+    } else {
+      qc.error = res.error || '厂商没有返回模型清单'
+    }
+  } catch (e) {
+    qc.error = '查询失败：' + (e.message || e)
+  } finally {
+    qc.probing = false
+  }
+}
+
+async function qcSave() {
+  const spec = selSpec.value
+  if (!spec || !qc.picked.length) return
+  qc.saving = true
+  try {
+    const models = qc.picked.map((m) => ({ name: m, model: m, enabled: true }))
+    const config = { models, model: models[0].model }
+    const existing = rowForSpec(spec.name)
+    let rowId
+    if (existing) {
+      await api('/providers/' + existing.id, 'PATCH', {
+        base_url: qc.baseUrl.trim(), api_key: qc.apiKey.trim(), config,
+      })
+      rowId = existing.id
+    } else {
+      const created = await api('/providers', 'POST', {
+        kind: 'llm', name: spec.name, label: spec.label,
+        base_url: qc.baseUrl.trim(), api_key: qc.apiKey.trim(),
+        config, enabled: true,
+      })
+      rowId = created.id
+    }
+    if (qc.setAsDefault) {
+      await api('/models/preferences', 'PUT', {
+        task_type: 'chat', provider_id: rowId, model_name: models[0].model, is_default: true,
+      })
+    }
+    selectedSpecName.value = ''
+    selectedProviderId.value = rowId
+    await Promise.all([loadProviders(), loadModelInfo(), loadChatPref()])
+    notify(`已接入 ${spec.label} · ${models.length} 个模型`, 'ok')
+  } catch (e) {
+    qc.error = '保存失败：' + (e.message || e)
+  } finally {
+    qc.saving = false
+  }
+}
+
 /** 选中厂商变化 → 把它的 Base URL 载进草稿（key 不回显，只提示「已配置」） */
 watch(selectedProvider, (p) => {
   providerDraft.base_url = p?.base_url || ''
   providerDraft.api_key = ''
   showProviderKey.value = false
 })
-
-/** 列表加载后：默认选中「使用中」的那个，否则第一个 */
-watch(llmProviders, (list) => {
-  if (!list.length) { selectedProviderId.value = ''; return }
-  const still = list.find((p) => p.id === selectedProviderId.value)
-  if (still) return
-  const pref = list.find((p) => p.id === chatPref.value?.provider_id)
-  selectedProviderId.value = (pref || list[0]).id
-}, { immediate: true })
 
 async function saveProvider() {
   const p = selectedProvider.value
@@ -504,30 +680,18 @@ async function submitModel() {
 const activeModel = ref({ provider: '-', name: '' })
 const activeSource = ref('env')
 const chatPref = ref(null)          // task_type=chat 的偏好（含 provider_id）
-const showAddLlm = ref(false)
-const editingLlmRow = ref(null)
+
+// 自定义供应商表单（D-42：没有内置目录，贴 key 后靠厂商 /models 发现）
+const showCustomForm = ref(false)
+const llmForm = reactive({ name: '', label: '', baseUrl: '', apiKey: '' })
 const llmFormError = ref('')
 const savingLlm = ref(false)
 
-const PRESETS = {
-  deepseek: { label: 'DeepSeek', name: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-flash' },
-  zhipu: { label: '智谱 (BigModel)', name: 'zhipu', baseUrl: 'https://open.bigmodel.cn/api/paas/v4/', model: 'GLM-5.3-Flash' },
-  openai: { label: 'OpenAI 兼容', name: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  custom: { label: '', name: '', baseUrl: '', model: '' },
-}
-const PRESET_LABELS = { deepseek: 'DeepSeek', zhipu: '智谱', openai: 'OpenAI 兼容' }
-
-const activeSourceLabel = computed(() =>
-  ({ db: '界面指定', env: '.env 配置', default: '未配置' }[activeSource.value] || activeSource.value))
 const chatPrefLabel = computed(() => {
   if (!chatPref.value) return '跟随 .env 默认'
   const p = llmProviders.value.find(x => x.id === chatPref.value.provider_id)
   const model = chatPref.value.model_name || p?.config?.model || ''
   return (p?.label || chatPref.value.provider_id) + (model ? ' · ' + model : '')
-})
-const envModelLabel = computed(() => {
-  if (activeSource.value !== 'env') return '见 .env'
-  return activeModel.value.provider + (activeModel.value.name ? ' · ' + activeModel.value.name : '')
 })
 
 async function loadModelInfo() {
@@ -537,6 +701,28 @@ async function loadModelInfo() {
     activeSource.value = d.model?.source || 'env'
   } catch { /* 保持占位 */ }
 }
+
+/** 内置厂商目录：进设置页拉一次，左列据此渲染「待配置」项。 */
+async function loadSpecs() {
+  try { specs.value = await api('/providers/specs') } catch { specs.value = [] }
+}
+
+/** 列表/目录变化后维持选中：还在就不动；不在就落到「使用中」的行，
+    一个行都没有时选目录第一项（新装用户第一眼就是「给 DeepSeek 贴 key」，不用先点一下）。
+    必须放在 chatPref 声明之后：immediate 的回调在 setup 期同步执行，
+    提前引用未声明的 const 会 TDZ 报错。 */
+watch([llmProviders, specs], () => {
+  const items = leftItems.value
+  if (!items.length) return
+  const still = items.find((it) => itemSelected(it))
+  if (still) return
+  const prefRow = items.find(
+    (it) => it.kind === 'row' && chatPref.value?.provider_id === it.id,
+  )
+  const firstRow = items.find((it) => it.kind === 'row')
+  const pick = prefRow || firstRow || items[0]
+  selectItem(pick)
+}, { immediate: true })
 
 async function loadChatPref() {
   try {
@@ -559,100 +745,54 @@ async function setAsDefault(p) {
   }
 }
 
-async function followEnv() {
-  try {
-    // provider_id 置空 = 清除界面指定，回落到 .env 链
-    await api('/models/preferences', 'PUT', {
-      task_type: 'chat', provider_id: null, model_name: '', is_default: true,
-    })
-    await Promise.all([loadChatPref(), loadModelInfo()])
-  } catch (e) {
-    alert('恢复失败：' + e.message)
-  }
-}
-
-function applyPreset() {
-  const pre = PRESETS[llmForm.preset]
-  if (!pre || editingLlmRow.value) return
-  if (!llmForm.label) llmForm.label = pre.label
-  llmForm.baseUrl = pre.baseUrl
-  llmForm.model = pre.model
-}
-
-function openAddLlm() {
-  llmForm.preset = 'deepseek'
+function openCustomForm() {
   llmForm.name = ''
   llmForm.label = ''
-  llmForm.baseUrl = PRESETS.deepseek.baseUrl
-  llmForm.model = PRESETS.deepseek.model
+  llmForm.baseUrl = ''
   llmForm.apiKey = ''
   llmFormError.value = ''
-  showAddLlm.value = true
-}
-
-function editLlm(p) {
-  editingLlmRow.value = p
-  llmForm.preset = PRESET_LABELS[p.name] ? p.name : 'custom'
-  llmForm.name = p.name
-  llmForm.label = p.label
-  llmForm.baseUrl = p.base_url || ''
-  llmForm.model = p.config?.model || ''
-  llmForm.apiKey = ''
-  llmFormError.value = ''
+  showCustomForm.value = true
+  // 自定义走「行」视图之外的独立面板；清掉 spec 选中，右侧腾出表单空间。
+  selectedSpecName.value = ''
+  selectedProviderId.value = ''
 }
 
 function closeLlmForm() {
-  showAddLlm.value = false
-  editingLlmRow.value = null
+  showCustomForm.value = false
   llmForm.apiKey = ''
   llmFormError.value = ''
 }
 
-async function saveLlm() {
-  const model = llmForm.model.trim()
+/** 只建厂商行（不预设模型）：保存后自动选中它，右侧引导用户「发现模型」勾选。 */
+async function saveCustomProvider() {
+  const name = llmForm.name.trim()
   const baseUrl = llmForm.baseUrl.trim()
-  if (!model) { llmFormError.value = '模型名必填'; return }
+  if (!name) { llmFormError.value = '名称必填（唯一标识，如 my-gateway）'; return }
   if (!baseUrl) { llmFormError.value = 'Base URL 必填'; return }
-  if (!editingLlmRow.value && llmForm.preset === 'custom' && !llmForm.name.trim()) {
-    llmFormError.value = '自定义厂商需要名称'; return
-  }
-  if (!editingLlmRow.value && !llmForm.apiKey.trim()) {
-    llmFormError.value = 'API Key 必填'; return
-  }
+  if (!llmForm.apiKey.trim()) { llmFormError.value = 'API Key 必填'; return }
   savingLlm.value = true
   llmFormError.value = ''
   try {
-    if (editingLlmRow.value) {
-      const models = [{ name: model, model, enabled: true }]
-      await api('/providers/' + editingLlmRow.value.id, 'PATCH', {
-        label: llmForm.label.trim(),
-        base_url: baseUrl,
-        config: { models, model },
-        api_key: llmForm.apiKey.trim() || undefined,
+    const label = llmForm.label.trim() || name
+    const same = rowForSpec(name)
+    let rowId
+    if (same) {
+      // 同名不重复建：反复「自定义供应商」来改配置，而不是攒两行同名。
+      await api('/providers/' + same.id, 'PATCH', {
+        label, base_url: baseUrl, api_key: llmForm.apiKey.trim(),
       })
+      rowId = same.id
     } else {
-      const preset = PRESETS[llmForm.preset]
-      const name = llmForm.preset === 'custom' ? llmForm.name.trim() : preset.name
-      const label = llmForm.label.trim() || preset.label || name
-      // 模型配置存成**清单**：与「模型列表」是同一份数据，加完厂商就能在那儿继续加模型。
-      const models = [{ name: model, model, enabled: true }]
-      // 同名厂商不重复建：用户可以反复「添加厂商」来改配置，而不是攒出两行同名。
-      const same = (llmProviders.value || []).find((p) => p.name === name)
-      if (same) {
-        await api('/providers/' + same.id, 'PATCH', {
-          label, base_url: baseUrl,
-          config: { models, model },
-          api_key: llmForm.apiKey.trim() || undefined,
-        })
-      } else {
-        await api('/providers', 'POST', {
-          kind: 'llm', name, label, base_url: baseUrl,
-          api_key: llmForm.apiKey.trim(), config: { models, model }, enabled: true,
-        })
-      }
+      const created = await api('/providers', 'POST', {
+        kind: 'llm', name, label, base_url: baseUrl,
+        api_key: llmForm.apiKey.trim(), config: {}, enabled: true,
+      })
+      rowId = created.id
     }
     closeLlmForm()
     await Promise.all([loadProviders(), loadModelInfo()])
+    selectedProviderId.value = rowId
+    notify('厂商已保存，点「发现模型」拉清单', 'ok')
   } catch (e) {
     llmFormError.value = '保存失败：' + e.message
   } finally {
@@ -762,7 +902,6 @@ async function loadProviders() {
     llmProviders.value = all.filter(p => p.kind === 'llm').map(p => ({ ...p, testing: false, testResult: null }))
   } catch {}
   syncVideoForm()
-  if (showAddLlm.value && !editingLlmRow.value && !llmForm.label) applyPreset()
 }
 
 /** 用已保存的 MiniMax 配置回填表单（Key 永远留空，表示「保持不变」）。 */
@@ -811,6 +950,7 @@ async function saveMinimax() {
 
 watch(() => props.open, (v) => {
   if (v) {
+    loadSpecs()
     loadProviders()
     loadModelInfo()
     loadChatPref()
@@ -820,6 +960,7 @@ watch(() => props.open, (v) => {
 
 onMounted(() => {
   if (props.open) {
+    loadSpecs()
     loadProviders()
     loadModelInfo()
     loadChatPref()
@@ -888,11 +1029,18 @@ onMounted(() => {
 .side-dot.on { background: var(--ok); }
 .side-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-count { font-size: 10px; color: var(--dim); flex: none; font-variant-numeric: tabular-nums; }
+.side-tag { font-size: 10px; color: var(--dim); flex: none; }
 .llm-side-add {
   margin-top: auto; padding: 6px 9px; border-style: dashed; color: var(--muted);
   text-align: left;
 }
 .llm-detail { min-width: 0; }
+/* 内置厂商快速配置面板：贴 key → 拉取 → 勾选 → 保存，一屏完成 */
+.qc-panel .key-row { width: 100%; }
+.qc-default-row {
+  display: flex; align-items: center; gap: 8px; margin-top: 10px;
+  font-size: var(--fs-sm); color: var(--muted); cursor: pointer;
+}
 .detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .dh-name { font-size: var(--fs-lg); font-weight: 600; color: var(--ink); }
 .dh-actions { margin-left: auto; display: flex; gap: 6px; }

@@ -352,6 +352,8 @@ def describe_providers() -> list[dict[str, Any]]:
             "default_model": s.default_model,
             "env_key": s.env_key,
             "requires_key": s.requires_key,
+            "docs": s.docs,
+            "chat_models": list(s.chat_models),
             "modalities": [
                 m
                 for m, ok in (

@@ -146,12 +146,12 @@ def test_director_validate_requires_camera_path_for_moving_shots():
         Shot(id="shot_scene_001_000", scene_id="scene_001", order=0, duration_sec=8,
              reference_group="room", cut_reason="起点",
              function="pressure", final_frame="镜头停在他背后",
-             action="他下颌锁死，手撑在桌上", lighting="冷光从左上来",
+             action="他下颌锁死，双手撑桌站起身；椅子向后蹭出一声；他绕过桌角走到墙边", lighting="冷光从左上来",
              camera=CameraMovement(type="dolly", speed="slow")),          # 缺 path
         Shot(id="shot_scene_001_001", scene_id="scene_001", order=1, duration_sec=8,
              subject="座钟", reference_group="room", cut_reason="视点转移",
              function="emotion", final_frame="秒针走完一格",
-             action="秒针跳动，他眼神下沉", lighting="侧光扫过钟面",
+             action="他凑近钟面，抬手抹过一层灰；指尖顺着指针划过半圈；手腕停在十二点处", lighting="侧光扫过钟面",
              camera=CameraMovement(type="static")),                        # 固定机位，无需 path
     ])
     issues = " ".join(_director()._validate_continuity([bd]))
@@ -168,12 +168,12 @@ def test_director_validate_accepts_good_plan():
             Shot(id="shot_scene_001_000", scene_id="scene_001", order=0, duration_sec=8,
                  reference_group="room", cut_reason="起点",
                  function="pressure", final_frame="光斑停在他脸上",
-                 action="他下颌锁死，手指抠着桌沿", lighting="钨丝灯从上方打亮斑",
+                 action="他下颌锁死，手指抠着桌沿；他缓缓站起身；椅子向后蹭开半尺", lighting="钨丝灯从上方打亮斑",
                  background_action="秒针的滴答声持续"),
             Shot(id="shot_scene_001_001", scene_id="scene_001", order=1, duration_sec=8,
                  subject="对话交锋", reference_group="room", chain_from=0, cut_reason="对话单元切换",
                  function="emotion", final_frame="两人隔桌对视定格",
-                 action="她嘴唇压成一条线", lighting="侧光把半张脸切进阴影"),
+                 action="她推开板凳坐到桌前；嘴唇压成一条线；手把座钟转向他", lighting="侧光把半张脸切进阴影"),
         ],
     )
     assert _director()._validate_continuity([bd]) == []

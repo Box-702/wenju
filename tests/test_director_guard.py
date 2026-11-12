@@ -61,9 +61,10 @@ def test_一镜动作超载被打回() -> None:
 
 
 def test_动作密度合规时不再唠叨() -> None:
+    # 新规则（2026-11-12 v3 复盘）下「合规」= ≥3 段、含一段位移级、不超上限
     shots = [Shot(
         id="shot_scene_001_000", scene_id="scene_001", order=0, duration_sec=8,
-        action="甲推开门走进来，手指在门框上搭了一下；乙抬头看他",
+        action="甲推开门走进来，手指在门框上搭了一下；乙抬头看他；乙随即起身让出半条板凳",
     )]
     issues = _check(shots)
     assert not any("段身体动作" in i for i in issues)
@@ -346,3 +347,33 @@ def test_闸门_悬空接力引用被修复():
     for s in kept:
         if s.chain_from is not None:
             assert s.chain_from in orders and s.chain_from < s.order
+
+
+def test_动作下限_两段微动作被打回():
+    """v3 实测教训：24 镜 22 镜只写 2 段微动作 → 模型循环播放成 PPT。
+    校验器必须打回 <3 段的 action。"""
+    shots = [Shot(
+        id="shot_scene_001_000", scene_id="scene_001", order=0, duration_sec=4,
+        action="孔乙己嘴唇抿成一条线；右手仍按在柜台上没收回来",
+    )]
+    issues = _check(shots)
+    assert any("至少 3 段" in i for i in issues), issues
+
+
+def test_动作下限_三段全微动也被打回():
+    """段数够但全是面部/手指微动，同样循环感——要一段位移级大动作。"""
+    shots = [Shot(
+        id="shot_scene_001_000", scene_id="scene_001", order=0, duration_sec=4,
+        action="他抿了一下嘴；眉毛压低；指节慢慢收紧",
+    )]
+    issues = _check(shots)
+    assert any("位移级" in i for i in issues), issues
+
+
+def test_动作下限_有位移三段的合格镜头不误伤():
+    shots = [Shot(
+        id="shot_scene_001_000", scene_id="scene_001", order=0, duration_sec=4,
+        action="孔乙己俯身从怀里摸出钱袋；他把九枚铜钱一枚枚按在柜台面上；手从柜台收回，退后半步站直",
+    )]
+    issues = _check(shots)
+    assert not [i for i in issues if "至少 3 段" in i or "位移级" in i], issues

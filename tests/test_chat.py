@@ -815,3 +815,41 @@ def test_system_prompt_teaches_at_semantics():
 
     sp = system_prompt()
     assert "@" in sp and "引用" in sp
+
+
+# ---------- import_storyboard 校验（D-47 成品分镜直入） ----------
+
+
+def test_validate_units_单镜与组都收():
+    from app.chat.tools.production import validate_storyboard_units
+
+    raw = [
+        {"prompt": "P1 果园过肩镜头", "duration_sec": 4},
+        {"prompt": "GROUP 排钱三机位", "duration_sec": 9, "shots": [
+            {"duration_sec": 4, "shot_type": "medium", "subject": "客人", "action": "排钱"},
+            {"duration_sec": 2, "shot_type": "extreme_close_up", "subject": "铜钱"},
+            {"duration_sec": 3, "shot_type": "over_shoulder", "subject": "掌柜"},
+        ]},
+    ]
+    units, errors = validate_storyboard_units(raw)
+    assert errors == [] and len(units) == 2
+    assert units[1]["shots"][2]["shot_type"] == "over_shoulder"
+
+
+def test_validate_units_坏数据当场拦():
+    from app.chat.tools.production import validate_storyboard_units
+
+    bad = [
+        {"prompt": "", "duration_sec": 4},                       # 缺 prompt
+        {"prompt": "P", "duration_sec": 30},                     # 超一次生成上限
+        {"prompt": "P", "duration_sec": 6, "shots": [
+            {"duration_sec": 2, "shot_type": "selfie"},          # 景别非法
+            {"duration_sec": 2, "shot_type": "wide"},
+        ]},                                                      # 机位和=4≠6
+    ]
+    units, errors = validate_storyboard_units(bad)
+    assert len(units) == 0 or len(errors) >= 3
+    assert any("prompt" in e for e in errors)
+    assert any("区间" in e for e in errors)
+    assert any("景别" in e for e in errors)
+    assert any("对不上" in e for e in errors)

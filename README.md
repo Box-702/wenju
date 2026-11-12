@@ -55,7 +55,7 @@
 
 ### 工具集
 
-**对话 Conductor 工具（23 个）**：剧本侧 `create_project`（超长原文主动提示）/ `map_novel` / `propose_arcs` / `generate_script` / `run_adaptation` / `read_script`（读作品的台本 / 目录 / 镜头 / 视觉资产）/ `ask`；原文侧 `read_source` / `search_source`；剧组 `breakdown_scenes` / `generate_style_guide` / `generate_video_prompts` / `generate_reference_assets` / `clone_voice`；出片 `approve_video_prompts` / `submit_videos` / `rerun_video` / `finalize_film`；生产 `start_production`；查询只有一个 `get_status`（五合一，别再拆）；记忆 `remember` / `recall`；技能 `load_skill`。从导入小说到出片的全流程都能在对话里完成；每轮的工具轨迹压缩后进入历史上下文，多轮不丢事实。
+**对话 Conductor 工具（28 个）**：剧本侧 `create_project`（超长原文主动提示）/ `map_novel` / `propose_arcs` / `generate_script` / `run_adaptation` / `read_script`（读作品的台本 / 目录 / 镜头 / 视觉资产）/ `ask`；原文侧 `read_source` / `search_source`；剧组 `breakdown_scenes` / `generate_style_guide` / `generate_video_prompts` / `generate_reference_assets` / `clone_voice`；出片 `approve_video_prompts` / `submit_videos` / `rerun_video` / `finalize_film`；生产 `start_production` / `import_storyboard`（成品分镜直出，D-47）；查询只有一个 `get_status`（五合一，别再拆）；记忆 `remember` / `recall`；技能 `load_skill`。从导入小说到出片的全流程都能在对话里完成；每轮的工具轨迹压缩后进入历史上下文，多轮不丢事实。
 
 **主 Agent 按需加载技能**：系统提示只放「触发 → 动作」的路由表 + 四个技能的目录，真正怎么做（步骤顺序、硬门槛、失败处理）在 `app/skills/{novel-serial,crew-pipeline,production-delivery,script-review}/SKILL.md` 里，进入该领域时由 `load_skill` 按需拉取。实测（每例连跑 3 次）：长篇直接要初稿 3/3 会先加载细则并拒绝整本生成，改编 3/3、出片 3/3 在动手前加载，「拆好了吗」3/3 不多花一次往返。改流程只动 `.md`，不碰代码。
 
@@ -253,7 +253,7 @@ Wenju/
 │   │
 │   ├── chat/
 │   │   ├── conductor.py      # 对话编排：系统提示 + 对话图 + 轮次服务
-│   │   └── tools/            # 23 个工具的实现，按域拆分（screenplay/source/script_reader/crew/video/production…）
+│   │   └── tools/            	# 28 个工具的实现，按域拆分（screenplay/source/script_reader/crew/video/production…）
 │   ├── media/
 │   │   └── refs.py           # 参考资产流水线（定妆图 → 质检 → 回填）
 │   ├── crew/                 # 剧组 Agent

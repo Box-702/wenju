@@ -82,8 +82,96 @@ def _default_pacing(adaptation_type: str | None) -> str:
 def _budget_for(adaptation_type: str | None) -> float:
     """成片目标时长（秒）。短剧 120 秒。"""
     from ..video.rhythm import duration_budget
-
     return duration_budget(adaptation_type)
+
+
+# 确定性闸门用的单镜时长上限：短剧节奏基线（导演技能「不要写 8 秒以上」）。
+CAP_SHOT_SEC = 6.0
+
+
+def enforce_duration_budget(
+    breakdowns: list[SceneBreakdown], budget_sec: float,
+) -> tuple[list[SceneBreakdown], list[str]]:
+    """确定性片长闸门：导演回喂多轮仍超预算时，代码直接砍。
+
+    为什么必须有这一道：预算在提示词里写了、校验里也报了，但那些都只是「回喂批评」——
+    模型可以不理，迭代用完照样放行（2026-11-12 孔乙己三次实测：45 / 39 / 53 镜，
+    全部超 120 秒预算一倍以上）。超预算不只是节奏问题：每一镜都是一次真金白银的
+    视频生成，53 镜意味着近三倍的算力与账户余额。批评管不住的数，代码来管。
+
+    砍法（先便宜后疼）：
+      1. 单镜时长封顶 CAP_SHOT_SEC——长镜头先瘦身；
+      2. 还超就删镜头，优先删「壁纸镜头」（function 不在三工作里），
+         再删没认领台词的，同样条件删时长最长的；带台词的镜头最后才动
+         （删了会丢配音，宁可多留）；
+      3. 删完修复 chain_from 悬空引用：指向被删 order 的改指向最近的保留前镜，
+         没有前镜可指就断开接力（None）。
+    返回 (压缩后的分镜, 人话说明列表)。调用方负责把说明拼进 summary。
+    """
+    notes: list[str] = []
+    all_shots = [s for bd in breakdowns for s in bd.shots]
+    if not all_shots:
+        return breakdowns, notes
+
+    total = sum(max(0.0, s.duration_sec) for s in all_shots)
+    if total <= budget_sec:
+        return breakdowns, notes
+
+    # 1) 时长封顶
+    capped = 0
+    for s in all_shots:
+        if s.duration_sec > CAP_SHOT_SEC:
+            s.duration_sec = CAP_SHOT_SEC
+            capped += 1
+    total = sum(max(0.0, s.duration_sec) for s in all_shots)
+    if capped:
+        notes.append(f"闸门：{capped} 个超长镜头已封顶 {CAP_SHOT_SEC:.0f} 秒")
+
+    # 2) 删镜头直到进预算。给每个镜头打「该先删」分：越小越先删。
+    def drop_priority(s: Shot) -> tuple:
+        wallpaper = 0 if s.function not in SHOT_FUNCTIONS else 1
+        no_dialogue = 0 if not (s.dialogue_ref or "").strip() else 1
+        # 时长长的先删（省得多）；同分按 order 稳定
+        return (wallpaper, no_dialogue, -s.duration_sec, s.order)
+
+    kept = list(all_shots)
+    dropped: list[Shot] = []
+    while sum(max(0.0, s.duration_sec) for s in kept) > budget_sec and len(kept) > 1:
+        victim = min(kept, key=drop_priority)
+        kept.remove(victim)
+        dropped.append(victim)
+
+    if dropped:
+        notes.append(
+            f"闸门：仍超预算，删掉 {len(dropped)} 个镜头"
+            f"（壁纸 {sum(1 for d in dropped if d.function not in SHOT_FUNCTIONS)} 个、"
+            f"无台词 {sum(1 for d in dropped if not (d.dialogue_ref or '').strip())} 个），"
+            f"压到 {sum(s.duration_sec for s in kept):.0f} 秒"
+        )
+
+    kept_orders = sorted({s.order for s in kept})
+    kept_set = set(kept_orders)
+
+    # 3) 重建各场的 shots 列表并修复悬空 chain_from
+    kept_by_scene: dict[str, list[Shot]] = {}
+    for s in kept:
+        kept_by_scene.setdefault(s.scene_id, []).append(s)
+    out: list[SceneBreakdown] = []
+    repaired = 0
+    for bd in breakdowns:
+        shots = sorted(kept_by_scene.get(bd.scene_id, []), key=lambda s: s.order)
+        for s in shots:
+            if s.chain_from is not None and s.chain_from not in kept_set:
+                earlier = [o for o in kept_orders if o < s.order]
+                s.chain_from = earlier[-1] if earlier else None
+                repaired += 1
+        if not shots and bd.shots:
+            continue  # 整场被删空的 breakdown 不再输出
+        bd.shots = shots
+        out.append(bd)
+    if repaired:
+        notes.append(f"闸门：修复 {repaired} 处悬空的接力引用")
+    return out, notes
 
 
 def _format_constraints(
@@ -268,15 +356,28 @@ class DirectorAgent(CrewAgent):
                 budget_sec=_budget_for(adaptation_type),
             )
             if not critique:
+                # 校验通过（在 1.5x 上限内）也要过确定性闸门：
+                # 闸门按「预算」而不是「上限」收——超预算的秒数就是超预算的钱。
+                budget = _budget_for(adaptation_type)
+                gated, notes = enforce_duration_budget(breakdowns, budget)
                 summary = (
-                    f"导演完成 {len(breakdowns)} 个场景的镜头拆解，"
-                    f"共 {sum(len(b.shots) for b in breakdowns)} 个镜头"
+                    f"导演完成 {len(gated)} 个场景的镜头拆解，"
+                    f"共 {sum(len(b.shots) for b in gated)} 个镜头"
                 )
-                return CrewTaskResult(data=breakdowns, summary=summary)
+                if notes:
+                    summary += "；" + "；".join(notes)
+                return CrewTaskResult(data=gated, summary=summary)
 
-        total = sum(len(b.shots) for b in last) if last else 0
-        summary = f"导演完成拆解（共 {total} 镜），但连续性校验仍待完善：{critique[0] if critique else ''}"
-        return CrewTaskResult(data=last, summary=summary, errors=critique)
+        # 迭代用完仍不合格：批评可以不理，预算不能不理——钱是硬约束。
+        budget = _budget_for(adaptation_type)
+        gated, notes = enforce_duration_budget(last, budget)
+        total = sum(len(b.shots) for b in gated) if gated else 0
+        summary = f"导演完成拆解（共 {total} 镜）"
+        if notes:
+            summary += "；" + "；".join(notes)
+        if critique:
+            summary += f"，但连续性校验仍待完善：{critique[0]}"
+        return CrewTaskResult(data=gated, summary=summary, errors=critique)
 
     def _design_batch(
         self,

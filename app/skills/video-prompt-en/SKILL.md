@@ -54,6 +54,19 @@ thing the video model sees — anything you leave out, it will invent):
 5. **Give background extras their own business.** Independent, unsynchronized everyday
    behavior — say who is doing what. A few may stay still for a while; not everyone has
    to keep moving. Avoid a uniformly synchronized background.
+5b. **Crowds and hands are where generations break — compose around them.** QA on real
+   output (2026-11-12, Kong Yiji) shows FAILs are almost all finger distortion / prop
+   interpenetration / fused limbs / warped faces, concentrated in two shot types: several
+   people each doing a fine motor action in one frame, and close-ups of hands on props.
+   Downgrade deliberately:
+   · at most 2 characters perform fine actions per shot; give the rest stillness or one
+     large posture (leaning on the wall dozing, arms folded listening, staring into their
+     own bowl) — the simpler the pose, the more stable the structure;
+   · counting coins, pinching beans, splitting fingers never gets a close-up — hold a
+     medium shot and keep a single beat of contact ("the coins already lie on the counter,
+     his hand drawing back from them"); let the other characters' eyelines follow the action;
+   · hands stay out of face close-ups: if the hand must act, either a medium shot from the
+     chest up, or a hand-only insert — pick one, never both.
 6. **Only what is visible on screen**: no narration, inner monologue, novelistic prose,
    shot numbers, cut instructions or editing language.
 7. **Describe contact actions as a physical process — budget for the main event only.**

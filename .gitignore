@@ -56,3 +56,4 @@ blender/*.blend1
 
 # ---------- WorkBuddy 工作区数据 ----------
 .workbuddy/
+output/

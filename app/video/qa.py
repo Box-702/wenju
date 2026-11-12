@@ -227,6 +227,11 @@ def reroll_if_needed(
     attempt = int(params.get("qa_attempt") or 0)
     if attempt > max_reroll:  # 安全阀：绝不无限重 roll
         return None
+    # 幂等保险：这个任务已经质检过（params 里有 qa 结论）就不再处理。
+    # 队列回调若因任何原因重复触发，这里兜住——重 roll 一次就是一次的钱
+    # （2026-11-12 孔乙己实测：同一任务被重复回调重 roll 两次，余额烧穿）。
+    if params.get("qa"):
+        return None
 
     result = qa_check(job.video_url)
     params["qa"] = result

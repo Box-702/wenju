@@ -232,7 +232,12 @@ class VideoJobManager:
             job.update(fields)
             snapshot = dict(job)
 
-        fingerprint = (snapshot.get("status"), snapshot.get("video_url"), snapshot.get("error"))
+        # 指纹不含 video_url 本体：MiniMax 等厂商的成片链接是带签名的临时 URL，
+        # 每次轮询返回值都可能不同——把 url 算进指纹会让「已成功」的任务被反复
+        # 判成状态变化、回调反复触发（2026-11-12 孔乙己实测：同一任务质检重 roll
+        # 两次「第 1 次」，重复建任务重复计费，账户余额就是这么烧穿的）。
+        # 只记「有没有 url」：首次拿到 url 仍触发一次；后续签名刷新不再触发。
+        fingerprint = (snapshot.get("status"), bool(snapshot.get("video_url")), snapshot.get("error"))
         if self._notified.get(job_id) == fingerprint:
             return
         self._notified[job_id] = fingerprint

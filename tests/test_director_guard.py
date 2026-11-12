@@ -271,3 +271,78 @@ def test_导演prompt里必须带beat_id():
     agent = DirectorAgent.__new__(DirectorAgent)
     prompt = agent._build_prompt(script, script.scenes[:1], "short_drama", "realistic")
     assert "[动作 beat_001]" in prompt
+
+
+# =====================================================================
+# 确定性片长闸门 enforce_duration_budget（2026-11-12 孔乙己实测后加：
+# 批评回喂管不住的镜头数，代码来管——每镜都是真金白银）
+# =====================================================================
+
+from app.crew.director import CAP_SHOT_SEC, enforce_duration_budget
+
+
+def _bd(scene_id: str, shots: list[Shot]) -> SceneBreakdown:
+    return SceneBreakdown(scene_id=scene_id, shots=shots)
+
+
+def _shot(order: int, *, dur: float = 5.0, fn: str = "action",
+          dlg: str | None = None, scene_id: str = "scene_001") -> Shot:
+    return Shot(
+        id=f"shot_{scene_id[6:]}_{order:03d}", scene_id=scene_id, order=order,
+        duration_sec=dur, function=fn, dialogue_ref=dlg,
+    )
+
+
+def test_闸门_预算内原样返回():
+    shots = [_shot(i, dur=4) for i in range(5)]  # 20s
+    out, notes = enforce_duration_budget([_bd("scene_001", shots)], 120)
+    assert sum(len(b.shots) for b in out) == 5 and not notes
+
+
+def test_闸门_超长镜头先封顶():
+    shots = [_shot(i, dur=12) for i in range(20)]  # 240s → 封顶后 120s，恰好进预算
+    out, notes = enforce_duration_budget([_bd("scene_001", shots)], 120)
+    assert all(s.duration_sec <= CAP_SHOT_SEC for b in out for s in b.shots)
+    assert sum(len(b.shots) for b in out) == 20  # 封顶就够了，不删镜
+    assert any("封顶" in n for n in notes)
+
+
+def test_闸门_删镜优先壁纸与无台词():
+    # 10 镜 × 6s = 60s… 不超。构造超支：20 镜 6s=120s 再塞 10 镜 → 必须删
+    shots = []
+    for i in range(15):
+        shots.append(_shot(i, dur=6, fn="action", dlg=f"beat_{i:03d}"))   # 有台词正镜
+    for i in range(15, 25):
+        shots.append(_shot(i, dur=6, fn=""))                               # 壁纸无台词
+    out, notes = enforce_duration_budget([_bd("scene_001", shots)], 120)
+    kept = [s for b in out for s in b.shots]
+    assert sum(s.duration_sec for s in kept) <= 120
+    # 先删的应该是壁纸（后 10 个 order 更大）
+    assert all(s.order < 15 or s.function for s in kept) or \
+        sum(1 for s in kept if not s.function) < 10
+    assert any("删掉" in n for n in notes)
+
+
+def test_闸门_带台词的镜头最后才动():
+    shots = [_shot(i, dur=6, fn="action", dlg="beat_001") for i in range(3)]
+    shots += [_shot(i, dur=6, fn="") for i in range(3, 25)]  # 22 个壁纸
+    out, _ = enforce_duration_budget([_bd("scene_001", shots)], 120)
+    kept = [s for b in out for s in b.shots]
+    # 3 个有台词的都保住了
+    assert sum(1 for s in kept if s.dialogue_ref) == 3
+
+
+def test_闸门_悬空接力引用被修复():
+    shots = [_shot(0, dur=6, fn="action", dlg="beat_001"),
+             _shot(1, dur=6, fn="action", dlg="beat_002")]
+    shots[1].chain_from = 0
+    shots += [_shot(i, dur=6, fn="") for i in range(2, 30)]
+    # 让 order=0 先被删（壁纸优先删，但 0 有台词……改构造：0 是壁纸）
+    shots[0].function = ""
+    shots[0].dialogue_ref = None
+    out, _ = enforce_duration_budget([_bd("scene_001", shots)], 120)
+    kept = [s for b in out for s in b.shots]
+    orders = {s.order for s in kept}
+    for s in kept:
+        if s.chain_from is not None:
+            assert s.chain_from in orders and s.chain_from < s.order

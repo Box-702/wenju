@@ -55,6 +55,7 @@ app/
 ├── main.py / cli.py                         入口层（HTTP / CLI，都调 config.bootstrap_env）
 ├── api/           REST 路由包 —— 按业务域分模块
 ├── config.py / deps.py                      配置与依赖装配（全项目唯一装配点）
+├── home.py                                 产品主目录 ~/.wenju（D-44：app.db + workspace/ + runs/，懒迁移）
 ├── keys.py                                 同厂商多把 key 的轮换与冷却（「哪把能过用哪把」）
 ├── domain.py / store.py / workspace.py      领域模型 / 持久化 / 文件系统
 ├── memory.py                               三层用户记忆 + 会话滚动摘要
@@ -67,6 +68,10 @@ app/
 ├── crew/       剧组 Agent   —— 导演 / 美术指导 / 摄影指导
 ├── media/      参考资产层   —— 资产键解析（assets：id 是主键、名字是别名）/ 定妆图 → 质检 → 注册 → 回填 / 配音 / 字幕
 └── video/      视频生成层   —— Provider 抽象 + 队列 + 巡检 + 连续性 + 拼接 + 成片合成
+
+N2D/                          小说→成片直跑工作流（体检/批处理用，与产品共用同一套 app/* 函数）
+├── novel2video.py            十步流水线 + --resume 断点续跑 + --shot-limit 分批；产物落 ~/.wenju/runs/
+└── probe_seedance.py         Seedance 适配器校准探针（真 key 打最小任务对字段）
 ```
 
 **体量分布**（约 2.1 万行 Python，越靠上越重业务）：

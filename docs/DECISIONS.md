@@ -1552,6 +1552,76 @@ fail-closed 闸门再加一道等值校验：提交的 prompt 必须与该镜头
 
 ---
 
+## D-44 用户数据搬到产品主目录 ~/.wenju：代码与数据分离 —— 已定（2026-11-12）
+
+**背景**：数据库与工作区一直躺在项目 `data/` 里，跟着代码目录走。实际
+事故：11/2 重新 clone 出 `wenju` 副本后两份目录各带各的库，在哪个目录
+跑服务就只能看见那个目录的作品，用户以为「项目改名又变回去了」——
+数据没丢，是入口分裂。本地 Agent 的用户数据生命周期应该属于用户，
+不属于某一次 clone。
+
+**选项**：① 保持项目内 `data/`（现状）；② 仿 Codex 的产品主目录
+`~/.wenju/`（app.db + workspace/ + runs/），懒迁移；③ 上对象存储/数据库
+服务（三层存储文章的完整方案）。
+
+**决定**：选 ②。`app/home.py`：`WENJU_HOME` 环境变量可整体搬家；
+`ensure_home()` 建骨架 + 懒迁移（家目录无 app.db 且项目有正名旧库 →
+整库+工作区**复制**进来，旧库保留可回退；只认 script_agent.db/app.db/
+wenju.db 正名，不做「挑最大」启发式——data/ 里常年有 verify.db 等调试
+残留）。工作区目录补 05_分镜/06_素材/07_成片 分层；N2D 跑批产物落
+`~/.wenju/runs/<作品>_<时间>/`，项目文件夹从此零用户数据。
+
+**理由**：① 已被事故证伪；③ 对单机本地 Agent 是纯运维负担（MinIO
+自托管违背零运维初衷），吸收其中不依赖对象存储的部分（按产物类型
+分目录、runs 即 checkpoint、元数据/字节分层意识）即可。② 备份=拷一个
+文件夹，换 clone 目录不丢作品，与 Codex 心智一致。
+
+**什么时候该推翻**：产品走向多端同步/协作/服务端部署时，家目录方案
+到顶——届时元数据库升 Postgres、字节走真对象存储，但 home 层的
+目录语义（workspace/runs 分型）可以原样映射过去。
+
+**相关**：`app/home.py` · `app/config.py`（database_url /
+effective_workspace_root 默认值）· `app/workspace.py`（SUBDIRS 05-07）·
+`N2D/novel2video.py`（RUNS 落家目录）· `tests/test_home.py`（5 用例）·
+`docs/DEVELOPMENT.md` 5.37(5) · D-41
+
+---
+
+## D-45 视频档位：本地调试默认 H3-Lite，三档入库可切；计费按档位×分辨率 —— 已定（2026-11-12）
+
+**背景**：账单解剖（5.37(3)）发现我们对 MiniMax 计费的理解全错：
+input_seconds 与输出同价、图片每任务前 5 张免费、秒价按档位×分辨率
+双维。旗舰 H3 768P + 整条接力实测 ¥8.3/镜，50 元只够 6 镜；体检期
+需要的是「便宜地验证流程」，不是「最贵地验证流程」。
+
+**选项**：① 固定单档（此前事实上的状态）；② 档位表入库 + 默认降
+Lite + 设置页三档可切；③ 换供应商（Seedance A/B）解决成本。
+
+**决定**：选 ②。`MiniMaxProvider._TIERS` 按官方定价页逐格建模
+（H3/Highspeed/Lite/Max × 分辨率 → 秒价 + 图价 + 时长下限 + 分辨率
+白名单），`_DEFAULT_MODEL = MiniMax-H3-Lite`；设置页下拉三档带价格
+标注（旧 v1 模型 Hailuo-02/T2V-01/I2V-01 已从 V2 下线，移除）；
+`estimate_cost_real` 按真实公式估算、且在参考锚回填之后计算。
+质量评审阶段用户可切回 H3——成本决策交还给用户，默认值替调试省钱。
+
+**理由**：① 已被账单证伪；③ 是供应商层的事，与档位层正交——A/B
+照样要在档位语义清晰之后做，否则对比的是「档位差异」不是「模型差异」。
+
+**副作用与边界**：档位收敛使「切 Highspeed 传 2K」这类组合在提交前
+就被收敛（此前会被服务端拒）；first/last_frame 与 reference_* 互斥
+护栏按参考优先——若将来启用首尾帧控制需重新设计接力锚。
+
+**什么时候该推翻**：Seedance A/B 数据显示跨供应商单价/良率差 >2 倍时，
+档位表升级为供应商×模型两级矩阵（video registry 已支持按 name 取用）。
+
+**相关**：`app/video/providers/minimax.py`（_TIERS / estimate_cost_real /
+_build_content 护栏）· `app/media/inline.py`（clip_tail_data_uri 接力裁尾）·
+`app/video/service.py`（_job_params 裁尾接线 + 回填后估算）·
+`frontend/src/components/settings/SettingsModal.vue`（三档下拉）·
+`docs/DEVELOPMENT.md` 5.37(3) · D-08 · D-40
+
+---
+
 ## 记录新决策的模板
 
 ```markdown

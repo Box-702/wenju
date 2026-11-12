@@ -233,6 +233,34 @@ def finalize_film(
         elif dubbing:
             emit("剧本不可读或无版本，跳过配音")
 
+        # ---- 3b) 静片兜底：台词没配上时剥掉模型自生的假语音 ----
+        # 视频模型的原始音轨是含混"叽喳声"（台词按设计不进提示词），留着它
+        # 观众只听到"听不清的说话声却不知道谁在说什么"（2026-11-12 v2 反馈）。
+        # 静片 + 字幕远好于假语音。仅在「本片有台词且配音没成功」时剥音轨。
+        if not dubbed and script is not None:
+            has_dialogue = any(
+                (b.type == "dialogue" and (b.line or "").strip())
+                for sc in (script.scenes if script else []) for b in sc.beats
+            )
+            if has_dialogue:
+                try:
+                    from .assemble import find_ffmpeg as _find_ff
+
+                    ff = _find_ff()
+                    if ff:
+                        import subprocess
+
+                        silent = tmp / "silent.mp4"
+                        r = subprocess.run(
+                            [ff, "-y", "-loglevel", "error", "-i", str(current),
+                             "-c:v", "copy", "-an", str(silent)],
+                            capture_output=True, text=True, timeout=300)
+                        if r.returncode == 0 and silent.exists():
+                            current = silent
+                            emit("配音未产出台词音轨：已剥除模型自生语音，交付静片+字幕")
+                except Exception as e:  # noqa: BLE001
+                    log.debug("剥音轨失败（保留原音轨交付）：%s", e)
+
         # ---- 4) 字幕（可选）----
         subtitled = False
         srt_info: dict[str, Any] | None = None
@@ -248,7 +276,15 @@ def finalize_film(
                 )
         if entries:
             try:
-                ass_path, _srt = write_subtitle_files(entries, tmp / "film", width=1280, height=720)
+                # 字幕画布按成片实测尺寸：字号/边距由 to_ass 从 height 推导，
+                # 写死 1280x720 时竖屏 9:16 成片会按横屏画布缩放、字变小
+                # （2026-11-12 画幅默认改横屏，两种比例都会出现）。
+                from .assemble import get_video_info
+
+                _vi = get_video_info(str(current))
+                _w = int(_vi.get("width") or 0) or 1280
+                _h = int(_vi.get("height") or 0) or 720
+                ass_path, _srt = write_subtitle_files(entries, tmp / "film", width=_w, height=_h)
                 final = tmp / "final.mp4"
                 burn_subtitles(current, ass_path, final)
                 current, subtitled = final, True

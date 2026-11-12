@@ -202,7 +202,7 @@ def _format_constraints(
         # 预算按场数折算成「这一批只有多少秒」，它才知道该合并多少。
         share = budget * max(1, batch_scenes) / max(1, total_scenes)
         lines += [
-            "【类型约束】短剧：竖屏、1–2 分钟、前 3 秒必须抓住注意力。",
+            "【类型约束】短剧：横屏 16:9（默认，工作台可切竖屏）、1–2 分钟、前 3 秒必须抓住注意力。",
             f"【本批预算】这次要拆 {batch_scenes} 场，合计约 **{share:.0f} 秒、"
             f"{max(1, int(share / table['medium']))}–{max(1, int(share / table['fast']))} 个镜头**"
             f"（全片 {total_scenes} 场共约 {budget:.0f} 秒）。超出这个数就是超了，"
@@ -465,6 +465,39 @@ class DirectorAgent(CrewAgent):
                     f"上限 {limit:.0f} 秒）。短剧不是「把小说拍完」：请合并同场景的连续动作、"
                     "删掉过场与铺垫镜头、把次要人物的反应镜头并进主镜，"
                     f"压到 {int(budget_sec / 5)} 个镜头左右。"
+                )
+
+        # 0b) 镜头语言多样性：模型会躺在「特写+固定机位」的安全区里——
+        #     2026-11-12 孔乙己 v2 实测：25 镜里 11 个 close_up、0 个运动镜头
+        #     （25/25 static），用户观感「全部正脸怼脸拍、运镜怪」。
+        #     景别与运镜是导演的语言，不是防错成本——这里用确定性阈值逼一把。
+        all_shots = [s for bd in breakdowns for s in bd.shots]
+        n_all = len(all_shots)
+        if n_all >= 6:
+            n_close = sum(1 for s in all_shots
+                          if s.shot_type in ("close_up", "extreme_close_up"))
+            n_static = sum(1 for s in all_shots
+                           if (s.camera.type or "static") in ("static", "steady", ""))
+            n_wide = sum(1 for s in all_shots
+                         if s.shot_type in ("extreme_wide", "wide"))
+            if n_close / n_all > 0.4:
+                issues.append(
+                    f"特写占比 {n_close}/{n_all}（>40%）：面部特写是 AI 畸变最高发景别，"
+                    "而且全片怼脸会看疲劳。把没有情绪转折的对话特写改成 medium 或 "
+                    "over_shoulder（过肩镜头天然带空间关系），"
+                    "close_up/extreme_close_up 只留给情绪顶点与关键道具。"
+                )
+            if n_static / n_all > 0.75:
+                issues.append(
+                    f"固定机位占比 {n_static}/{n_all}（>75%）：镜头不动=摄影机不存在。"
+                    "逐镜重想一遍：这一镜在讲什么？逼近内心用缓推、揭示处境用拉远、"
+                    "交代空间用平移/轻摇——对峙与凝固可以留静态，但全片静态不是选择是躺平。"
+                    "改的每镜写 camera_path 起止，一镜只一种运镜。"
+                )
+            if n_wide == 0:
+                issues.append(
+                    "全片没有一个 wide/extreme_wide：场景空间从未交代，观众不知道人在哪。"
+                    "每场的第一镜优先用 wide 或 medium 建立空间，再进近景。"
                 )
         for bd in breakdowns:
             scene_shots = sorted(bd.shots, key=lambda s: s.order)

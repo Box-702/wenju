@@ -907,13 +907,44 @@ def test_dp_injects_detailed_anchor_only_for_subject():
     assert "深灰卫衣" not in prompt, f"背景人物不该带详细外貌：{prompt}"
 
 
-def test_短剧默认竖屏():
-    """产品只做短剧，短剧是竖屏。所有提交入口必须共用同一个默认值，
-    否则「忘了传画幅」就会出一版横屏成片（2026-11-01 实测 1344x768）。"""
+def test_画幅默认横屏():
+    """2026-11-12 产品调整：默认出横屏 16:9（v1/v2 对比用户觉得横屏完整性好），
+    竖屏改工作台可选。所有提交入口仍必须共用同一个默认值，
+    否则「忘了传画幅」就会出意外比例（2026-11-01 实测教训）。"""
     from app.video.base import DEFAULT_ASPECT, VideoJobParams
 
-    assert DEFAULT_ASPECT == "9:16"
-    assert VideoJobParams().aspect_ratio == "9:16"
+    assert DEFAULT_ASPECT == "16:9"
+    assert VideoJobParams().aspect_ratio == "16:9"
+
+
+def test_导演审计_镜头语言单调被打回():
+    """2026-11-12 v2 实测：25 镜 11 特写 + 25/25 固定机位 + 0 wide，
+    用户观感「全是正脸怼脸、运镜怪」。审计必须报这三条。"""
+    from app.crew.director import DirectorAgent
+    from app.domain import CameraMovement, SceneBreakdown, Shot
+
+    def _s(i, st, cam="static"):
+        return Shot(id=f"shot_scene_001_{i:03d}", scene_id="scene_001", order=i,
+                    shot_type=st, camera=CameraMovement(type=cam), duration_sec=5)
+
+    shots = ([_s(i, "close_up") for i in range(6)]
+             + [_s(i + 6, "medium") for i in range(6)])
+    agent = DirectorAgent.__new__(DirectorAgent)
+    bd = SceneBreakdown(scene_id="scene_001", shots=shots)
+    issues = agent._validate_continuity([bd], None)
+    joined = "；".join(issues)
+    assert "特写占比" in joined
+    assert "固定机位占比" in joined
+    assert "wide" in joined
+
+    # 多样化后不再唠叨
+    shots2 = ([_s(0, "wide", "dolly")]
+              + [_s(i + 1, "medium", "pan") for i in range(4)]
+              + [_s(5, "close_up", "static")])
+    bd2 = SceneBreakdown(scene_id="scene_001", shots=shots2)
+    issues2 = "；".join(agent._validate_continuity([bd2], None))
+    assert "特写占比" not in issues2 and "固定机位占比" not in issues2 \
+        and "wide" not in issues2
 
 
 # ---------- H3 档位护栏（2026-11-12 账单复盘 + 文档确认） ----------

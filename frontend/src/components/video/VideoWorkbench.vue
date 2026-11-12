@@ -19,10 +19,10 @@ import {
   startFinalize, pollFinalize, ensureFinalizePolling,
 } from '../../stores/app'
 
-// 画幅：短剧产品默认竖屏 9:16
+// 画幅：默认横屏 16:9（2026-11-12 调整），竖屏留给手机分发场景
 const ASPECTS = [
-  { value: '9:16', label: '9:16 竖屏 · 短剧' },
-  { value: '16:9', label: '16:9 横屏' },
+  { value: '16:9', label: '16:9 横屏 · 默认' },
+  { value: '9:16', label: '9:16 竖屏 · 手机短剧' },
   { value: '1:1', label: '1:1 方形' },
   { value: '4:3', label: '4:3 传统' },
   { value: '21:9', label: '21:9 宽银幕' },

@@ -87,7 +87,7 @@ export const store = reactive({
   videoBatch: null,       // 批量生成批次状态（null/对象）
   videoMode: localStorage.getItem('sw_video_mode') || 'auto',   // 生成模式：auto | approval
   videoResolution: localStorage.getItem('sw_video_resolution') || '',  // 空=全局默认(768P)
-  videoAspect: localStorage.getItem('sw_video_aspect') || '9:16',  // 画幅：短剧默认竖屏 9:16
+  videoAspect: localStorage.getItem('sw_video_aspect') || '16:9',  // 画幅：默认横屏 16:9（工作台可切竖屏）
   videoSubtitle: localStorage.getItem('sw_video_subtitle') !== 'off',  // 成片合成时烧台词字幕（默认开）
   videoFinalize: null,    // 成片合成任务状态（null/对象）
   // 视频播放器

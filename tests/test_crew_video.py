@@ -820,13 +820,17 @@ def test_reroll_if_needed_bounded_and_records_verdict(monkeypatch):
     submitted: list[str] = []
     submit = lambda job: submitted.append(job.id)  # noqa: E731
 
-    # 第 0 次：不合格且有预算 → 重 roll
+    # 第 0 次：不合格且有预算 → 反馈驱动重 roll（缺陷含「穿模」→ 兜底追加降级指令；
+    # _llm_rewrite 打桩掉，测试不碰真实对话模型）
+    monkeypatch.setattr(qa, "_llm_rewrite", lambda p, i: None)
     store, created, updates = make_store({"duration_sec": 8})
     new_id = qa.reroll_if_needed("j1", {"status": "succeeded"}, store=store,
                                  submit=submit, max_reroll=1)
     assert new_id == "j2" and submitted == ["j2"]
     assert created[0]["params"]["qa_attempt"] == 1
-    assert created[0]["prompt"] == "P" and created[0]["shot_id"] == "s"
+    assert created[0]["shot_id"] == "s"
+    assert created[0]["prompt"].startswith("P") and "遮挡与让位" in created[0]["prompt"]
+    assert created[0]["params"].get("qa_rewritten") is True
 
     # 第 1 次（预算用尽）：不再重 roll，写 error_message 备注
     store, created, updates = make_store({"duration_sec": 8, "qa_attempt": 1})

@@ -202,6 +202,81 @@ def qa_check(video_url: str, vision: Any = None, *, count: int | None = None) ->
     }
 
 
+# ---------- 反馈驱动降级重 roll ----------
+# 同参数重 roll 只治随机性，治不了系统性：孔乙己实测（2026-11-12）FAIL 集中在
+# 手指畸变/穿模/多人同框，这类构图重抽一万次还是同一个分布。重 roll 前把
+# 质检结论翻译成「构图降级改写」，命中率才真正上去。规则与剧组提示词 5b 同源。
+
+REWRITE_SYSTEM = (
+    "你是短剧视频提示词的缺陷修复员。上一版提示词生成的视频被质检判为致命缺陷，"
+    "请改写提示词绕开缺陷。改写规则：\n"
+    "- 手指/手部畸变：指尖级动作改成中景结果态（「铜钱已摊在柜台，他的手正从上面收回去」），"
+    "删掉对手指分节的逐步描写；\n"
+    "- 穿模/肢体融合：全镜只保留一次主接触，写明遮挡与让位关系；其余人物改为静止或大姿态"
+    "（倚墙、抱臂听、盯着自己碗里）；\n"
+    "- 面部扭曲：镜头拉远到肩胸以上，面部特写里手不入画；\n"
+    "- 多人同框崩坏/凭空多出的人：一镜最多 2 人做精细动作，其余人静止；\n"
+    "- 场景锚、光线方向、运镜（保持唯一一种主要运动）与结尾画面必须原样保留；\n"
+    "- 只写正向描述，禁止否定句。\n"
+    "只输出改写后的提示词本身：不要解释、不要引号或代码围栏、不要缩短原文里与缺陷无关的部分。"
+)
+
+# 确定性兜底：质检关键词 → 追加的降级指令（LLM 不可用/改写失败时用）。
+_RETRY_FIXES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("手指", "指节", "多指", "手部", "手穿", "手与", "手掌"),
+     "本镜改为中景构图：指尖级动作只保留结果状态（道具已放定，手正收回），不逐步描写手指。"),
+    (("穿模", "穿透", "融合", "粘连", "融接", "嵌入"),
+     "人物与道具只保留一次接触，写明遮挡与让位关系；其余人物改为静止大姿态。"),
+    (("面部", "脸", "眼球", "五官"),
+     "镜头拉远到肩胸以上，面部特写里手不入画。"),
+    (("多出", "重复的人", "虚影", "凭空", "重叠"),
+     "画面里最多两人做精细动作，其余人物各自静止或保持单一大幅姿态。"),
+)
+
+
+def _fallback_rewrite(prompt: str, issues: list[str]) -> str:
+    """按质检关键词追加确定性降级指令。"""
+    text = "；".join(issues)
+    fixes = [fix for keys, fix in _RETRY_FIXES if any(k in text for k in keys)]
+    if not fixes:
+        return prompt
+    return prompt.rstrip() + "\n" + "".join(fixes)
+
+
+def _llm_rewrite(prompt: str, issues: list[str]) -> str | None:
+    """拿对话模型按缺陷改写提示词；不可用/结果可疑返回 None。"""
+    try:
+        from ..deps import llm as get_llm
+
+        facade = get_llm()
+        if not facade.available:
+            return None
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        resp = facade.chat().invoke([
+            SystemMessage(content=REWRITE_SYSTEM),
+            HumanMessage(content=(
+                f"原提示词：\n{prompt}\n\n质检判定的致命缺陷：\n"
+                + "\n".join(f"- {i}" for i in issues[:4])
+                + "\n\n输出改写后的提示词："
+            )),
+        ])
+        out = str(resp.content or "").strip()
+        # 防抖动：改写结果太短（模型只回了「好的」）说明没干活，按失败处理
+        if out and len(out) >= max(20, len(prompt) * 0.3):
+            return out
+    except Exception as e:  # noqa: BLE001
+        log.warning("提示词 LLM 降级改写失败，用确定性兜底：%s", e)
+    return None
+
+
+def rewrite_prompt_for_retry(prompt: str, issues: list[str]) -> str:
+    """重 roll 前按质检结论改写提示词；LLM 失败退回确定性追加。"""
+    if not issues:
+        return prompt
+    return _llm_rewrite(prompt, issues) or _fallback_rewrite(prompt, issues)
+
+
 def reroll_if_needed(
     job_id: str,
     job_info: dict[str, Any],
@@ -251,17 +326,22 @@ def reroll_if_needed(
         log.warning("成片质检不合格且预算用尽（job=%s）：%s", job_id, issues)
         return None
 
+    # 反馈驱动：重 roll 不是原样重抽，而是按缺陷改写提示词后再抽。
+    new_prompt = rewrite_prompt_for_retry(job.prompt, result["issues"])
+    rewritten = new_prompt != job.prompt
     new_job = store.create_video_job(
         project_id=job.project_id,
         shot_id=job.shot_id,
         provider=job.provider,
         model=job.model,
-        prompt=job.prompt,
-        params={**params, "qa_attempt": attempt + 1},
+        prompt=new_prompt,
+        params={**params, "qa_attempt": attempt + 1,
+                **({"qa_rewritten": True} if rewritten else {})},
         version_id=job.version_id,
         cost_estimate=job.cost_estimate,
     )
     submit(new_job)
-    log.warning("成片质检不合格，自动重 roll（job=%s → %s，第 %d 次）：%s",
-                job_id, new_job.id, attempt + 1, issues)
+    log.warning("成片质检不合格，自动重 roll（job=%s → %s，第 %d 次，%s）：%s",
+                job_id, new_job.id, attempt + 1,
+                "提示词已降级改写" if rewritten else "同参数重抽", issues)
     return new_job.id

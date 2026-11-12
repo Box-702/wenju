@@ -648,7 +648,7 @@ def test_minimax_poll_maps_processing_to_generating(monkeypatch):
 
 
 def test_minimax_create_job_uses_user_model(monkeypatch):
-    """用户在设置里选的模型必须进请求体；未配置时回落默认 H3。"""
+    """用户在设置里选的模型必须进请求体；未配置时回落默认档位（本地调试=Lite）。"""
     import app.video.providers.minimax as mm
 
     bodies = []
@@ -669,7 +669,7 @@ def test_minimax_create_job_uses_user_model(monkeypatch):
     asyncio.run(mm.MiniMaxProvider(api_key="k", model="MiniMax-H3-Pro").create_job("p"))
     asyncio.run(mm.MiniMaxProvider(api_key="k").create_job("p"))
     assert bodies[0]["model"] == "MiniMax-H3-Pro"
-    assert bodies[1]["model"] == "MiniMax-H3"
+    assert bodies[1]["model"] == "MiniMax-H3-Lite"
 
 
 def test_registry_refreshes_cached_provider_model():
@@ -980,20 +980,25 @@ def test_首尾帧与参考素材互斥时参考优先(monkeypatch):
 
 def test_计费估算含输入秒数():
     """旧版只按输出秒估（¥1.3/镜 vs 实际 ¥8.3）。新公式必须把
-    参考视频秒数与参考图张数算进去。"""
+    参考视频秒数、超免费额度的参考图、档位×分辨率秒价算进去。"""
     from app.video.base import VideoJobParams
     from app.video.providers.minimax import MiniMaxProvider
 
     p = MiniMaxProvider(api_key="k", model="MiniMax-H3")
     params = VideoJobParams(
         duration_sec=4,
-        reference_images=["http://a/1.png"] * 4,
+        reference_images=["http://a/1.png"] * 7,   # 前 5 张免费，只有 2 张计费
         reference_videos=["data:video/mp4;base64,AAA", "http://a/whole.mp4"],
     )
-    usd = p.estimate_cost_real(params, 4)
+    usd = p.estimate_cost_real(params, 4, "768P")
     cny = usd * 7.1
-    # 输出4s + 裁尾2.5s + 整条≈4s = 10.5s × ¥0.5 + 4图 × ¥0.2 = ¥6.05
-    assert 5.5 <= cny <= 7.0, cny
-    # 纯文生（无参考）= 输出秒价
-    plain = MiniMaxProvider(api_key="k", model="MiniMax-H3")
-    assert plain.estimate_cost_real(VideoJobParams(duration_sec=6), 6) * 7.1 == pytest.approx(3.0, abs=0.01)
+    # 输出4s + 裁尾2.5s + 整条≈4s = 10.5s × ¥0.5 + 2张计费图 × ¥0.2 = ¥5.65
+    assert 5.3 <= cny <= 6.0, cny
+    # 纯文生（无参考）= 输出秒 × 分辨率价；Lite 480P 是最便宜的合法组合
+    plain = MiniMaxProvider(api_key="k", model="MiniMax-H3-Lite")
+    assert plain.estimate_cost_real(VideoJobParams(duration_sec=6), 6, "480P") * 7.1 \
+        == pytest.approx(0.96, abs=0.01)
+    # 默认档位 = Lite（本地调试默认）
+    default = MiniMaxProvider(api_key="k")
+    assert default.model == ""  # 实例未指定时 create_job 用 _DEFAULT_MODEL
+    assert default._tier() is MiniMaxProvider._TIERS["MiniMax-H3-Lite"]

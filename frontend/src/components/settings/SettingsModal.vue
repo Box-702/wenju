@@ -375,11 +375,12 @@ const IMAGE_MODEL_OPTIONS = [
   { value: 'cogview-4-250304', label: 'CogView-4（质量更好，推荐出定妆图）' },
   { value: 'cogview-4', label: 'CogView-4（最新版本号）' },
 ]
+// H3 系列档位（官方定价页 2026-11-12）：本地调试默认 Lite，质量评审可切 H3。
+// 旧 v1 模型（Hailuo-02/T2V-01/I2V-01）已从 V2 接口下线，不再列。
 const VIDEO_MODEL_OPTIONS = [
-  { value: 'MiniMax-H3', label: 'MiniMax-H3（默认，性价比高）' },
-  { value: 'MiniMax-Hailuo-02', label: 'MiniMax-Hailuo-02（质量更好）' },
-  { value: 'T2V-01', label: 'T2V-01（文生视频经典款）' },
-  { value: 'I2V-01', label: 'I2V-01（图生视频）' },
+  { value: 'MiniMax-H3-Lite', label: 'MiniMax-H3-Lite（默认，¥0.16-0.26/s，批量试错）' },
+  { value: 'MiniMax-H3-Highspeed', label: 'MiniMax-H3-Highspeed（¥0.26-0.40/s，质量速度均衡）' },
+  { value: 'MiniMax-H3', label: 'MiniMax-H3（¥0.50-0.80/s，画质优先·成片评审用）' },
 ]
 
 // ---- 对话模型：内置目录 + 一步流（D-42）----
@@ -827,9 +828,9 @@ async function deleteLlm(p) {
 // ---- 视频 Provider（MiniMax，用户自带 Key 与模型）----
 const videoProviders = ref([])
 const showVideoKey = ref(false)
-const videoForm = reactive({ apiKey: '', model: 'MiniMax-H3', customModel: '', baseUrl: '' })
+const videoForm = reactive({ apiKey: '', model: 'MiniMax-H3-Lite', customModel: '', baseUrl: '' })
 const minimaxRow = computed(() => videoProviders.value.find(p => p.name === 'minimax'))
-const minimaxModelLabel = computed(() => minimaxRow.value?.config?.model || 'MiniMax-H3')
+const minimaxModelLabel = computed(() => minimaxRow.value?.config?.model || 'MiniMax-H3-Lite')
 
 // ---- 生图模型（与智谱 GLM 共用 key，用户只选模型名）----
 const imageInfo = ref({ available: false, provider: '', label: '', model: '', source: 'none' })
@@ -907,7 +908,7 @@ async function loadProviders() {
 /** 用已保存的 MiniMax 配置回填表单（Key 永远留空，表示「保持不变」）。 */
 function syncVideoForm() {
   videoForm.apiKey = ''
-  const current = minimaxRow.value?.config?.model || 'MiniMax-H3'
+  const current = minimaxRow.value?.config?.model || 'MiniMax-H3-Lite'
   if (!VIDEO_MODEL_OPTIONS.some((o) => o.value === current) && !videoForm.customModel) {
     videoForm.model = 'custom'
     videoForm.customModel = current

@@ -88,20 +88,35 @@ class MiniMaxProvider(VideoProvider):
     supported_resolutions = ["480P", "768P", "2K"]
     chinese_prompt_support = True
 
-    # H3 系列档位表（官方定价页 2026-11-12 确认）。计费公式
-    # total_seconds = input_seconds + output_seconds——**参考视频按秒与输出
-    # 同价**，输入图片 ¥0.20/张（超免费额度后）。此前 0.045$/s 的粗估
-    # 严重低估（实测 ¥8.3/镜 vs 估算 ¥1.3），费率与能力都按档位表走。
+    # H3 系列档位表（官方定价页 2026-11-12 截图逐格核对）。要点：
+    # - 秒价**按分辨率分档**（H3: 2K ¥0.80 / 768P ¥0.50；Highspeed: 768P ¥0.40 /
+    #   480P ¥0.26；Lite: 768P ¥0.26 / 480P ¥0.16）；
+    # - 计费公式 total_seconds = input_seconds + output_seconds——参考视频与
+    #   输出同价；
+    # - 图片输入每次任务**前 5 张免费**，超出按张计（H3/Highspeed ¥0.20、
+    #   Lite ¥0.13），单价不随分辨率变。
+    # 本地调试默认 Lite（_DEFAULT_MODEL）；设置页三档可切。
+    _DEFAULT_MODEL = "MiniMax-H3-Lite"
     _TIERS: dict[str, dict[str, Any]] = {
-        "MiniMax-H3":           {"per_sec": 0.50, "res": ("768P", "2K"), "min_dur": 4},
-        "MiniMax-H3-Highspeed": {"per_sec": 0.26, "res": ("480P", "768P"), "min_dur": 4},
-        "MiniMax-H3-Lite":      {"per_sec": 0.16, "res": ("480P", "768P"), "min_dur": 4},
-        "MiniMax-H3-Max":       {"per_sec": 0.26, "res": ("480P", "768P"), "min_dur": 5},
+        "MiniMax-H3": {
+            "res": ("768P", "2K"), "min_dur": 4,
+            "per_sec": {"768P": 0.50, "2K": 0.80}, "image_cny": 0.20},
+        "MiniMax-H3-Highspeed": {
+            "res": ("480P", "768P"), "min_dur": 4,
+            "per_sec": {"480P": 0.26, "768P": 0.40}, "image_cny": 0.20},
+        "MiniMax-H3-Lite": {
+            "res": ("480P", "768P"), "min_dur": 4,
+            "per_sec": {"480P": 0.16, "768P": 0.26}, "image_cny": 0.13},
+        # Max 不在这页定价表上（极速生成档），能力按文档、费率沿用 Highspeed 近似。
+        "MiniMax-H3-Max": {
+            "res": ("480P", "768P"), "min_dur": 5,
+            "per_sec": {"480P": 0.26, "768P": 0.40}, "image_cny": 0.20},
     }
-    _IMAGE_INPUT_CNY = 0.20
+    _FREE_IMAGES_PER_TASK = 5
 
     def _tier(self) -> dict[str, Any]:
-        return self._TIERS.get(self.model or "MiniMax-H3", self._TIERS["MiniMax-H3"])
+        return self._TIERS.get(self.model or self._DEFAULT_MODEL,
+                               self._TIERS[self._DEFAULT_MODEL])
 
     # 任务 → 提交时用的 key。跨账号轮换后，查询必须用「提交它的那个账号」的
     # key，否则会拿到 invalid task_id。进程内字典足够：任务在同一个进程里轮询。
@@ -326,7 +341,7 @@ class MiniMaxProvider(VideoProvider):
         duration = max(tier["min_dur"], min(15, int(params.duration_sec or 6)))
         body: dict[str, Any] = {
             # 模型名：用户设置里显式选的优先，缺省 H3。
-            "model": self.model or "MiniMax-H3",
+            "model": self.model or self._DEFAULT_MODEL,
             "content": content,
             "duration": duration,
             "resolution": resolution,
@@ -354,21 +369,28 @@ class MiniMaxProvider(VideoProvider):
         if self._last_key:
             self._remember(task_id, self._last_key)
 
-        cost = self.estimate_cost_real(params, duration)
+        cost = self.estimate_cost_real(params, duration, resolution)
         return VideoJobResponse(external_task_id=task_id, status="queued", cost_estimate=cost)
 
-    def estimate_cost_real(self, params: VideoJobParams, out_sec: int) -> float:
+    def estimate_cost_real(self, params: VideoJobParams, out_sec: int,
+                           resolution: str = "") -> float:
         """按官方计费公式估算费用（返回美元——DB 的 cost_estimate 前端按 USD 展示）。
 
-        计费：(输出秒 + 输入视频秒) × 档位秒价（¥） + 输入图 × ¥0.2，再折美元。
+        计费：(输出秒 + 输入视频秒) × **档位×分辨率**秒价（¥）
+        + 超出免费额度的输入图 × 档位图价，再折美元。
         输入视频秒数按素材形态近似：裁尾接力片段 ≈2.5s，整条按本镜输出秒近似
         ——宁可高估给用户看，别再像旧版低估 5 倍（¥8.3/镜 vs 旧估 ¥1.3）。"""
-        per_sec = self._tier()["per_sec"]
+        tier = self._tier()
+        # 缺省按档位主档（元组首项：H3=768P、Lite/Highspeed=480P）估，
+        # 传进来的分辨率不在白名单（如 WxH 方言）也落主档，别按最贵档虚报。
+        res = resolution if resolution in tier["res"] else tier["res"][0]
+        per_sec = tier["per_sec"][res]
         approx_in_sec = sum(
             2.5 if str(u).startswith("data:") else float(out_sec)
             for u in (params.reference_videos or [])[:3]
         )
-        cny = (out_sec + approx_in_sec) * per_sec + min(9, len(params.reference_images or [])) * self._IMAGE_INPUT_CNY
+        billable_images = max(0, len(params.reference_images or []) - self._FREE_IMAGES_PER_TASK)
+        cny = (out_sec + approx_in_sec) * per_sec + billable_images * tier["image_cny"]
         return round(cny / 7.1, 4)
 
     async def poll_job(self, external_task_id: str) -> VideoJobStatus:

@@ -314,7 +314,9 @@ def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, boo
                 reference_images=stored_params.get("reference_images") or [],
                 reference_videos=stored_params.get("reference_videos") or [],
             )
-            cost = (provider.estimate_cost_real(_probe, duration)
+            cost = (provider.estimate_cost_real(
+                        _probe, duration,
+                        str(stored_params.get("resolution") or ""))
                     if hasattr(provider, "estimate_cost_real")
                     else provider.estimate_cost(float(duration)))
         except Exception:  # noqa: BLE001

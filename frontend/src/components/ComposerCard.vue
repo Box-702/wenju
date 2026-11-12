@@ -176,6 +176,30 @@ const imageProviders = computed(() =>
 const videoProviders = computed(() =>
   (allProviders.value || []).filter((p) => p.kind === 'video' && p.configured))
 
+/** 当前在用的生图厂商：偏好指定的那家优先，否则第一个配好的——
+    面板只列这一家（选厂商/换 key 是完整设置的职责，用户定 2026-11-12）。 */
+const currentImageProvider = computed(() => {
+  const prefId = imagePref.value?.provider_id
+  return (prefId && imageProviders.value.find((p) => p.id === prefId))
+    || imageProviders.value[0] || null
+})
+
+/** 生图 tab 的可选模型：当前厂商配置里的清单；厂商没配清单时，
+    按厂商家族给常用档（minimax→H3-Image 系，其余→cogview 系），
+    并保证在用的那个一定在列。 */
+const imageModelChoices = computed(() => {
+  const p = currentImageProvider.value
+  if (!p) return []
+  const listed = modelsOf(p).map((m) => m.model)
+  const base = listed.length ? listed
+    : (String(p.name).toLowerCase().includes('minimax')
+        ? IMAGE_MODELS.filter((m) => m.startsWith('MiniMax'))
+        : IMAGE_MODELS.filter((m) => !m.startsWith('MiniMax')))
+  const cur = currentImageLabel.value
+  if (cur && cur !== '未配置' && !base.includes(cur)) base.unshift(cur)
+  return base
+})
+
 const imagePref = computed(() =>
   modelPrefs.value.find((x) => x.task_type === 'image_gen' && x.provider_id) || null)
 const currentImageLabel = computed(() => {
@@ -519,29 +543,19 @@ function onInput(e) {
                     <div v-if="!chatModels.length" class="mp-empty">当前厂商还没配模型。</div>
                   </template>
 
-                  <!-- 生图：image 厂商 × 模型清单（或常用档位） -->
+                  <!-- 生图：只列当前在用厂商的模型清单（换厂商去完整设置） -->
                   <template v-else-if="panelTab === 'image'">
-                    <template v-if="imageProviders.length">
-                      <template v-for="p in imageProviders" :key="p.id">
-                        <div class="mp-label">{{ p.label || p.name }}</div>
-                        <button v-for="m in modelsOf(p)" :key="p.id + ':' + m.model"
-                                class="mp-item" type="button" role="menuitemradio"
-                                :aria-checked="m.model === currentImageLabel"
-                                @click.stop="chooseImageModel(p, m.model)">
-                          <span class="mi-name">{{ m.name }}</span>
-                          <span v-if="m.model === currentImageLabel" class="mi-check">✓</span>
-                        </button>
-                      </template>
-                    </template>
-                    <template v-else>
-                      <div class="mp-label">常用生图档位</div>
-                      <button v-for="m in IMAGE_MODELS" :key="m" class="mp-item" type="button"
+                    <template v-if="currentImageProvider">
+                      <div class="mp-label">{{ currentImageProvider.label || currentImageProvider.name }}</div>
+                      <button v-for="m in imageModelChoices" :key="m"
+                              class="mp-item" type="button" role="menuitemradio"
                               :aria-checked="m === currentImageLabel"
-                              @click.stop="imageProviders[0] && chooseImageModel(imageProviders[0], m)">
+                              @click.stop="chooseImageModel(currentImageProvider, m)">
                         <span class="mi-name">{{ m }}</span>
                         <span v-if="m === currentImageLabel" class="mi-check">✓</span>
                       </button>
                     </template>
+                    <div v-else class="mp-empty">还没有配置生图厂商，去「完整模型设置」里加。</div>
                   </template>
 
                   <!-- 视频：H3 三档（改厂商 config.model） -->

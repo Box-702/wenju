@@ -155,8 +155,20 @@ def finalize_film(
     try:
         clips: list[str] = []
         warnings: list[str] = []
+        # ---- 镜头组展开（S2b，PLAN-shot-group）----
+        # 生成单元=一次提交：组任务挂在组头 shot_id 上，一条 clip 覆盖全组；
+        # 成员镜头不各自找任务（永远找不到，也不该重复下载）。
+        from .service import _generation_units
+
+        unit_by_head = {u["shot_id"]: u for u in _generation_units(shot_dicts)}
+        ready = 0
+        # 每个 clip 覆盖几个成员镜头（校准循环按它把 shots 切段配对 clips）
+        unit_member_counts: list[int] = []
         for raw in sorted(shot_dicts, key=lambda s: s.get("order", 0)):
             sid = str(raw.get("id") or "")
+            unit = unit_by_head.get(sid)
+            if unit is None:
+                continue  # 组员：由组头代表下载
             url = _latest_succeeded_url(jobs, sid)
             if not url:
                 warnings.append(f"镜头 {sid} 还没有成片，已跳过")
@@ -169,18 +181,39 @@ def finalize_film(
                 warnings.append(f"镜头 {sid} 下载失败：{e}")
                 emit(f"镜头 {sid} 下载失败，跳过：{e}")
                 continue
-            shots.append(Shot.model_validate(raw))
+            member_ids = unit["member_ids"]
+            members_raw = [m for m in shot_dicts if str(m.get("id") or "") in member_ids]
+            members_raw.sort(key=lambda m: int(m.get("group_index") or 0))
+            # 拼接列表：一条 clip 只进一次（组视频本身就是整段戏，重复拼=播 N 遍）；
+            # 时间轴列表（shots）按成员展开——配音/字幕用它排每句台词落在第几秒。
             clips.append(str(dest))
+            unit_member_counts.append(len(members_raw))
+            for m in members_raw:
+                shots.append(Shot.model_validate(m))
+            ready += len(members_raw)
         if not clips:
             raise ValueError("没有任何已生成的镜头可合成（先生成视频再合成成片）")
-        emit(f"已就绪 {len(clips)}/{len(shot_dicts)} 个镜头")
+        emit(f"已就绪 {ready}/{len(shot_dicts)} 个镜头")
 
         # provider 实际产出与计划时长有偏差（v6 实测：计划 20s，成片 21.2s），
         # 按计划时长排配音/字幕会越往后漂移越大——下载后逐镜实测校准。
+        # 组 clip 只量一次，成员按**计划时长比例**分摊实测值：配音时间轴
+        # 的组内对位由此保持（S2 风险清单第 2 条，专项锁测在 test_finalize_group）。
         calibrated: list[Shot] = []
-        for shot, clip in zip(shots, clips, strict=True):
+        idx = 0
+        for clip, count in zip(clips, unit_member_counts, strict=True):
+            group = shots[idx:idx + count]
             real = _media_duration_sec(Path(clip))
-            calibrated.append(shot.model_copy(update={"duration_sec": max(1.0, real)}) if real > 0 else shot)
+            if real > 0 and count == 1:
+                calibrated.append(group[0].model_copy(update={"duration_sec": real}))
+            elif real > 0:
+                plan_total = sum(max(0.5, s.duration_sec) for s in group)
+                for s in group:
+                    share = max(0.5, s.duration_sec) / plan_total * real
+                    calibrated.append(s.model_copy(update={"duration_sec": round(share, 2)}))
+            else:
+                calibrated.extend(group)
+            idx += count
         if any(a.duration_sec != b.duration_sec for a, b in zip(calibrated, shots, strict=True)):
             emit(f"按实际成片时长校准时间轴（合计 {sum(s.duration_sec for s in calibrated):.1f}s）")
         shots = calibrated
@@ -310,7 +343,7 @@ def finalize_film(
             "srt_asset_id": srt_info["asset_id"] if srt_info else None,
             "srt_url": srt_info["url"] if srt_info else None,
             "duration_sec": round(duration, 2),
-            "shots_used": len(clips),
+            "shots_used": len(shots),   # 成员镜头数（组展开后），不是生成单元数
             "shots_total": len(shot_dicts),
             "dubbed": dubbed,
             "subtitled": subtitled,

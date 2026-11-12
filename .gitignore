@@ -57,3 +57,4 @@ blender/*.blend1
 # ---------- WorkBuddy 工作区数据 ----------
 .workbuddy/
 N2D/output/
+.shuohuo_tmp.txt

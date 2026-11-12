@@ -320,3 +320,61 @@ def test_finalize_manager_captures_failure(monkeypatch):
     cur = mgr.get(rec["id"])
     assert cur["status"] == "failed"
     assert "拼装失败" in cur["error"]
+
+
+def test_finalize_film_group_clip_expands_to_members(monkeypatch, tmp_path):
+    """镜头组（S2b）：组任务挂组头、一条 clip 覆盖全组；finalize 按成员展开
+    时间轴，成员时长按计划比例分摊实测值（配音对位不失）。"""
+    from app.video import finalize as fin
+
+    # 一个 2 机组（g1: 4s+3s）+ 一个单镜（5s）
+    shot_dicts = [
+        {"id": "shot_scene_001_000", "scene_id": "scene_001", "order": 0,
+         "duration_sec": 4, "group_id": "g1", "group_index": 0,
+         "group_prompt": "GROUP", "video_prompt": "P0"},
+        {"id": "shot_scene_001_001", "scene_id": "scene_001", "order": 1,
+         "duration_sec": 3, "group_id": "g1", "group_index": 1, "video_prompt": "P1"},
+        {"id": "shot_scene_001_002", "scene_id": "scene_001", "order": 2,
+         "duration_sec": 5, "video_prompt": "P2"},
+    ]
+    # 组任务只挂组头；组员没有独立任务（不该各自找）
+    jobs = [
+        SimpleNamespace(shot_id="shot_scene_001_000", status="succeeded",
+                        video_url="http://v/g1.mp4", created_at=1),
+        SimpleNamespace(shot_id="shot_scene_001_002", status="succeeded",
+                        video_url="http://v/s2.mp4", created_at=1),
+    ]
+    store = _FakeStore(shot_dicts, jobs)
+
+    def fake_download(url, dest):
+        dest.write_bytes(b"fake mp4")
+
+    def fake_assemble(clips, out, **kw):
+        # 拼接只 2 条：组 clip + 单镜 clip（组视频不重复拼）
+        assert len(clips) == 2, clips
+        Path = __import__("pathlib").Path
+        Path(out).write_bytes(b"fake mp4")
+        return {"ok": True, "output": out, "duration": 20.0}
+
+    def measure(path):
+        name = path.name
+        if "001_000" in name:   # 组 clip：计划 4+3=7s，实测 8s
+            return 8.0
+        if "001_002" in name:   # 单镜：计划 5s，实测 5.5s
+            return 5.5
+        return 0.0
+
+    monkeypatch.setattr(fin, "_download", fake_download)
+    monkeypatch.setattr(fin, "_register_asset",
+                        lambda store, project_id, path, kind, name:
+                        {"asset_id": f"asset_{kind}", "url": f"/api/assets/file/asset_{kind}"})
+    monkeypatch.setattr(fin, "_media_duration_sec", measure)
+    import app.video.assemble as asm
+    monkeypatch.setattr(asm, "assemble_videos", fake_assemble)
+
+    result = fin.finalize_film("p1", subtitles=False, dubbing=False, store=store)
+    # 成员镜头 3 个全就绪（组 2 + 单镜 1），但 shots_used 数成员不是单元
+    assert result["shots_used"] == 3
+    assert result["shots_total"] == 3
+    # 组 clip 实测 8s 按 4:3 分摊 → 4.57 / 3.43；单镜 5.5 → 合计 13.5
+    assert 13.0 <= result["duration_sec"] <= 14.0, result["duration_sec"]

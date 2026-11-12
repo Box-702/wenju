@@ -135,7 +135,10 @@ def get_registry() -> ProviderRegistry:
 
 
 def _register_builtins(registry: ProviderRegistry) -> None:
-    """注册内置 Provider 类。产品只走 MiniMax（D-08），不再内置其他厂商。"""
+    """注册内置 Provider 类。产品默认只走 MiniMax（D-08）；
+    seedance 注册但不在 UI 暴露——A/B 对比脚本按 name 显式取用。"""
     from .providers.minimax import MiniMaxProvider
+    from .providers.seedance import SeedanceProvider
 
     registry.register_class(MiniMaxProvider)
+    registry.register_class(SeedanceProvider)

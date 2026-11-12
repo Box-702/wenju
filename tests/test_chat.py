@@ -853,3 +853,67 @@ def test_validate_units_坏数据当场拦():
     assert any("区间" in e for e in errors)
     assert any("景别" in e for e in errors)
     assert any("对不上" in e for e in errors)
+
+
+def test_import_storyboard_归一化与接力(store, llm):
+    """外部全局时间线分镜 → 独立单元的确定性归一化（2026-11-12 果园漂移修复）：
+    1) 首段逐字不动；2) 后段剥全局时间戳前缀、补全局锚；
+    3) 段头带 chain_from + reference_group，批次串行推进时自动接上段成片。"""
+    import json as _json
+    tools, collector = _make_tools(store, llm)
+    units = _json.dumps([
+        {"prompt": "果园午后，过肩镜头：前景虚焦男性肩膀，焦点锁在20岁西方少女面部，"
+                   "她眼眶泛红，哽咽说：{Am I a machine without feelings?} 停顿吸气。"
+                   "黄金侧逆光勾勒发丝轮廓。",
+         "duration_sec": 9, "shots": [
+             {"duration_sec": 5, "shot_type": "over_shoulder", "subject": "少女", "action": "踱步"},
+             {"duration_sec": 4, "shot_type": "close_up", "subject": "少女", "action": "哽咽"}]},
+        {"prompt": "At 00:09, cuts to 30岁中世纪绅士正面近景：眉头微蹙、下颌收紧，沉默倾听。",
+         "duration_sec": 4},
+        {"prompt": "At 00:13, cuts back 少女过肩镜头：情绪转坚定，直视对方缓慢顿挫念台词。",
+         "duration_sec": 6, "shots": [
+             {"duration_sec": 3, "shot_type": "over_shoulder", "subject": "少女", "action": "质问"},
+             {"duration_sec": 3, "shot_type": "close_up", "subject": "少女", "action": "顿挫"}]},
+    ], ensure_ascii=False)
+    r = tools["import_storyboard"].invoke({"units": units, "title": "果园归一"})
+    assert "已导入" in r
+    pid = collector["project_id"]
+    versions = sorted(store.list_video_versions(pid), key=lambda v: v.created_at)
+    shots = versions[-1].shots
+
+    heads = [s for s in shots if s.get("cut_reason") in ("导入段起点", "导入段")]
+    assert len(heads) == 3
+    # 首段：逐字保留（无 At 前缀、无补锚）
+    p1 = heads[0]["group_prompt"] or heads[0]["video_prompt"]
+    assert p1.startswith("果园午后") and "At 00:" not in p1
+    # 段二：全局时间戳前缀剥掉、全局锚补在前面、内容保留
+    p2 = heads[1]["video_prompt"]
+    assert not p2.startswith("At 00:09") and "cuts to" not in p2
+    assert p2.startswith("果园午后") and "30岁中世纪绅士" in p2
+    # 段三：同前；组提示词在组头
+    p3 = heads[2]["group_prompt"]
+    assert p3.startswith("果园午后") and "少女过肩镜头" in p3
+    # 接力：段一头无 chain；段二/三段头链到上一段段头的 order，且共享环境组
+    assert heads[0].get("chain_from") is None
+    assert heads[1]["chain_from"] == heads[0]["order"] == 0
+    assert heads[2]["chain_from"] == heads[1]["order"]
+    for h in heads:
+        assert h.get("reference_group") == "g_import_scene"
+
+
+def test_normalize_units_组内时间戳平移():
+    """组单元内部的全局时间戳按「本段起点」平移成段内相对值；越界的删写法留语义。"""
+    from app.chat.tools.production import normalize_units
+    parsed = [
+        {"prompt": "酒馆深夜，40岁掌柜擦杯子，灯光昏黄。[Shot 1] 0-3s 中景推近。", "duration_sec": 3},
+        {"prompt": "[Shot 1] 0-2s：门被推开。At 00:05.000, cuts to 掌柜抬头特写。", "duration_sec": 5},
+    ]
+    out = normalize_units(parsed)
+    # 第二段起点=3s：At 00:05 → 段内 2s
+    assert "At 00:2.000" in out[1]["prompt"]
+    # 越界时间戳（不在本段区间）删除写法
+    p = normalize_units([
+        {"prompt": "酒馆深夜，40岁掌柜擦杯子。", "duration_sec": 3},
+        {"prompt": "At 00:99.000, cuts to 空镜。", "duration_sec": 3},
+    ])[1]["prompt"]
+    assert "99" not in p and "空镜" in p

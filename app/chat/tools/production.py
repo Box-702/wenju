@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from langchain_core.tools import tool
@@ -83,6 +84,93 @@ def validate_storyboard_units(raw: Any) -> tuple[list[dict[str, Any]], list[str]
     return units, errors
 
 
+# ---------- 外部成品分镜的确定性归一化（2026-11-12 果园 demo 漂移复盘） ----------
+#
+# 外部分镜工具产出的是「一条全局时间线的连续脚本」：全局锚只写一遍、切镜用
+# 全局时间戳（At 00:09, cuts to…）。我们按生成上限 ≤15s 拆成独立单元后，
+# 每段是一次全新的采样——段 2 若只剩「At 00:09, cuts to …」，既没时间锚点、
+# 又丢了人物/环境描述，模型必然自由发挥（实测：换脸、换景、台词消失）。
+# 归一化三件事，全部确定性规则、不动段内内容（D-47：逐字保留承诺针对内容）：
+#   1. 剥掉段首的「At 00:XX, cuts to/back」全局时间戳前缀；
+#   2. 组内后续切镜的时间戳按本段累计时长折算成相对值；
+#   3. 剥离后不含任何锚特征（环境/人物）的段，自动前置全局锚句。
+
+# 段首全局切镜前缀：At 00:09, cuts to/back …（逗号可选）
+_CUT_LEAD_RE = re.compile(
+    r"^(?:\[[^\]]{1,6}\]\s*)?[Aa]t\s*\d{1,2}[:.：]\d{1,2}(?:\.\d+)?\s*[,，]?\s*"
+    r"(?:cuts?(?:\s+back)?\s*(?:to)?|切回|切至|镜头切(?:换)?至|切到)\s*[:：]?\s*")
+# 任意 At 00:XX 时刻写法（组内折算用，也用于「段内已带时刻」判断）
+_TS_ANY_RE = re.compile(r"[Aa]t\s*\d{1,2}[:.：]\d{1,2}(?:\.\d+)?")
+# 锚特征：环境/时间/人物身份词——段落剥离前缀后若仍含其一，视为自带锚不补。
+_ANCHOR_FEATURE_RE = re.compile(
+    r"(午后|清晨|黄昏|夜晚|白天|果园|教室|酒馆|街道|客厅|荒野|沙漠|森林|海边|雪地|"
+    r"室内|室外|阳光|月光|烛光|中年|年轻|老年|少年|少女|绅士|女子|男人|女人|"
+    r"\d{1,3}\s*岁|[A-Za-z]+\s+(?:man|woman|girl|boy|lady|gentleman))")
+# 全局锚：首单元第一个完整句（句号/换行边界），去掉台词引用，≤150 字。
+_ANCHOR_STOP_RE = re.compile(r"[。.\n]")
+# 台词开始：「…哽咽说：{…}」「念：{…}」——锚只要描写，不要对白。
+_DIALOGUE_RE = re.compile(r"[，,]?\s*(?:[\u4e00-\u9fff]{0,6}(?:说|念|道|喊|问道|回答|低语|呢喃))?\s*[:：]?\s*\{")
+_CAMERA_ONLY_RE = re.compile(
+    r"(镜头|机位|景别|特写|近景|中景|全景|远景|俯拍|仰拍|过肩|主观|空镜|推拉|摇移|跟随)$")
+
+
+def _global_anchor(first_prompt: str) -> str:
+    """从首单元提示词取全局锚：优先第一个含锚特征（环境/人物）的句子，
+    在台词引用处截断。跳过纯机位短语开头的句子不够——锚句惯例是
+    「环境+机位+人物外观」同句（外部工具的全文首句正是这一句）。"""
+    for s in _ANCHOR_STOP_RE.split(first_prompt):
+        s = s.strip(" ，,、")
+        if len(s) < 8:
+            continue
+        m = _DIALOGUE_RE.search(s)
+        if m:
+            s = s[:m.start()].strip(" ，,、:：")
+        if len(s) < 8 or not _ANCHOR_FEATURE_RE.search(s):
+            continue
+        return s[:150]
+    return ""
+
+
+def normalize_units(parsed: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """就地归一化外部成品分镜单元列表（见上函数头注释）。返回同一列表。"""
+    if not parsed:
+        return parsed
+    anchor = _global_anchor(str(parsed[0].get("prompt") or ""))
+    cursor_before = 0.0  # 本段在外部全局时间线上的起点（前段时长之和）
+    for u in parsed:
+        dur = float(u.get("duration_sec") or 0)
+        start = cursor_before
+        cursor_before += dur
+        body = str(u.get("prompt") or "").strip()
+        stripped = _CUT_LEAD_RE.sub("", body, count=1)
+        needs_anchor = bool(anchor) and stripped != body  # 曾带全局切镜前缀=非首段
+        # 剥后无锚特征也补（外部脚本常有「他走进房间」式裸续段）
+        if anchor and not _ANCHOR_FEATURE_RE.search(stripped):
+            needs_anchor = True
+        # 组内切镜时刻折算：把全局时间戳改成本段相对值（钳到 [0, 本段时长]）
+        if _TS_ANY_RE.search(stripped):
+            def _rel(m: re.Match) -> str:
+                # 外部分镜的时间戳是全局时间线的：平移 cost = 本段起点，
+                # 落在 [0, 本段时长] 内的改写成本段相对时刻；越界的整段
+                # 不存在这次采样里，删掉写法只留切镜描述。
+                raw = m.group(0)
+                tok = re.search(r"(\d+(?:[:.：]\d+)*)\s*$", raw)
+                if not tok:
+                    return raw
+                parts = re.split(r"[:.：]", tok.group(1))
+                try:
+                    sec = (float(parts[0]) * 60 + float(parts[1])) if len(parts) >= 2 else float(parts[0])
+                except (ValueError, IndexError):
+                    return raw
+                rel = sec - start
+                if 0.0 <= rel <= dur:
+                    return raw[:tok.start()] + f"At 00:{rel:.3f}"
+                return ""
+            stripped = _TS_ANY_RE.sub(_rel, stripped).strip(" ，,")
+        u["prompt"] = f"{anchor}。{stripped}" if (needs_anchor and anchor) else stripped
+    return parsed
+
+
 def build(ctx: ToolContext) -> list:
     """装配生产域工具。"""
     store, llm, runner = ctx.store, ctx.llm, ctx.runner
@@ -154,6 +242,8 @@ def build(ctx: ToolContext) -> list:
         parsed, errors = validate_storyboard_units(raw)
         if errors:
             return "分镜校验未通过，未落库（避免带着坏数据花钱）：\n- " + "\n- ".join(errors[:8])
+        # 外部全局时间线 → 独立生成单元的确定性归一化（时间戳折算 + 补全局锚）
+        parsed = normalize_units(parsed)
 
         # 容器：有 project 用之，没有就隐式建（簿记，不是仪式）
         if project_id:
@@ -173,9 +263,13 @@ def build(ctx: ToolContext) -> list:
 
         shot_dicts: list[dict[str, Any]] = []
         order = 0
+        prev_head_order: int | None = None
         for i, u in enumerate(parsed, 1):
             members = u["shots"]
             scene_id = "scene_001"
+            # 跨单元接力：段头链到上一段段头（批次串行推进时上一段已出片，
+            # _auto_references 解析成参考视频；果园 demo 实测断链=漂移，2026-11-12）
+            chain = {"chain_from": prev_head_order} if prev_head_order is not None else {}
             if len(members) > 1:
                 gid = f"g_import_{i:02d}"
                 for k, m in enumerate(members):
@@ -185,6 +279,7 @@ def build(ctx: ToolContext) -> list:
                         "shot_type": m["shot_type"], "subject": m["subject"],
                         "action": m["action"],
                         "group_id": gid, "group_index": k,
+                        **(chain | {"reference_group": "g_import_scene"} if k == 0 else {}),
                         # 组头带全文；组员 video_prompt 留空——提交走组单元
                         "group_prompt": u["prompt"] if k == 0 else None,
                         "video_prompt": u["prompt"] if k == 0 else "",
@@ -199,11 +294,13 @@ def build(ctx: ToolContext) -> list:
                     "shot_type": (members[0]["shot_type"] if members else "medium"),
                     "subject": members[0]["subject"] if members else "",
                     "action": members[0]["action"] if members else "",
+                    **(chain | {"reference_group": "g_import_scene"}),
                     "video_prompt": u["prompt"],
                     "prompt_status": "needs_review", "prompt_review_note": "",
                     "cut_reason": "导入段",
                 })
                 order += 1
+            prev_head_order = order - (len(members) if len(members) > 1 else 1)
 
         version = store.create_video_version(
             project_id=p.id, shots=shot_dicts, source_type="agent",

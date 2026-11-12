@@ -168,6 +168,12 @@ def main() -> int:
     _wire_video_qa()
     _wire_video_batch()
 
+    # 孤儿任务接管：上一次跑批进程死掉时，服务商侧可能仍有在途任务——
+    # 巡检线程把它们接回轮询（与 app.main lifespan 同款），否则白烧的钱拿不回片子。
+    from app.video.sweeper import start_sweeper
+
+    start_sweeper(run_now=True)
+
     from app.deps import llm as get_llm
 
     llm = get_llm()
@@ -392,6 +398,7 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
     _dump_shots(title, shots, with_prompt=True)
 
     # ---- 8. 批量出片 ----
+    from app.deps import batch_manager
     from app.video.service import BatchCreateRequest, generate_batch
 
     pending = sum(1 for s in approved_v.shots

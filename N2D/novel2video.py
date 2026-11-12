@@ -8,8 +8,7 @@
 #
 # 用法（在项目根目录）：
 #   uv run python N2D/novel2video.py 素材/孔乙己.txt --title 孔乙己
-#   可选：--out N2D/output/孔乙己_成片.mp4  --shot-limit 15
-#        --no-dubbing  --no-subtitles
+#   可选：--shot-limit 15  --out 自定义.mp4  --no-dubbing  --no-subtitles
 #
 # 断点续跑：每一步的产物都实时落库（script_versions / video_versions /
 # video_style / video_jobs / media_assets）。中途挂了不用从头再来：
@@ -22,8 +21,10 @@
 #   - 批准环节：脚本代表用户把 Prompt 标为 approved（复刻批量审阅端点的
 #     写入路径），这是无人值守的妥协，产品里仍是人工闸门（D-43）；
 #   - 批次推进靠 app.main 的三个 on_complete 接线，脚本里手动调用；
-#   - 日志双写：stdout + output/logs/<标题>_<时间>.log（UTF-8 带 BOM，
-#     Windows 记事本/查看器直接可读，不再乱码）。
+#   - 产物全落产品主目录（仿 Codex，见 app/home.py）：日志与快照在
+#     ~/.wenju/runs/<作品>_<时间>/（run.log + 剧本.md + 分镜与提示词.md +
+#     质检记录.md，UTF-8 带 BOM 不乱码），成片默认在
+#     ~/.wenju/workspace/<作品>/07_成片/。项目文件夹不留跑批产物。
 # =====================================================================
 
 from __future__ import annotations
@@ -35,8 +36,19 @@ import traceback
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent   # 项目根（app/、素材/ 都从这找）
-WF = Path(__file__).resolve().parent            # N2D/ —— 脚本与产物自成一夹
 sys.path.insert(0, str(ROOT))
+
+# 产物落产品主目录（仿 Codex）：~/.wenju/runs/<作品>_<时间>/ ——日志与快照同夹，
+# 项目文件夹里不留任何跑批产物。家目录不可用时退回 N2D/output/。
+try:
+    from app.home import ensure_home, runs_root
+
+    ensure_home(ROOT)
+    RUNS = runs_root()
+except Exception:  # noqa: BLE001
+    RUNS = Path(__file__).resolve().parent / "output"
+
+_RUN_DIR: Path | None = None  # 本次跑的产物夹，_open_log 里定名
 
 _LOG_FH = None  # main() 里初始化；_t 双写用
 
@@ -54,19 +66,19 @@ def _t(msg: str) -> None:
 
 
 def _open_log(title: str) -> Path:
-    """UTF-8 带 BOM 的日志文件——Windows 自带查看器按 GBK 猜编码会满屏乱码，
-    BOM 让它认准 UTF-8。"""
-    log_dir = WF / "output" / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    path = log_dir / f"{title}_{time.strftime('%m%d_%H%M%S')}.log"
-    return path
+    """开本次跑的产物夹 runs/<作品>_<时间>/，日志写其中（UTF-8 带 BOM——
+    Windows 自带查看器按 GBK 猜编码会满屏乱码，BOM 让它认准 UTF-8）。"""
+    global _RUN_DIR
+    _RUN_DIR = RUNS / f"{title}_{time.strftime('%m%d_%H%M%S')}"
+    _RUN_DIR.mkdir(parents=True, exist_ok=True)
+    return _RUN_DIR / "run.log"
 
 
 def _dump(title: str, name: str, text: str) -> None:
-    """把关键产物快照写成文件（output/<作品>/<文件>），与日志并排。
+    """把关键产物快照写进本次跑的产物夹（与日志并排）。
     数据库里有全量，但体检提示词/分镜时翻库不方便——文件直接可读可比对，
     两次跑之间 diff 一下就知道提示词改动带来什么变化。"""
-    d = WF / "output" / title
+    d = _RUN_DIR or (RUNS / title)
     d.mkdir(parents=True, exist_ok=True)
     (d / name).write_text(text, encoding="utf-8")
 
@@ -456,9 +468,18 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
     if asset is None or not asset.content:
         _t("!! 成片资产缺失，无法导出")
         sys.exit(1)
-    out = Path(args.out) if args.out else WF / "output" / f"{p.title}_成片.mp4"
-    if not out.is_absolute():
-        out = ROOT / out
+    if args.out:
+        out = Path(args.out)
+        if not out.is_absolute():
+            out = ROOT / out
+    else:
+        # 默认落作品工作区 07_成片/（~/.wenju/workspace/<剧名>/07_成片/）。
+        # 直接拼家路径：批处理脚本不掺和 Workspace 的 persist 开关语义。
+        from app.home import workspace_root
+        from app.workspace import sanitize_folder
+
+        out = (workspace_root() / sanitize_folder(p.title)
+               / "07_成片" / f"{p.title}_成片.mp4")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(asset.content)
     _t(f"✅ 成片已导出：{out}（{out.stat().st_size/1e6:.1f} MB）")

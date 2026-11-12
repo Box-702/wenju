@@ -20,6 +20,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _default_db_path() -> Path:
+    """默认数据库路径：产品主目录 ~/.wenju/app.db（见 app/home.py）。
+
+    家目录不可写（异常环境/容器只读挂载）时回退项目 data/，不阻断启动。"""
+    try:
+        from .home import db_path, ensure_home
+
+        ensure_home(_PROJECT_ROOT)
+        return db_path()
+    except Exception:  # noqa: BLE001
+        return _PROJECT_ROOT / "data" / "script_agent.db"
+
+
 class Settings(BaseSettings):
     """运行配置。所有字段均可被环境变量覆盖（大小写不敏感）。"""
 
@@ -31,10 +44,10 @@ class Settings(BaseSettings):
     )
 
     # ---------- 业务数据库（默认 SQLite：本地工具零部署；可切 Postgres） ----------
-    # 本地开发/单机工具默认用 SQLite 文件库（data/script_agent.db），
-    # 不再依赖 Docker Postgres；要切回 Postgres 在 .env 里设 DATABASE_URL 即可。
+    # 默认落产品主目录 ~/.wenju/app.db（仿 Codex：用户数据跟着用户走，不跟
+    # 代码目录走；懒迁移见 app/home.py）。要切 Postgres 在 .env 里设 DATABASE_URL。
     database_url: str = Field(
-        default=f"sqlite:///{(_PROJECT_ROOT / 'data' / 'script_agent.db').as_posix()}",
+        default_factory=lambda: f"sqlite:///{_default_db_path().as_posix()}",
         alias="DATABASE_URL",
     )
 
@@ -132,14 +145,23 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8000, alias="API_PORT")
     output_language: str = Field(default="zh-CN", alias="OUTPUT_LANGUAGE")
 
-    # ---------- 工作目录（默认落盘到项目下 data/，不存在会自动创建） ----------
-    # 剧本以「文件」形式存到 data/<剧名>/01原稿 等子目录；数据库承担聊天与 Agent 工作流。
+    # ---------- 工作目录（默认产品主目录 ~/.wenju/workspace/） ----------
+    # 剧本以「文件」形式存到 <家目录>/workspace/<剧名>/01_原稿 等子目录；
+    # 数据库承担聊天与 Agent 工作流。WORKSPACE_ROOT 可指到任意盘。
     workspace_root: str = Field(default="", alias="WORKSPACE_ROOT")
     workspace_persist: bool = Field(default=True, alias="WORKSPACE_PERSIST")
 
     @property
     def effective_workspace_root(self) -> str:
-        return self.workspace_root.strip() or str(_PROJECT_ROOT / "data")
+        v = self.workspace_root.strip()
+        if v:
+            return v
+        try:
+            from .home import workspace_root
+
+            return str(workspace_root())
+        except Exception:  # noqa: BLE001
+            return str(_PROJECT_ROOT / "data")
 
     # 兼容性：.env 中值被引号包裹时自动去引号（常见手写失误）。
     @field_validator("*", mode="before")

@@ -19,6 +19,12 @@ os.environ.setdefault("OPENAI_API_KEY", "")
 # 测试里绝不跑孤儿任务巡检：否则 TestClient 触发 lifespan 时，sweeper 会去连
 # 开发库（Postgres）甚至真把任务挂回轮询线程——测试不该碰任何真实服务商。
 os.environ.setdefault("VIDEO_SWEEPER_ENABLED", "false")
+# 产品主目录隔离（app/home.py）：不钉住的话，测试会读/写/迁移用户真实的
+# ~/.wenju（懒迁移会把开发库复制进去）。钉到临时目录，与真实家目录零接触。
+import tempfile  # noqa: E402
+
+os.environ.setdefault(
+    "WENJU_HOME", str(Path(tempfile.gettempdir()) / f"wenju-test-{os.getpid()}"))
 
 from app.config import Settings  # noqa: E402
 from app.llm import LLM  # noqa: E402

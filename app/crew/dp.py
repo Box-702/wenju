@@ -111,6 +111,67 @@ def language_for(provider: str, script_language: str) -> str:
 # 正文里的十一条写作规则改动频率不低，放 .md 里改完即生效，不必动代码。
 _SKILL_BY_LANGUAGE = {"zh": "video-prompt-zh", "en": "video-prompt-en"}
 
+
+def _fmt_ts(sec: float) -> str:
+    """00:02.800 风格的时间戳（MiniMax 官方增强提示词的母语格式）。"""
+    m, s = divmod(max(0.0, sec), 60)
+    return f"{int(m):02d}:{s:06.3f}"
+
+
+def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
+                        *, language: str) -> None:
+    """把同 group 的机位折叠成一条组提示词（就地写 group_prompt 到组头镜头）。
+
+    语法按 MiniMax H3 官方增强提示词的格式（D-46 三源调研）：
+      [全局锚：环境+人物+风格，只写一遍]
+      [Shot 1] 0-4s 中景，机位…动作…
+      [Shot 2] At 00:04.000, cuts to 特写…动作…
+    时间戳由组内 duration_sec 累加**代码算**——模型对精确时间支持不稳
+    （Seedance 官方明说），所以绝不让 LLM 自己数秒。
+    全局锚去重：同组成员的环境/人物/风格段是逐字复用的同一份（锚纪律），
+    取组头那份即可；body 各机位保留。
+    单镜组（group_id 空或只剩 1 员）不写 group_prompt——下游照旧用 video_prompt。
+    """
+    zh = language == "zh"
+    by_gid: dict[str, list[Shot]] = {}
+    for s in shots:
+        if s.group_id:
+            by_gid.setdefault(s.group_id, []).append(s)
+    for gid, members in by_gid.items():
+        members.sort(key=lambda x: x.group_index)
+        if len(members) < 2:
+            continue
+        head_parts = parts.get(members[0].id, {})
+        seg: list[str] = []
+        # 全局锚段：环境 + 人物 + 风格（组头那份，成员逐字相同）
+        for key in ("env", "cast"):
+            v = head_parts.get(key, "")
+            if v:
+                seg.append(v)
+        cursor = 0.0
+        for i, m in enumerate(members, start=1):
+            p = parts.get(m.id, {})
+            body = p.get("body", "") or (m.video_prompt or "")
+            if i == 1:
+                seg.append(f"[Shot 1] 0-{int(round(m.duration_sec))}s，{body}"
+                           if zh else f"[Shot 1] 0-{int(round(m.duration_sec))}s: {body}")
+            else:
+                lead = (f"[Shot {i}] At {_fmt_ts(cursor)}, cuts to {body}" if zh
+                        else f"[Shot {i}] At {_fmt_ts(cursor)}, cuts to {body}")
+                seg.append(lead)
+            cursor += max(0.0, m.duration_sec)
+        style = head_parts.get("style", "")
+        if style:
+            seg.append(style)
+        group_prompt = "。".join(x.rstrip("。") for x in seg if x) + "。"
+        members[0].group_prompt = group_prompt
+        # 审计对组提示词同样跑一遍（双重审计语义延伸到组头）
+        members[0].prompt_audit = (members[0].prompt_audit or []) + [
+            a for a in audit_video_prompt({"video_prompt": group_prompt},
+                                          style_context=style)
+            if a not in (members[0].prompt_audit or [])
+        ]
+
 # 否定句修复的系统提示词。
 #
 # 为什么需要这一轮：写作规则里已经写了「只写正向描述，禁止否定句」+ 交稿前逐句自查，
@@ -504,6 +565,7 @@ class DPAgent(CrewAgent):
         scene_map = {sc.id: sc for sc in script.scenes}
 
         updated: list[Shot] = []
+        parts_by_shot: dict[str, dict[str, str]] = {}
         for shot in shots:
             meta = shot_meta.get(shot.id) or {}
             body = str(meta.get("prompt_body") or meta.get("video_prompt") or "")
@@ -608,7 +670,14 @@ class DPAgent(CrewAgent):
             shot.prompt_audit = audit_video_prompt(
                 {"video_prompt": prompt}, style_context=eff_style
             )
+            parts_by_shot[shot.id] = {
+                "env": pieces[0] if env else "",
+                "cast": next((p for p in pieces if p.startswith(("人物：", "Characters:"))), ""),
+                "body": body.strip().rstrip("。"),
+                "style": eff_style.strip().rstrip("。") if eff_style else "",
+            }
             updated.append(shot)
+        _fold_group_prompts(updated, parts_by_shot, language=language)
         return updated
 
     def _fallback(

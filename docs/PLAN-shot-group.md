@@ -84,7 +84,7 @@ group_index: int = 0      # 组内序号（0 起），决定时间轴顺序
 
 | 期 | 内容 | 验收 | 花钱 |
 |---|---|---|---|
-| S1 | domain 三字段 + 校验器 + DP 组提示词拼装（纯文本层） | evals 新增「排钱戏成组」golden case 全绿；单测锁时间戳累加 | ¥0 |
+| S1 | ✅ **已完成（2026-11-12）**：domain 三字段 + `_normalize_groups` 归一化 + 校验器组自洽 + 闸门按组删 + `_fold_group_prompts` 组拼装（时间戳代码算）+ evals「排钱戏」case + 7 新测试，526 passed | 单测锁时间戳累加/整组删/去重 | ¥0 |
 | S2 | 提交/批次/claim/QA 改组单位 + finalize 配音时间轴 | `--shot-limit 3` 小样（3 组 ≈ 30s 素材，约 ¥6）：看组内切镜是否如预期不漂移、配音是否对位 | 少量 |
 | S3 | Blender previz POC：单组（排钱戏）白模→关键帧→反哺提示词，对比有无 previz 的两版同组生成 | 同组双跑 ¥4 + 人眼对比；evals/judge 加「空间关系一致性」维度 | 少量 |
 | S4 | UI 组折叠 + 对话工作流入口（start_production 报预算/确认卡/续跑语义，PLAN-agent-rebuild 10.1 的 P4） | 全片 v5（约 10 组 ≈ ¥15-20） | 中 |

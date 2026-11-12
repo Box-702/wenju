@@ -485,8 +485,19 @@ class EvalRunner:
         出现 critical 时**复跑一次**再判定：LLM 输出有抖动，
         单次出现的 critical 可能是偶发而非稳定缺陷。
         两次都失败才算真问题——否则 CI 会被随机失败磨平。
+
+        链路异常（导演拆解失败等）同样复跑一次：2026-11-12 实测
+        single_pressure 被一次 deepseek 调用异常打红，直接复现就通过——
+        基建抖动不该算质量缺陷（blocked 的除外，那是环境问题不是抖动）。
         """
         res = self._run_case_once(case)
+        if self.retry_on_critical and not res.ok and not res.blocked:
+            retry = self._run_case_once(case)
+            if retry.ok:
+                retry.metadata_note = "首次链路异常，复跑通过（判为基建抖动，不计入失败）"
+                return retry
+            retry.metadata_note = f"两次运行链路都失败（首次：{res.error}），判为稳定缺陷"
+            return retry
         if self.retry_on_critical and res.ok and res.critical_count:
             retry = self._run_case_once(case)
             if retry.critical_count == 0:
@@ -506,8 +517,11 @@ class EvalRunner:
         try:
             script = case.script
 
-            # ① 导演拆解
-            d = run_director(self.llm, script)
+            # ① 导演拆解——必须与线上同参调用：不传 adaptation_type 时
+            #    片长预算=None，确定性闸门与短剧节奏约束整个在 eval 里失效
+            #    （2026-11-12 evals 重设计：eval 与线上用同一套规则，否则
+            #    eval 绿了线上照样拆出 53 镜）。
+            d = run_director(self.llm, script, adaptation_type="short_drama")
             if not d.success or not isinstance(d.data, list):
                 res.error = f"导演拆解失败：{d.summary or d.errors or '未知原因'}"
                 _mark_blocked(res)

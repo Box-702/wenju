@@ -505,6 +505,15 @@ class Shot(BaseModel):
     # ---- 一致性计划（导演输出的符号化接力方案，运行时再解析为下面的 URL）----
     reference_group: str = ""          # 共享环境参考图分组键：同组镜头共用一张环境参考图
     chain_from: int | None = None      # 首帧接力：本镜首帧取自该 order 镜头的尾帧；None=序列起点/硬切
+    # ---- 镜头组（一次生成 = 一段戏；2026-11-12 PLAN-shot-group S1）----
+    # 同 group_id 的相邻镜头会被 DP 拼成一条 `[Shot N] At 00:XX cuts to…` 组提示词，
+    # 一次提交生成。"" = 单镜自成一组（旧行为，逐字节兼容：旧版本数据没有这两个
+    # 字段，pydantic 默认空值即单镜组）。组内切镜是同一次采样，不漂移——
+    # 正反打/POV/过肩由此合法（厂商官方原生能力，见 D-46）。
+    group_id: str = ""                 # 组键（导演给，如 grp_scene_001_003）；""=单镜组
+    group_index: int = Field(default=0, ge=0, le=15)  # 组内机位序号（0 起，合法组≤4，宽松收）
+    group_prompt: str | None = None    # 组提示词（仅组头镜头持有）：提交生成时用它，
+                                       # 单镜 video_prompt 仍逐镜保留供审阅/审计/单镜重出片
     # ---- 一致性锚定（多模态输入，对接 VideoJobParams）----
     reference_images: list[str] = Field(default_factory=list)  # 共享环境/人物参考图 URL
     reference_videos: list[str] = Field(default_factory=list)  # 参考上一镜成片 URL，锁风格/运镜/光影

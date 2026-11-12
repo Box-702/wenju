@@ -136,19 +136,32 @@ def enforce_duration_budget(
     if capped:
         notes.append(f"闸门：{capped} 个超长镜头已封顶 {CAP_SHOT_SEC:.0f} 秒")
 
-    # 2) 删镜头直到进预算。给每个镜头打「该先删」分：越小越先删。
+    # 2) 删镜头直到进预算。**以生成单元为单位删**：同组机位是一段戏的多个视点，
+    #    删半个组 = 毁整段戏（2026-11-12 PLAN-shot-group S1）。
+    def unit_of(s: Shot) -> str:
+        return s.group_id or f"__solo_{s.id}"
+
+    def unit_priority(unit: list[Shot]) -> tuple:
+        # 组内取最"可删"成员的分作为整组分：壁纸 > 无台词 > 时长长 > order
+        return min(drop_priority(s) for s in unit)
+
     def drop_priority(s: Shot) -> tuple:
         wallpaper = 0 if s.function not in SHOT_FUNCTIONS else 1
         no_dialogue = 0 if not (s.dialogue_ref or "").strip() else 1
         # 时长长的先删（省得多）；同分按 order 稳定
         return (wallpaper, no_dialogue, -s.duration_sec, s.order)
 
-    kept = list(all_shots)
+    units: dict[str, list[Shot]] = {}
+    for s in all_shots:
+        units.setdefault(unit_of(s), []).append(s)
+    kept_units = list(units.values())
     dropped: list[Shot] = []
-    while sum(max(0.0, s.duration_sec) for s in kept) > budget_sec and len(kept) > 1:
-        victim = min(kept, key=drop_priority)
-        kept.remove(victim)
-        dropped.append(victim)
+    while sum(max(0.0, s.duration_sec) for u in kept_units for s in u) > budget_sec \
+            and len(kept_units) > 1:
+        victim = min(kept_units, key=unit_priority)
+        kept_units.remove(victim)
+        dropped.extend(victim)
+    kept = [s for u in kept_units for s in u]
 
     if dropped:
         notes.append(
@@ -290,6 +303,63 @@ def _critique_for(batch: list, critique: list[str]) -> list[str]:
         return []
     ids = [sc.id for sc in batch]
     return [c for c in critique if any(i in c for i in ids)]
+
+
+# 镜头组上限（MiniMax H3 单次生成 4-15s；组=一次生成，见 D-46 / PLAN-shot-group）
+GROUP_MAX_SEC = 15.0
+GROUP_MIN_SEC = 4.0
+GROUP_MAX_MEMBERS = 4
+
+
+def _normalize_groups(breakdowns: list[SceneBreakdown]) -> None:
+    """归一化导演给的 group_id：非法的组**降级为单镜**（拆键），而不是打回。
+
+    规则（就地修改）：
+      · 同组镜头必须在全局 order 上连续——被隔开的拆成两组；
+      · 组总时长必须落在 [GROUP_MIN_SEC, GROUP_MAX_SEC]——超了从尾部拆新组；
+      · 组成员 ≤ GROUP_MAX_MEMBERS；
+      · group_index 按组内顺序重排 0..n-1；
+      · 单成员组清空 group_id（等价单镜，下游按单镜走）。
+    校验器随后只查「组是否自洽」，不再因为分组问题回喂重拆——分组是
+    锦上添花，不值得烧一整轮导演调用来修格式。"""
+    flat: list[Shot] = sorted((s for bd in breakdowns for s in bd.shots),
+                              key=lambda s: s.order)
+    # 按 group_id 分桶（保序）
+    buckets: dict[str, list[Shot]] = {}
+    for s in flat:
+        if s.group_id:
+            buckets.setdefault(s.group_id, []).append(s)
+
+    for gid, members in list(buckets.items()):
+        if len(members) < 2:
+            for s in members:
+                s.group_id = ""
+                s.group_index = 0
+            continue
+        # 连续性检查 + 时长/人数上限：切成若干合法子组
+        parts: list[list[Shot]] = [[members[0]]]
+        for prev, cur in zip(members, members[1:]):
+            same_run = cur.order == prev.order + 1
+            fits = (sum(x.duration_sec for x in parts[-1]) + cur.duration_sec <= GROUP_MAX_SEC
+                    and len(parts[-1]) < GROUP_MAX_MEMBERS)
+            if same_run and fits:
+                parts[-1].append(cur)
+            else:
+                parts.append([cur])
+        for pi, part in enumerate(parts):
+            sub_gid = gid if pi == 0 and len(part) > 1 else (
+                f"{gid}-{pi}" if len(part) > 1 else "")
+            for si, s in enumerate(part):
+                s.group_id = sub_gid
+                s.group_index = si if sub_gid else 0
+    # 单成员子组清键
+    for s in flat:
+        if s.group_id:
+            n = sum(1 for x in flat if x.group_id == s.group_id)
+            if n < 2:
+                s.group_id = ""
+                s.group_index = 0
+
 
 
 class DirectorAgent(CrewAgent):
@@ -508,6 +578,25 @@ class DirectorAgent(CrewAgent):
                     "全片没有一个 wide/extreme_wide：场景空间从未交代，观众不知道人在哪。"
                     "每场的第一镜优先用 wide 或 medium 建立空间，再进近景。"
                 )
+        # 0c) 镜头组自洽（normalize 已保证，这里是第二只眼：防外部数据绕过归一化）
+        by_gid: dict[str, list[Shot]] = {}
+        for s in all_shots:
+            if s.group_id:
+                by_gid.setdefault(s.group_id, []).append(s)
+        for gid, members in by_gid.items():
+            members.sort(key=lambda x: x.order)
+            g_total = sum(x.duration_sec for x in members)
+            if len(members) < 2:
+                issues.append(f"镜头组 {gid} 只有一个成员（应拆回单镜）")
+            elif any(b.order != a.order + 1 for a, b in zip(members, members[1:])):
+                issues.append(f"镜头组 {gid} 的成员 order 不连续（组=一次生成，必须相邻）")
+            elif not (GROUP_MIN_SEC <= g_total <= GROUP_MAX_SEC):
+                issues.append(
+                    f"镜头组 {gid} 总时长 {g_total:.0f}s 超出一次生成区间 "
+                    f"[{GROUP_MIN_SEC:.0f}, {GROUP_MAX_SEC:.0f}]s")
+            elif [x.group_index for x in members] != list(range(len(members))):
+                issues.append(f"镜头组 {gid} 的 group_index 不是 0..n-1 连续序号")
+
         for bd in breakdowns:
             scene_shots = sorted(bd.shots, key=lambda s: s.order)
             scene = scene_of.get(bd.scene_id)
@@ -758,6 +847,12 @@ class DirectorAgent(CrewAgent):
                     final_frame=str(s.get("final_frame") or "").strip(),
                     reference_group=str(s.get("reference_group") or ""),
                     chain_from=chain,
+                    # 镜头组（D-46）：模型给同一戏剧高点的相邻机位标同一个
+                    # group 键；此处只宽松收字符串，合法性（连续/时长/序号）
+                    # 由 _normalize_groups 归一化 + 校验器把关。
+                    group_id=str(s.get("group") or "").strip(),
+                    # 占位序号：_normalize_groups 会按组重排 0..n-1，这里钳到合法区间
+                    group_index=min(idx, 5) if str(s.get("group") or "").strip() else 0,
                 )
                 shots.append(shot)
 
@@ -782,7 +877,9 @@ class DirectorAgent(CrewAgent):
             )
             breakdowns.append(breakdown)
 
+        _normalize_groups(breakdowns)
         return breakdowns
+
 
     @staticmethod
     def _coerce_chain(value: Any) -> int | None:

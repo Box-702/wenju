@@ -331,16 +331,20 @@ def test_dp_repair_survives_model_failure():
 
 
 def test_dp_system_carries_the_five_prompt_rules():
-    """图里那套提示词逻辑要固化成系统提示词，漏掉任何一条都会让画面失控。"""
+    """图里那套提示词逻辑要固化成系统提示词，漏掉任何一条都会让画面失控。
+    2026-11-12 D-46 修订：规则 9 从「台词不进提示词」改为官方音画句式，
+    新增 12 故意不完美 / 13 轴线互斥特征——锁文本的测试跟着换关键词。"""
     zh = dp_system(language="zh", provider_label="MiniMax", max_duration=10, has_anchors=True)
     for kw in ["虚拟无人机", "呼吸感", "光从哪个方向来", "编上号", "背景人物", "只写画面里看得见的东西",
-               "不越轴", "主事件", "禁止否定句", "台词不进提示词",
-               "最终画面收尾", "情绪只写身体", "占位词"]:
+               "不越轴", "主事件", "禁止否定句", "角色说话",
+               "最终画面收尾", "情绪只写身体", "占位词",
+               "故意不完美", "互斥", "屏幕左"]:
         assert kw in zh
     en = dp_system(language="en", provider_label="Runway", max_duration=10, has_anchors=True)
     for kw in ["virtual drone", "lens breathing", "light direction", "Number the main characters",
-               "no axis crossing", "never negations", "Never put spoken lines",
-               "final frame", "slop words"]:
+               "no axis crossing", "never negations", "Character says",
+               "final frame", "slop words",
+               "deliberate imperfection", "mutually exclusive", "left of frame"]:
         assert kw in en
 
 
@@ -1033,3 +1037,39 @@ def test_计费估算含输入秒数():
     default = MiniMaxProvider(api_key="k")
     assert default.model == ""  # 实例未指定时 create_job 用 _DEFAULT_MODEL
     assert default._tier() is MiniMaxProvider._TIERS["MiniMax-H3-Lite"]
+
+
+# ---------- 镜头组折叠（S1，PLAN-shot-group / D-46） ----------
+
+
+def test_fold_group_prompts_时间戳由时长累加():
+    """组提示词 = [Shot 1] 0-4s… [Shot 2] At 00:04.000 cuts to…；
+    时间戳代码算不让模型算；全局锚只写一遍（成员逐字相同）。"""
+    from app.crew.dp import _fold_group_prompts
+
+    a = Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
+             subject="孔乙己", duration_sec=4, group_id="g1", group_index=0,
+             video_prompt="环境X。人物Y。他俯身排钱。风格Z。")
+    b = Shot(id="shot_scene_001_001", scene_id="scene_001", order=1,
+             subject="铜钱", duration_sec=3, group_id="g1", group_index=1,
+             video_prompt="环境X。人物Y。铜钱一枚枚增多。风格Z。")
+    parts = {
+        a.id: {"env": "环境X", "cast": "人物：Y", "body": "他俯身排钱", "style": "风格Z"},
+        b.id: {"env": "环境X", "cast": "人物：Y", "body": "铜钱一枚枚增多", "style": "风格Z"},
+    }
+    _fold_group_prompts([a, b], parts, language="zh")
+    gp = a.group_prompt
+    assert gp and b.group_prompt is None          # 组头持有
+    assert "[Shot 1] 0-4s" in gp
+    assert "[Shot 2] At 00:04.000, cuts to" in gp
+    assert gp.count("环境X") == 1                  # 全局锚去重
+    assert gp.rstrip().endswith("风格Z。")          # 风格收尾一份
+
+
+def test_fold_单镜组不产组提示词():
+    from app.crew.dp import _fold_group_prompts
+
+    a = Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
+             subject="甲", duration_sec=4, video_prompt="P")
+    _fold_group_prompts([a], {a.id: {"body": "P"}}, language="zh")
+    assert a.group_prompt is None

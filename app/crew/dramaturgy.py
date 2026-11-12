@@ -260,27 +260,39 @@ def find_repeated_clause(text: str, *, min_len: int = 8) -> str:
     return ""
 
 
+def _is_official_dialogue(head: str) -> bool:
+    """官方音画同出句式：`角色说话：「台词」`（MiniMax/可灵/Seedance 文档确认，
+    2026-11-12 提示词规则修订）。带这个标记的引用是**特性**——锚表演节奏，
+    成片仍以下阶段 TTS 为准；不带标记的「说道：『…』」才是模型会渲染成
+    含混假语音的旧写法，照旧剥除。"""
+    return "角色说话" in head or "说话：" in head or "说话:" in head
+
+
 def find_spoken_quotes(text: str) -> list[str]:
-    """找出跟在说话动词后面的引用台词。"""
+    """找出跟在说话动词后面的引用台词（官方句式除外）。"""
     if not text:
         return []
     out: list[str] = []
     for m in _QUOTE_SPAN.finditer(text):
         head = text[max(0, m.start() - 6):m.start()]
+        if _is_official_dialogue(head):
+            continue
         if any(v in head for v in _SPEECH_VERBS):
             out.append(m.group(1))
     return out
 
 
 def strip_spoken_quotes(text: str) -> str:
-    """把「跟在说话动词后面的引用台词」从提示词里剥掉（语音交给后期配音）。"""
+    """把「跟在说话动词后面的引用台词」从提示词里剥掉（语音交给后期配音）。
+
+    官方 `角色说话：「…」` 句式保留（见 _is_official_dialogue）。"""
     if not text:
         return text
     out: list[str] = []
     last = 0
     for m in _QUOTE_SPAN.finditer(text):
         head = text[max(0, m.start() - 6):m.start()]
-        if not any(v in head for v in _SPEECH_VERBS):
+        if _is_official_dialogue(head) or not any(v in head for v in _SPEECH_VERBS):
             continue
         out.append(text[last:m.start()])
         last = m.end()

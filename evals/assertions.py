@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
 
+from app.crew.director import count_action_units
 from app.crew.dramaturgy import (
     SHOT_FUNCTIONS,
     audit_breakdowns,
@@ -152,6 +153,39 @@ def assert_director(
             res.add(
                 "DIR-09", "warn", bd.scene_id,
                 f"这场戏切了 {n} 镜，过碎（切碎 = 不连贯 + 更贵），建议合并",
+            )
+
+    # —— 全片层：镜头语言与动作密度（2026-11-12 evals 重设计）——
+    # 导演内部的回喂批评管不住这两件事（v2 实测 25/25 静态、v3 实测 22/24
+    # 只写 2 段微动作），线上靠确定性闸门兜底；eval 独立查**最终产物**，
+    # 不信任闸门也报——闸门改了阈值时这里是第二只眼。
+    all_shots = [s for bd in breakdowns for s in bd.shots]
+    n_all = len(all_shots)
+    if n_all >= 6:
+        n_close = sum(1 for s in all_shots if s.shot_type in ("close_up", "extreme_close_up"))
+        n_static = sum(1 for s in all_shots if (s.camera.type or "static") in ("static", "steady", ""))
+        n_wide = sum(1 for s in all_shots if s.shot_type in ("extreme_wide", "wide"))
+        if n_close / n_all > 0.4:
+            res.add(
+                "DIR-10", "critical", "director",
+                f"特写占比 {n_close}/{n_all}（>40%）：全片怼脸 = 畸变高发 + 观感疲劳",
+            )
+        if n_static / n_all > 0.75:
+            res.add(
+                "DIR-11", "critical", "director",
+                f"固定机位占比 {n_static}/{n_all}（>75%）：镜头不动 = 摄影机不存在",
+            )
+        if n_wide == 0:
+            res.add(
+                "DIR-12", "critical", "director",
+                "全片没有一个 wide：场景空间从未交代，观众不知道人在哪",
+            )
+        thin = [s for s in all_shots if count_action_units(s.action) < 3]
+        if len(thin) > n_all * 0.3:
+            res.add(
+                "DIR-13", "critical", "director",
+                f"{len(thin)}/{n_all} 镜的 action 不足 3 段（微动作循环 = PPT，"
+                "v3『83 秒重复一个动作』的直接指标）",
             )
 
     return res

@@ -80,10 +80,15 @@ thing the video model sees — anything you leave out, it will invent):
    tape" feeds the very concept into the model and it will draw it anyway. Leave out
    what you don't want; phrase clearance as what should happen ("the tape passes above
    her head").
-9. **Never put spoken lines into the prompt.** Quoted dialogue gets rendered as mumbled
-   fake speech nobody can understand. For dialogue beats, write the acting instead:
-   who addresses whom, pace and emotion, body orientation and distance, what the hands
-   do. Voice belongs to post-production dubbing and lip-sync.
+9. **Dialogue enters the prompt via the official syntax; voice layers separately.**
+   (2026-11-12, corrected per official vendor docs — MiniMax/Kling/Seedance all support
+   audio-visual generation.) Write quoted lines as `角色说话：「台词」` /
+   `Character says: "line"` plus the acting beat (who addresses whom, pace and emotion,
+   body orientation, hands). Add one sound clause: ambient beds and action sounds only,
+   `no background music`. Model-generated speech is unreliable — final voice still comes
+   from post TTS dubbing, so keep lines short (one breath) and split long exchanges by
+   speaker. Inside a shot group (multi-camera one generation), each segment carries at
+   most one speaker.
 10. **End on the final frame.** Close every prompt_body with the shot's final_frame
    (the visible state of the last frame) — the video model treats the last frame as
    the emotional destination and drives toward it. Write the visible state itself;
@@ -95,6 +100,17 @@ thing the video model sees — anything you leave out, it will invent):
    never write unrenderable placeholder words: cinematic / epic / stunning /
    masterpiece / high quality / 4K — each is a placeholder for missing detail.
    Replace them with concrete physical facts.
+12. **Cure the AI look with deliberate imperfection** (MiniMax official examples +
+    creator consensus): ad-grade stability and sharpness read as fake. In at least
+    every 2-3rd shot write one real-camera artifact: slight handheld sway, focus
+    hunting then refinding, exposure flicker against backlight, a foreground element
+    briefly crossing the subject. These are texture notes, not a second camera move.
+13. **Two-hander scenes: lock screen geography (the 180° axis).** Left/right on screen
+    is a camera property, not a character identity — every segment must state "A on the
+    left of frame, B on the right" and keep it consistent across the whole scene (the
+    reverse angle moves the camera, never the left/right relationship). Give each of
+    two similar characters ≥3 mutually exclusive visible markers (hair silhouette,
+    garment color, unique accessory); never describe two people with the same words.
 
 One shot carries one continuous action or one continuous stretch of dialogue.
 

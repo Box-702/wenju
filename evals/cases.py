@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.domain import Character, Location, Scene, Script, Source
+from app.domain import Character, Location, Scene, Script, ScriptBeat, Source
 
 
 @dataclass
@@ -455,6 +455,59 @@ CASE_SLOW_THREAT = EvalCase(
 )
 
 
+# =====================================================================
+# Case 11 —— 排钱戏：镜头组语法的主战场（2026-11-12 D-46 / PLAN-shot-group S1）
+# =====================================================================
+
+CASE_MONEY_GROUP = EvalCase(
+    id="money_group",
+    name="排钱多机位戏",
+    desc="穷客人把仅有的几枚铜钱一枚枚排在柜台上，掌柜从不耐烦到眯眼打量。"
+         "关键道具揭示 = 镜头组的主战场：导演应把「排钱」拆成同一次生成的"
+         "2-3 个机位（主体中景 → 钱的特写 → 掌柜过肩反应），而不是三个孤立镜头。",
+    watch_for=[
+        "是否产出 group_id 非空的镜头组（组=2-4 机位、总时长 ≤15s、order 连续）",
+        "组内每机位是否只一个说话人/主体",
+        "轴线：掌柜与客人在画面左右是否跨机位一致",
+        "排钱是否被写成位移级动作弧线而非微动作循环",
+    ],
+    script=_script(
+        title="柜前",
+        logline="穷客人排出最后几枚铜钱，掌柜的态度从嫌弃变成打量。",
+        themes=["体面", "窘迫"],
+        characters=[
+            Character(id="char_ke", name="客人", role="protagonist"),
+            Character(id="char_zhang", name="掌柜", role="antagonist"),
+        ],
+        locations=[Location(id="loc_dang", name="当铺柜台")],
+        scenes=[
+            Scene(
+                id="scene_001",
+                title="排钱",
+                chapter_refs=["ch_001"],
+                location_id="loc_dang",
+                characters=["char_ke", "char_zhang"],
+                purpose="用一件道具完成权力关系的翻转",
+                conflict="客人要体面，掌柜要拿捏",
+                entry_state="客人袖口里攥着几枚铜钱",
+                exit_state="掌柜沉默地把钱推回一半",
+                action=["客人俯身把铜钱一枚枚排在柜台上"],
+                beats=[
+                    ScriptBeat(id="beat_001", type="action",
+                               text="客人从袖中摸出钱袋，铜钱磕在柜台木面上"),
+                    ScriptBeat(id="beat_002", type="dialogue", speaker="char_zhang",
+                               line="就这些？"),
+                    ScriptBeat(id="beat_003", type="action",
+                               text="客人把最后一枚钱按在队列末尾，指节压得发白"),
+                    ScriptBeat(id="beat_004", type="dialogue", speaker="char_ke",
+                               line="一文不少。"),
+                ],
+            )
+        ],
+    ),
+)
+
+
 ALL_CASES: list[EvalCase] = [
     CASE_SINGLE_PRESSURE,
     CASE_DIALOGUE_TENSION,
@@ -466,6 +519,7 @@ ALL_CASES: list[EvalCase] = [
     CASE_CHAIN_ACTION,
     CASE_NIGHT_EXTERIOR,
     CASE_SLOW_THREAT,
+    CASE_MONEY_GROUP,
 ]
 
 

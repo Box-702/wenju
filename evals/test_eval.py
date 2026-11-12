@@ -23,7 +23,7 @@ import pytest
 
 from app.llm import LLM
 from app.config import Settings
-from app.domain import Shot, StyleGuide
+from app.domain import CameraMovement, SceneBreakdown, Shot, StyleGuide
 
 from .assertions import assert_director, assert_dp, assert_pipeline
 from .cases import ALL_CASES, get_case
@@ -411,3 +411,39 @@ def test_pipeline_light_check_silent_when_consistent():
     )
     res = assert_pipeline([], [shot], style_guide=sg)
     assert "LNG-04" not in {f.rule for f in res.failures}, [str(f) for f in res.failures]
+
+
+# ---- 全片层镜头语言/动作密度断言（2026-11-12 evals 重设计，DIR-10~13） ----
+
+
+def _flat_shot(i: int, *, st: str, cam: str, action: str) -> Shot:
+    return Shot(
+        id=f"shot_scene_001_{i:03d}", scene_id="scene_001", order=i,
+        subject="孔乙己", duration_sec=4, shot_type=st,
+        camera=CameraMovement(type=cam), function="emotion",
+        final_frame="他站着不动", action=action,
+    )
+
+
+def test_director_flags_monotone_lens_language():
+    """v2/v3 型退化：全特写+全静态+零 wide+两段微动作 → 四条 critical 全亮。"""
+    shots = [_flat_shot(i, st="close_up" if i < 5 else "medium",
+                        cam="static", action="他抿嘴；手指收紧")
+             for i in range(10)]
+    res = assert_director([SceneBreakdown(scene_id="scene_001", shots=shots)])
+    rules = {f.rule for f in res.critical}
+    assert {"DIR-10", "DIR-11", "DIR-12", "DIR-13"} <= rules, rules
+
+
+def test_director_lens_rules_silent_when_varied():
+    """多样化 + 三段位移动作的计划不该被新规则误伤。"""
+    action_ok = "他俯身从怀里摸出钱袋；他把铜钱一枚枚按在柜台上；手收回来退后半步站直"
+    shots = [
+        _flat_shot(0, st="wide", cam="dolly", action=action_ok),
+        *[_flat_shot(i, st="medium", cam="static", action=action_ok) for i in range(1, 6)],
+        _flat_shot(6, st="over_shoulder", cam="pan", action=action_ok),
+        _flat_shot(7, st="close_up", cam="static", action=action_ok),
+    ]
+    res = assert_director([SceneBreakdown(scene_id="scene_001", shots=shots)])
+    rules = {f.rule for f in res.critical}
+    assert not ({"DIR-10", "DIR-11", "DIR-12", "DIR-13"} & rules), rules

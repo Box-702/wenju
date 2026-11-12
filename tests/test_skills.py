@@ -51,14 +51,18 @@ def test_director_skill_keeps_the_drama_rules():
         assert kw in body, f"导演技能缺了「{kw}」"
 
 
-def test_video_prompt_skills_keep_the_eleven_rules():
+def test_video_prompt_skills_keep_the_rules():
+    """摄影技能锁文本（2026-11-12 D-46 修订：十一条→十三条）。
+    规则 9 从「台词不进提示词」改为官方音画句式；新增 12 故意不完美、
+    13 轴线互斥特征。漏一条 = 一次提交事故，锁死。"""
     zh = render_skill(
         "video-prompt-zh", provider_label="MiniMax", duration_note="6 秒",
         lang_rule="中文", json_note="中文", has_anchors=True,
     )
     for kw in ["虚拟无人机", "呼吸感", "光从哪个方向来", "编上号", "背景人物",
                "只写画面里看得见的东西", "不越轴", "主事件", "禁止否定句",
-               "台词不进提示词", "最终画面收尾", "情绪只写身体", "占位词"]:
+               "角色说话", "最终画面收尾", "情绪只写身体", "占位词",
+               "故意不完美", "互斥"]:
         assert kw in zh, f"中文摄影技能缺了「{kw}」"
 
     en = render_skill(
@@ -66,6 +70,8 @@ def test_video_prompt_skills_keep_the_eleven_rules():
         lang_rule="English", json_note="English", has_anchors=True,
     )
     assert "prompt_body" in en
+    for kw in ["Character says", "deliberate imperfection", "mutually exclusive"]:
+        assert kw in en, f"英文摄影技能缺了「{kw}」（中英必须同步，D-46）"
     assert len(en) > len(zh)  # 英文正文更长
 
 

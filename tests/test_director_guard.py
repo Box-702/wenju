@@ -377,3 +377,77 @@ def test_动作下限_有位移三段的合格镜头不误伤():
     )]
     issues = _check(shots)
     assert not [i for i in issues if "至少 3 段" in i or "位移级" in i], issues
+
+
+# =====================================================================
+# 镜头组（S1，PLAN-shot-group / D-46）
+# =====================================================================
+
+
+def test_组归一化_不连续自动拆组():
+    """模型把不相邻的镜头标同组 → normalize 拆键，校验器不再报。"""
+    from app.crew.director import _normalize_groups
+
+    a = _shot(0, dur=4); a.group_id = "g1"
+    b = _shot(1, dur=4); b.group_id = "g2"
+    c = _shot(2, dur=4); c.group_id = "g1"   # 不连续
+    bd = _bd("scene_001", [a, b, c])
+    _normalize_groups([bd])
+    assert a.group_id == "" or c.group_id != a.group_id  # g1 被拆开
+    # 单成员组清空键
+    assert not (a.group_id and sum(1 for x in (a, b, c) if x.group_id == a.group_id) < 2)
+
+
+def test_组归一化_超15秒从尾拆():
+    from app.crew.director import GROUP_MAX_SEC, _normalize_groups
+
+    shots = []
+    for i in range(4):
+        s = _shot(i, dur=5); s.group_id = "g1"; shots.append(s)
+    _normalize_groups([_bd("scene_001", shots)])
+    g1 = [s for s in shots if s.group_id.startswith("g1")]
+    for gid in {s.group_id for s in g1}:
+        total = sum(s.duration_sec for s in shots if s.group_id == gid)
+        assert total <= GROUP_MAX_SEC, (gid, total)
+    # 前 3 个（15s）成组，第 4 个落单
+    assert shots[0].group_id and shots[2].group_id == shots[0].group_id
+    assert shots[3].group_id == ""
+
+
+def test_组校验_合法组不唠叨_坏组报():
+    good = []
+    for i in range(3):
+        s = _shot(i, dur=4); s.group_id = "g1"; s.group_index = i; good.append(s)
+    issues = _check(good)
+    assert not [x for x in issues if "镜头组" in x], issues
+    # index 断链
+    bad = [_shot(i, dur=4) for i in range(3)]
+    for i, s in enumerate(bad):
+        s.group_id = "g1"; s.group_index = i
+    bad[2].group_index = 7
+    issues = _check(bad)
+    assert any("group_index" in x for x in issues), issues
+
+
+def test_闸门按组删_不毁半段戏():
+    from app.crew.director import enforce_duration_budget
+
+    shots = []
+    for i in range(3):
+        s = _shot(i, dur=5, fn="emotion", dlg=f"beat_{i}")
+        shots.append(s)
+    # 一个 3 机组（15s）+ 6 个散镜（30s）：预算 20 → 应整组保住或整组删，不留残组
+    for i in range(3, 9):
+        shots.append(_shot(i, dur=5, fn=""))
+    g = [_shot(0, dur=5), _shot(1, dur=5), _shot(2, dur=5)]
+    for k, s in enumerate(g):
+        s.group_id = "g1"; s.group_index = k; s.function = "emotion"
+        s.dialogue_ref = f"beat_{k}"
+    alls = g + [shots[j] for j in range(3, 9)]
+    for k, s in enumerate(alls):
+        s.order = k
+    out, _notes = enforce_duration_budget([_bd("scene_001", alls)], 20)
+    kept = [s for b in out for s in b.shots]
+    g1 = [s for s in kept if s.group_id.startswith("g1")]
+    # 组要么完整（3 员）要么整体消失，绝不残 1-2 员
+    assert len(g1) in (0, 3), [s.id for s in g1]

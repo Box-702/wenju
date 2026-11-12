@@ -78,9 +78,10 @@ def _dump_script(title: str, script) -> None:
         lines.append(f"## {sc.id} {sc.title}｜地点 {sc.location_id}｜人物 {'、'.join(sc.characters)}")
         lines.append(f"目的：{sc.purpose}  冲突：{sc.conflict}")
         for b in sc.beats:
-            tag = f"[{b.type}]"
-            body = (b.line or b.summary or "").strip()
-            lines.append(f"  {tag} {body[:120]}")
+            # ScriptBeat 字段实况：动作/提示走 text，对白走 line+speaker
+            body = (b.line or b.text or "").strip()
+            who = f"（{b.speaker}）" if b.speaker else ""
+            lines.append(f"  [{b.type}]{who} {body[:120]}")
         lines.append("")
     _dump(title, "剧本.md", "\n".join(lines))
 

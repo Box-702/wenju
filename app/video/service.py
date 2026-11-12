@@ -86,8 +86,14 @@ def _job_params(payload: dict[str, Any]) -> Any:
 
     参考素材是本机文件（回放地址 /api/assets/file/xxx），服务商拉不到这种相对
     地址（实测 MiniMax 判 invalid param），所以在这里统一内联成 data URI。
+
+    接力参考视频的计费裁剪（2026-11-12 账单复盘）：MiniMax 按
+    input_seconds + output_seconds 同价计费，整条 4-6s 成片当接力锚比输出
+    还贵（实测 ¥8.3/镜里 ¥4.5 是输入视频）。衔接只需要前镜**结尾**，
+    公网直链在这里裁尾 2.5s 内联；用户手挑的参考素材不动（那是创作输入，
+    不是接力锚）。
     """
-    from ..media.inline import inline_media_urls
+    from ..media.inline import clip_tail_data_uri, inline_media_urls
     from .base import VideoJobParams
 
     # 这些键有专门的归处：既不要重复塞进 extra，也不要当作未知字段透传给 provider。
@@ -96,6 +102,13 @@ def _job_params(payload: dict[str, Any]) -> Any:
         "first_frame_image", "last_frame_image",
         "reference_images", "reference_videos", "reference_audios", "content",
     }
+    ref_videos: list[str] = []
+    for u in inline_media_urls(deps.store(), payload.get("reference_videos") or []):
+        if u.startswith("http"):
+            # 接力成片直链：裁尾内联；裁失败回退整条（可用性 > 省钱）
+            ref_videos.append(clip_tail_data_uri(u) or u)
+        else:
+            ref_videos.append(u)
     return VideoJobParams(
         duration_sec=int(payload.get("duration_sec") or 6),
         resolution=str(payload.get("resolution") or "1280x720"),
@@ -106,7 +119,7 @@ def _job_params(payload: dict[str, Any]) -> Any:
         image_url=payload.get("first_frame_image"),
         last_frame_image=payload.get("last_frame_image"),
         reference_images=inline_media_urls(deps.store(), payload.get("reference_images") or []),
-        reference_videos=inline_media_urls(deps.store(), payload.get("reference_videos") or []),
+        reference_videos=ref_videos,
         reference_audios=inline_media_urls(deps.store(), payload.get("reference_audios") or []),
         content=payload.get("content"),
         extra={k: v for k, v in payload.items() if k not in handled_keys},
@@ -275,7 +288,6 @@ def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, boo
     duration = int(round(explicit or director_sec or suggest_duration(pacing, fmt)))
 
     provider = get_registry().get_provider(payload.provider)
-    cost = provider.estimate_cost(float(duration)) if provider else None
 
     stored_params = dict(payload.params)
     # 落库固定下来：重试、批量重投都要用同一个时长，不能再各自回落到默认值。
@@ -290,6 +302,25 @@ def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, boo
     # 先记下用户手挑的参考视频，再补自动锚——回填会把接力锚并进来，混在一起分不清意图。
     manual_reference_videos = list(payload.params.get("reference_videos") or [])
     _auto_references(project_id, payload.shot_id, payload.version_id, stored_params)
+
+    # 费用估算放在锚回填**之后**：MiniMax 按输入秒数同价计费（2026-11-12 账单
+    # 复盘），参考图/接力视频是回填进来的，回填前估算必然低估。
+    if provider is not None:
+        try:
+            from .base import VideoJobParams as _VJP
+
+            _probe = _VJP(
+                duration_sec=duration,
+                reference_images=stored_params.get("reference_images") or [],
+                reference_videos=stored_params.get("reference_videos") or [],
+            )
+            cost = (provider.estimate_cost_real(_probe, duration)
+                    if hasattr(provider, "estimate_cost_real")
+                    else provider.estimate_cost(float(duration)))
+        except Exception:  # noqa: BLE001
+            cost = provider.estimate_cost(float(duration))
+    else:
+        cost = None
 
     # 意图占位（claim）：建任务之前先占——崩溃轮、并发轮、重试轮都有唯一出口。
     # claim 表只覆盖从本函数进来的轮；成片质检的自动重 roll 直接建任务不占 claim，
@@ -413,6 +444,8 @@ def _auto_references(project_id: str, shot_id: str | None, version_id: str | Non
     )
     # 参考视频：用户挑的参考素材（本地文件）+ 自动接力的前镜成片（公网直链）合并。
     # 服务商最多收 3 条（实测超了报「参考视频最多 3 个」），按「显式 > 接力」填满。
+    # 这里只存 URL；接力片段的计费裁剪（尾部 2.5s）在投递时由 _job_params 做，
+    # 免得 base64 进 DB 把库撑爆（2026-11-12 账单复盘：输入秒数按输出同价计费）。
     shot = next((s for s in version.shots if isinstance(s, dict) and s.get("id") == shot_id), {})
     manual = _manual_reference_videos(project_id, shot)
     merged: list[str] = []

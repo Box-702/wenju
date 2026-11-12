@@ -88,6 +88,21 @@ class MiniMaxProvider(VideoProvider):
     supported_resolutions = ["480P", "768P", "2K"]
     chinese_prompt_support = True
 
+    # H3 系列档位表（官方定价页 2026-11-12 确认）。计费公式
+    # total_seconds = input_seconds + output_seconds——**参考视频按秒与输出
+    # 同价**，输入图片 ¥0.20/张（超免费额度后）。此前 0.045$/s 的粗估
+    # 严重低估（实测 ¥8.3/镜 vs 估算 ¥1.3），费率与能力都按档位表走。
+    _TIERS: dict[str, dict[str, Any]] = {
+        "MiniMax-H3":           {"per_sec": 0.50, "res": ("768P", "2K"), "min_dur": 4},
+        "MiniMax-H3-Highspeed": {"per_sec": 0.26, "res": ("480P", "768P"), "min_dur": 4},
+        "MiniMax-H3-Lite":      {"per_sec": 0.16, "res": ("480P", "768P"), "min_dur": 4},
+        "MiniMax-H3-Max":       {"per_sec": 0.26, "res": ("480P", "768P"), "min_dur": 5},
+    }
+    _IMAGE_INPUT_CNY = 0.20
+
+    def _tier(self) -> dict[str, Any]:
+        return self._TIERS.get(self.model or "MiniMax-H3", self._TIERS["MiniMax-H3"])
+
     # 任务 → 提交时用的 key。跨账号轮换后，查询必须用「提交它的那个账号」的
     # key，否则会拿到 invalid task_id。进程内字典足够：任务在同一个进程里轮询。
     _TASK_KEYS: dict[str, str] = {}
@@ -254,25 +269,33 @@ class MiniMaxProvider(VideoProvider):
           {"type": "text", "text": ...}
           {"type": "image_url", "image_url": {"url": ...}, "role": "first_frame|last_frame|reference_image"}
           {"type": "video_url", "video_url": {"url": ...}, "role": "reference_video"}
-          {"type": "audio_url", "audio_url": {"url": ...}}
+          {"type": "audio_url", "audio_url": {"url": ...}, "role": "reference_audio"}
         数量上限（官方文档）：首/尾帧各 ≤2、参考图 ≤9、参考视频 ≤3、参考音频 ≤3，混合 ≤12。
+        互斥（官方文档 2026-11-12 确认）：**图生视频（first/last_frame）与多模态
+        参考（reference_*）不可混用**——混了服务端行为未定义，这里按「参考优先、
+        丢弃首尾帧」收敛并警告（接力参考是我们链路的主用法）。
         """
         if params.content:
             return list(params.content)
 
+        has_ref = bool(params.reference_images or params.reference_videos
+                       or params.reference_audios)
         content: list[dict[str, Any]] = []
         if prompt.strip():
             content.append({"type": "text", "text": prompt})
-        if params.image_url:
-            content.append({"type": "image_url", "image_url": self._media(params.image_url), "role": "first_frame"})
-        if params.last_frame_image:
-            content.append({"type": "image_url", "image_url": self._media(params.last_frame_image), "role": "last_frame"})
-        for url in params.reference_images:
+        if has_ref and (params.image_url or params.last_frame_image):
+            log.warning("MiniMax V2：首尾帧与参考素材互斥，本镜按参考优先提交（丢弃首/尾帧图）")
+        elif not has_ref:
+            if params.image_url:
+                content.append({"type": "image_url", "image_url": self._media(params.image_url), "role": "first_frame"})
+            if params.last_frame_image:
+                content.append({"type": "image_url", "image_url": self._media(params.last_frame_image), "role": "last_frame"})
+        for url in params.reference_images[:9]:
             content.append({"type": "image_url", "image_url": self._media(url), "role": "reference_image"})
-        for url in params.reference_videos:
+        for url in params.reference_videos[:3]:
             content.append({"type": "video_url", "video_url": self._media(url), "role": "reference_video"})
-        for url in params.reference_audios:
-            content.append({"type": "audio_url", "audio_url": self._media(url)})
+        for url in params.reference_audios[:3]:
+            content.append({"type": "audio_url", "audio_url": self._media(url), "role": "reference_audio"})
 
         if not content:
             raise ValueError("prompt 与多模态输入（首尾帧 / 参考素材）至少要有一项")
@@ -286,21 +309,26 @@ class MiniMaxProvider(VideoProvider):
         content = self._build_content(prompt, params)
 
         extra = dict(params.extra)
-        # 分辨率/画幅用本 provider 的方言（480P/768P/2K）。优先级：调用方显式
-        # 指定 > extra > 全局默认配置（VIDEO_DEFAULT_RESOLUTION，默认 768P 低挡位）。
+        tier = self._tier()
+        # 分辨率按**当前档位**的白名单收敛（2026-11-12 文档确认：Highspeed/Lite/Max
+        # 不支持 2K；旗舰 H3 反而没有 480P）。此前只对照全类 supported_resolutions，
+        # 切到 Highspeed 后传 2K 会被服务端拒。优先级：调用方显式 > extra > 全局默认。
         from ..base import default_resolution
-        resolution = (
-            params.resolution
-            if params.resolution in self.supported_resolutions
-            else extra.pop("resolution", None)
-            or (default_resolution() if default_resolution() in self.supported_resolutions else "768P")
-        )
+
+        allowed = tier["res"]
+        candidates = [
+            params.resolution if params.resolution in allowed else "",
+            str(extra.pop("resolution", "") or "") if extra.get("resolution") in allowed else "",
+            default_resolution() if default_resolution() in allowed else "",
+        ]
+        resolution = next((c for c in candidates if c), allowed[-1] if allowed else "768P")
+        # 时长：档位下限（Max 不支持 4s）到 15s。
+        duration = max(tier["min_dur"], min(15, int(params.duration_sec or 6)))
         body: dict[str, Any] = {
             # 模型名：用户设置里显式选的优先，缺省 H3。
             "model": self.model or "MiniMax-H3",
             "content": content,
-            # H3 支持 4-15 秒，夹到合法区间，缺省 6 秒。
-            "duration": max(4, min(15, int(params.duration_sec or 6))),
+            "duration": duration,
             "resolution": resolution,
             "ratio": extra.pop("ratio", params.aspect_ratio or DEFAULT_ASPECT),
         }
@@ -326,8 +354,22 @@ class MiniMaxProvider(VideoProvider):
         if self._last_key:
             self._remember(task_id, self._last_key)
 
-        cost = self.estimate_cost(body["duration"])
+        cost = self.estimate_cost_real(params, duration)
         return VideoJobResponse(external_task_id=task_id, status="queued", cost_estimate=cost)
+
+    def estimate_cost_real(self, params: VideoJobParams, out_sec: int) -> float:
+        """按官方计费公式估算费用（返回美元——DB 的 cost_estimate 前端按 USD 展示）。
+
+        计费：(输出秒 + 输入视频秒) × 档位秒价（¥） + 输入图 × ¥0.2，再折美元。
+        输入视频秒数按素材形态近似：裁尾接力片段 ≈2.5s，整条按本镜输出秒近似
+        ——宁可高估给用户看，别再像旧版低估 5 倍（¥8.3/镜 vs 旧估 ¥1.3）。"""
+        per_sec = self._tier()["per_sec"]
+        approx_in_sec = sum(
+            2.5 if str(u).startswith("data:") else float(out_sec)
+            for u in (params.reference_videos or [])[:3]
+        )
+        cny = (out_sec + approx_in_sec) * per_sec + min(9, len(params.reference_images or [])) * self._IMAGE_INPUT_CNY
+        return round(cny / 7.1, 4)
 
     async def poll_job(self, external_task_id: str) -> VideoJobStatus:
         data = await self._send_with_backoff(

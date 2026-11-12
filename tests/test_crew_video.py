@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import pytest
 
 from app.crew.art_director import art_system
 from app.crew.director import DirectorAgent
@@ -913,3 +914,86 @@ def test_短剧默认竖屏():
 
     assert DEFAULT_ASPECT == "9:16"
     assert VideoJobParams().aspect_ratio == "9:16"
+
+
+# ---------- H3 档位护栏（2026-11-12 账单复盘 + 文档确认） ----------
+
+
+def _capture_bodies(monkeypatch, mm):
+    bodies: list[dict] = []
+
+    class _FakeResp:
+        def __init__(self, payload: dict) -> None: self._p = payload
+        def raise_for_status(self) -> None: ...
+        def json(self) -> dict: return self._p
+        headers: dict = {"content-type": "application/json"}
+        status_code = 200
+
+    class _CaptureClient:
+        def __init__(self, *a, **k) -> None: ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a) -> bool: return False
+        async def post(self, url, **k):
+            bodies.append(k.get("json"))
+            return _FakeResp({"task_id": "t9"})
+
+    monkeypatch.setattr(mm.httpx, "AsyncClient", _CaptureClient)
+    return bodies
+
+
+def test_h3档位收敛分辨率与时长(monkeypatch):
+    """Highspeed 没有 2K、Max 不支持 4s——create_job 必须按档位收敛，
+    而不是只对照全类 supported_resolutions。"""
+    from app.video import providers
+    from app.video.base import VideoJobParams
+    from app.video.providers import minimax as mm
+
+    bodies = _capture_bodies(monkeypatch, mm)
+    p = mm.MiniMaxProvider(api_key="k", model="MiniMax-H3-Highspeed")
+    asyncio.run(p.create_job("p", VideoJobParams(duration_sec=4, resolution="2K")))
+    assert bodies[-1]["resolution"] in ("480P", "768P")
+
+    p2 = mm.MiniMaxProvider(api_key="k", model="MiniMax-H3-Max")
+    asyncio.run(p2.create_job("p", VideoJobParams(duration_sec=4, resolution="480P")))
+    assert bodies[-1]["duration"] >= 5  # Max 下限 5s
+
+
+def test_首尾帧与参考素材互斥时参考优先(monkeypatch):
+    """官方文档：first/last_frame 与 reference_* 不可混用。
+    混了按参考优先提交（接力是我们链路的主用法），丢弃首尾帧并警告。"""
+    from app.video.base import VideoJobParams
+    from app.video.providers import minimax as mm
+
+    bodies = _capture_bodies(monkeypatch, mm)
+    p = mm.MiniMaxProvider(api_key="k")
+    params = VideoJobParams(duration_sec=4, image_url="http://a/f.png",
+                            reference_videos=["http://a/prev.mp4"])
+    asyncio.run(p.create_job("p", params))
+    roles = [c.get("role") for c in bodies[-1]["content"]]
+    assert "first_frame" not in roles
+    assert "reference_video" in roles
+    # 无参考时首帧照常
+    asyncio.run(p.create_job("p", VideoJobParams(duration_sec=4, image_url="http://a/f.png")))
+    roles2 = [c.get("role") for c in bodies[-1]["content"]]
+    assert "first_frame" in roles2
+
+
+def test_计费估算含输入秒数():
+    """旧版只按输出秒估（¥1.3/镜 vs 实际 ¥8.3）。新公式必须把
+    参考视频秒数与参考图张数算进去。"""
+    from app.video.base import VideoJobParams
+    from app.video.providers.minimax import MiniMaxProvider
+
+    p = MiniMaxProvider(api_key="k", model="MiniMax-H3")
+    params = VideoJobParams(
+        duration_sec=4,
+        reference_images=["http://a/1.png"] * 4,
+        reference_videos=["data:video/mp4;base64,AAA", "http://a/whole.mp4"],
+    )
+    usd = p.estimate_cost_real(params, 4)
+    cny = usd * 7.1
+    # 输出4s + 裁尾2.5s + 整条≈4s = 10.5s × ¥0.5 + 4图 × ¥0.2 = ¥6.05
+    assert 5.5 <= cny <= 7.0, cny
+    # 纯文生（无参考）= 输出秒价
+    plain = MiniMaxProvider(api_key="k", model="MiniMax-H3")
+    assert plain.estimate_cost_real(VideoJobParams(duration_sec=6), 6) * 7.1 == pytest.approx(3.0, abs=0.01)

@@ -125,3 +125,80 @@ def inline_media_urls(store: Any, urls: list[str]) -> list[str]:
         used += size
         out.append(inlined)
     return out
+
+
+# ---- 接力参考视频的尾部裁剪（计费优化，2026-11-12 账单复盘） ----
+# MiniMax 计费公式 total_seconds = input_seconds + output_seconds：
+# 参考视频按「秒」与输出同价。整条 4-6s 前镜成片喂进去，输入比输出还贵
+# （实测 ¥8.3/镜里 ¥4.5 是输入视频）。衔接锚真正需要的是前镜**结尾**
+# （尾帧接首帧的物理意义），裁到尾部 2.5s 足够，成本直接砍半。
+# 官方下限 2s，别裁更短。
+
+RELAY_TAIL_SEC = 2.5
+
+
+def clip_tail_data_uri(url: str, *, tail_sec: float = RELAY_TAIL_SEC,
+                       timeout: float = 90.0) -> str | None:
+    """下载公网成片 → ffmpeg 裁出尾部 → data URI。失败返回 None（调用方回退整条）。
+
+    裁完的片段（480P 2.5s ≈ 1MB）走 base64 内联——服务商拉不到我们的本地
+    文件，而原直链虽然它能拉，但按整条秒数计费。data URI 的秒数就是裁后的。"""
+    if not url.startswith(("http://", "https://")):
+        return None
+    try:
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        import httpx
+
+        from ..video.assemble import find_ffmpeg, find_ffprobe
+
+        ffmpeg = find_ffmpeg()
+        if not ffmpeg:
+            return None
+        with httpx.Client(timeout=timeout, follow_redirects=True, trust_env=False) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            raw = resp.content
+        if len(raw) > MAX_INLINE_BYTES:
+            return None
+        with tempfile.TemporaryDirectory(prefix="relay_tail_") as tmp:
+            src = Path(tmp) / "in.mp4"
+            dst = Path(tmp) / "out.mp4"
+            src.write_bytes(raw)
+            # 探时长：ffprobe 优先，缺则退回 ffmpeg -i 的 stderr 解析
+            total = 0.0
+            probe = find_ffprobe()
+            if probe:
+                pr = subprocess.run(
+                    [probe, "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", str(src)],
+                    capture_output=True, text=True, timeout=30,
+                )
+                try:
+                    total = float(pr.stdout.strip())
+                except ValueError:
+                    total = 0.0
+            if total <= 0:
+                return None
+            if total <= tail_sec + 0.3:
+                # 本来就短于目标：省一次转码，直接内联原片
+                return f"data:video/mp4;base64,{base64.b64encode(raw).decode('ascii')}"
+            start = max(0.0, total - tail_sec)
+            r = subprocess.run(
+                [ffmpeg, "-y", "-loglevel", "error", "-ss", f"{start:.2f}", "-i", str(src),
+                 "-t", f"{tail_sec:.2f}", "-c:v", "libx264", "-preset", "veryfast",
+                 "-an", "-pix_fmt", "yuv420p", str(dst)],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r.returncode != 0 or not dst.exists():
+                log.warning("接力尾部裁剪失败（回退整条）：%s", r.stderr[:160])
+                return None
+            data = dst.read_bytes()
+            if len(data) > MAX_INLINE_BYTES:
+                return None
+            return f"data:video/mp4;base64,{base64.b64encode(data).decode('ascii')}"
+    except Exception as e:  # noqa: BLE001
+        log.warning("接力尾部裁剪异常（回退整条）：%s", e)
+        return None

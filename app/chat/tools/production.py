@@ -142,7 +142,8 @@ def build(ctx: ToolContext) -> list:
           {"prompt":"提交视频模型的提示词全文","duration_sec":总秒数(1-15),
            "shots":[{"duration_sec":机位秒,"shot_type":"medium|close_up|wide|over_shoulder|pov|extreme_close_up|extreme_wide","subject":"主体","action":"动作"}]}
           ——多机位段（镜头组）填 shots（成员时长之和≈总时长）；单镜段可省略 shots。
-        title=作品名（自动建作品时用）；project_id=已有作品 id（可选）。
+        title=作品名——自动建作品时**必须给**：用内容主题起一个短剧名
+          （如「果园对白」「排钱」），作品列表靠它对照；project_id=已有作品 id（可选）。
         落库后提示词是「待批准」状态——批准（发起+用户确认闸门）后才出片，费用照旧明码。"""
         from ...domain import normalize_adaptation_type
 
@@ -160,8 +161,11 @@ def build(ctx: ToolContext) -> list:
             if p is None:
                 return f"找不到作品 {project_id}。"
         else:
+            from ...pipeline.knowledge import extract_title
+            # 兜底链：Agent 起名 → 首段提示词提取 → 通用占位（尽量不留占位名）
+            fallback = extract_title(parsed[0]["prompt"]) if parsed else ""
             p = store.create_project(
-                title=(title.strip() or "提示词直出作品"),
+                title=(title.strip() or fallback or "提示词直出作品"),
                 adaptation_type=normalize_adaptation_type("short_drama"),
                 language="zh-CN", raw_text="",
             )

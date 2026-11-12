@@ -27,12 +27,19 @@ def build(ctx: ToolContext) -> list:
 
     @tool
     def create_project(title: str, raw_text: str, adaptation_type: str = "short_drama") -> str:
-        """新建一部作品。产品只做短剧。参数：title=剧名，raw_text=原著或故事原文。adaptation_type 可省略（默认短剧）。"""
+        """新建一部作品。产品只做短剧。参数：title=剧名（**用原著书名/用户说的名字**；
+        原文开头通常有书名行），raw_text=原著或故事原文。adaptation_type 可省略（默认短剧）。"""
         from ...domain import normalize_adaptation_type
 
         name = normalize_adaptation_type(adaptation_type)
+        # 命名兜底（2026-11-12）：模型没起名/起成「未命名」时，用确定性提取器
+        # 从原文抓书名行——作品列表里用户要靠名字对照，占位名等于没名字。
+        clean_title = (title or "").strip()
+        if not clean_title or clean_title in ("未命名作品", "未命名剧本", "提示词直出作品"):
+            from ...pipeline.knowledge import extract_title
+            clean_title = extract_title(raw_text)
         p = store.create_project(
-            title=title.strip(),
+            title=clean_title,
             adaptation_type=name,
             language="zh-CN",
             raw_text=(raw_text or "").strip(),

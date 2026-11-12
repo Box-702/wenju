@@ -161,3 +161,37 @@ def format_author_style(raw_text: str, *, llm: LLM | None = None, language: str 
     for dim_name, dim_text in (style.get("dimensions") or {}).items():
         lines.append(f"  {dim_name}：{dim_text}")
     return "\n".join(lines)
+
+
+# 章节/噪声行模式：这些不是书名（骆驼祥子素材首行就是「第1章」）。
+_CHAPTER_NOISE = re.compile(
+    r"^(第\s*[0-9一二三四五六七八九十百千]+\s*[章节回篇卷部]"
+    r"|序\s*言|前\s*言|引\s*子|楔\s*子|后\s*记|尾\s*声|目录|附录|版权|简介)"
+)
+# 作者/年份行：「鲁迅（1919年3月）」——标题的下一行常是这个，要跳过。
+_AUTHOR_LINE = re.compile(r"^[\u4e00-\u9fff]{2,4}\s*[（(].*年")
+
+
+def extract_title(raw_text: str) -> str:
+    """从原文提取书名（确定性兜底，不靠模型自觉）。
+
+    规则（对齐真实素材格式，2026-11-12 用孔乙己/骆驼祥子/13号巷核对）：
+      1. 首行 ≤20 字、不是章节/噪声行 → 视为书名（孔乙己.txt 的「孔乙己」）；
+      2. 否则跳过作者行与空行，取第一行正文的前 12 字（截到标点）；
+      3. 全空 → 「未命名作品」。
+    Agent 起的名字优先用；本函数用于它没起/起得离谱时的对照与兜底。
+    """
+    lines = [ln.strip() for ln in (raw_text or "").splitlines()]
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        return "未命名作品"
+    first = lines[0]
+    if len(first) <= 20 and not _CHAPTER_NOISE.match(first):
+        return first
+    # 首行是章节号：往下找作者行后的正文，或直接取正文首句
+    for ln in lines:
+        if _CHAPTER_NOISE.match(ln) or _AUTHOR_LINE.match(ln):
+            continue
+        head = re.split(r"[，。！？；：\n]", ln)[0]
+        return head[:12] or "未命名作品"
+    return first[:12]

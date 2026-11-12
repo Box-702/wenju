@@ -451,3 +451,16 @@ def test_闸门按组删_不毁半段戏():
     g1 = [s for s in kept if s.group_id.startswith("g1")]
     # 组要么完整（3 员）要么整体消失，绝不残 1-2 员
     assert len(g1) in (0, 3), [s.id for s in g1]
+
+
+def test_extract_title_书名行与章节噪声():
+    """命名兜底提取器（2026-11-12）：真实素材格式必须对上。"""
+    from app.pipeline.knowledge import extract_title
+
+    # 孔乙己.txt 实际格式：首行书名
+    assert extract_title("孔乙己\n鲁迅（1919年3月）\n\n鲁镇的酒店的格局……") == "孔乙己"
+    # 首行是章节号 → 取正文首句截断
+    t = extract_title("第1章\n\n我们所要介绍的是祥子，不是骆驼。")
+    assert t and "，" not in t and len(t) <= 12
+    # 空文本
+    assert extract_title("") == "未命名作品"

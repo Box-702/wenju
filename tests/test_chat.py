@@ -917,3 +917,34 @@ def test_normalize_units_组内时间戳平移():
         {"prompt": "At 00:99.000, cuts to 空镜。", "duration_sec": 3},
     ])[1]["prompt"]
     assert "99" not in p and "空镜" in p
+
+
+def test_import_storyboard_悬空指代闸门端到端(store, llm):
+    import json as _json
+    tools, collector = _make_tools(store, llm)
+    units = _json.dumps([
+        {"prompt": "酒馆深夜，40岁掌柜擦杯子。", "duration_sec": 5},
+        {"prompt": "At 00:05, cuts to 少女特写：她唱道：{La la} 继续唱后半段。", "duration_sec": 6},
+    ], ensure_ascii=False)
+    r = tools["import_storyboard"].invoke({"units": units, "title": "闸门测试"})
+    assert "悬空指代" in r and "未落库" in r
+    assert collector["project_id"] is None  # 拦在落库之前
+
+
+def test_import_storyboard_台词超载闸门(store, llm):
+    import json as _json
+    tools, _ = _make_tools(store, llm)
+    long_speech = " ".join(["I have as much soul as you"] * 8)
+    units = _json.dumps([
+        {"prompt": f"果园午后，20岁少女站立，哽咽说：{{{long_speech}}}", "duration_sec": 6},
+    ], ensure_ascii=False)
+    r = tools["import_storyboard"].invoke({"units": units, "title": "超载测试"})
+    assert "台词" in r and "超过" in r
+
+
+def test_estimate_speech_seconds_中英口径():
+    from app.chat.tools.production import estimate_speech_seconds
+    # 6 个英文词 ≈ 2.7s；12 个汉字 ≈ 3.2s
+    assert 2.0 <= estimate_speech_seconds("{I have as much soul as you}") <= 3.5
+    assert 2.5 <= estimate_speech_seconds("「我没有感情没有灵魂吗」") <= 4.5
+    assert estimate_speech_seconds("没有台词的镜头") == 0

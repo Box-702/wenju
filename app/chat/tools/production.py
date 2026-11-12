@@ -171,6 +171,60 @@ def normalize_units(parsed: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return parsed
 
 
+# ---------- 悬空指代与台词超载（2026-11-12 接力v2 漂移复盘） ----------
+#
+# 外部成品分镜是「连续片子」语域写的：人物可以指代画面外的内容
+# （"继续念后半段"——观众刚听过前半段；"他听完质问"——质问在上一镜）。
+# 拆成独立生成单元后这些指代**不可解析**：一次全新采样没有"前半段"可续，
+# 模型只能自由发挥编故事——实测 12s 单元里出现完全偏离剧本的后半段剧情。
+# 5.40 修的是"段内缺环境/人物锚"，这里修的是"段内指代段外剧情"——
+# 后者代码无法替用户补内容（台词后半段是什么只有用户知道），所以只能拦。
+
+# 悬空指代词：出现在**非首单元**里、且附近没有同段台词文本时，几乎必跑偏。
+_DANGLING_RE = re.compile(
+    r"(后半段|后半部分|前半段|接着念|继续念|继续说|接着说|接下来说|"
+    r"如前(?:所述|所说)|刚才(?:的|那)|上一(?:句|段|镜)|同上|同理|重复(?:刚才|上一)|"
+    r"台词同上|the (?:rest|second half|latter) (?:of|part)|as (?:before|above)|"
+    r"continue(?:s|d)? (?:with|the)|repeats? (?:the|it))")
+
+# 台词超载估算：{} 「」 『』 里的文本按口播语速估秒（英文 ~2.6 词/s，中文 ~4.5 字/s，
+# 取保守偏慢值）。生成时长 < 台词 + 1s 余量时，台词必被截——实测漂移的次要成因。
+_QUOTED_RE = re.compile(r"\{([^{}]*)\}|「([^「」]*)」|『([^『』]*)』")
+
+
+def estimate_speech_seconds(prompt: str) -> float:
+    """提示词里全部台词的口播时长估算（秒）。无台词返回 0。"""
+    total = 0.0
+    for m in _QUOTED_RE.finditer(prompt):
+        text = next((g for g in m.groups() if g), "")
+        en_words = len(re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", text))
+        cjk_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
+        # 剩余杂字符按 3 字符/s 粗估
+        other = max(0, len(text) - en_words * 4 - cjk_chars * 2)
+        total += en_words / 2.2 + cjk_chars / 3.8 + other / 3.0
+    return round(total, 1)
+
+
+def check_units_selfcontained(parsed: list[dict[str, Any]]) -> list[str]:
+    """确定性检查：每段必须能独立拍——悬空指代 / 台词超载当场报错，别花钱赌。"""
+    errors: list[str] = []
+    for i, u in enumerate(parsed, 1):
+        prompt = str(u.get("prompt") or "")
+        dur = float(u.get("duration_sec") or 0)
+        if i > 1:  # 只查非首单元：首单元的"停顿/吸气"类节奏词多为自指画面，误报率高
+            for m in _DANGLING_RE.finditer(prompt):
+                errors.append(
+                    f"第 {i} 段有悬空指代「{m.group(0)}」：拆段生成是独立采样，"
+                    f"画面外的前半段/上一句对它不存在，模型只能编——"
+                    f"请把指代的内容在本段提示词里写全（如台词的完整文本）")
+        speech = estimate_speech_seconds(prompt)
+        if speech and speech + 1.0 > dur:
+            errors.append(
+                f"第 {i} 段台词约 {speech:.1f}s，超过本段生成时长 {dur:.0f}s（含 1s 余量）："
+                f"台词会被截断或挤掉表演——加长该段或精简台词")
+    return errors
+
+
 def build(ctx: ToolContext) -> list:
     """装配生产域工具。"""
     store, llm, runner = ctx.store, ctx.llm, ctx.runner
@@ -232,7 +286,11 @@ def build(ctx: ToolContext) -> list:
           ——多机位段（镜头组）填 shots（成员时长之和≈总时长）；单镜段可省略 shots。
         title=作品名——自动建作品时**必须给**：用内容主题起一个短剧名
           （如「果园对白」「排钱」），作品列表靠它对照；project_id=已有作品 id（可选）。
-        落库后提示词是「待批准」状态——批准（发起+用户确认闸门）后才出片，费用照旧明码。"""
+        落库后提示词是「待批准」状态——批准（发起+用户确认闸门）后才出片，费用照旧明码。
+        ⚠️ 拆段=独立采样：每段提示词必须**自带全部所需信息**，不能写「继续念后半段」
+        「如前所述」这类指代前面段落的承接语（闸门会当场拒绝并点名哪段哪句）——
+        用户贴来的连续脚本若有这种写法，先把被指代的内容（台词全文、事件描述）
+        改写进对应段再调用。"""
         from ...domain import normalize_adaptation_type
 
         try:
@@ -244,6 +302,14 @@ def build(ctx: ToolContext) -> list:
             return "分镜校验未通过，未落库（避免带着坏数据花钱）：\n- " + "\n- ".join(errors[:8])
         # 外部全局时间线 → 独立生成单元的确定性归一化（时间戳折算 + 补全局锚）
         parsed = normalize_units(parsed)
+        # 悬空指代 / 台词超载闸门：代码补不了内容（后半段台词是什么只有用户知道），
+        # 但绝不带着「不可解析的段」花钱出片（接力v2 实测：12s 段自由发挥出另一部戏）。
+        dangling = check_units_selfcontained(parsed)
+        if dangling:
+            return ("分镜含拆段后无法独立拍摄的表述，未落库（避免花钱漂移）：\n- "
+                    + "\n- ".join(dangling[:6])
+                    + "\n修正办法：把指代的内容在本段提示词里写全"
+                      "（台词「后半段」请贴完整文本，「听完质问」请写明质问了什么）。")
 
         # 容器：有 project 用之，没有就隐式建（簿记，不是仪式）
         if project_id:

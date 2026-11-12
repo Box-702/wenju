@@ -72,7 +72,10 @@ class SeedanceProvider(VideoProvider):
     def __init__(self, api_key: str = "", base_url: str = "", **kwargs: Any) -> None:
         import os
 
-        api_key = api_key or os.environ.get("ARK_API_KEY", "")
+        # key 来源三个名字都认：显式传入 > ARK_API_KEY（方舟官方名）
+        # > SEEDANCE_API_KEY（用户 .env 实际用的名字，2026-11-12）。
+        api_key = (api_key or os.environ.get("ARK_API_KEY", "")
+                   or os.environ.get("SEEDANCE_API_KEY", ""))
         super().__init__(api_key, base_url, **kwargs)
         if not self.base_url:
             self.base_url = ARK_BASE

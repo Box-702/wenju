@@ -8,6 +8,7 @@
 | [`DEVELOPMENT.md`](DEVELOPMENT.md) | **踩过的坑**：每条都是「症状 → 根因 → 解法 → 涉及文件」；还有扩展指南与排查手册 | 遇到报错、行为不对、或者要加 Provider / Agent / 路由 |
 | [`DECISIONS.md`](DECISIONS.md) | **技术选型的为什么**：每个决策的备选方案、决定、理由、以及「什么时候该推翻」 | 提新方案前先看——避免推翻已有决策，也避免重复调研 |
 | [`DRAMATURGY.md`](DRAMATURGY.md) | 「先戏剧后语法」方法论与确定性审计规则 | 改提示词质量、审计规则、镜头卡字段时 |
+| [`PLAN-shot-group.md`](PLAN-shot-group.md) | **镜头组架构 + Blender 白模约束层**：一次生成=一段戏（2-4 机位）、previz 反哺提示词、S1-S4 分期与回退策略 | 动分镜数据结构/批次粒度/配音时间轴之前必读 |
 | [`PLAN-mediago-reference.md`](PLAN-mediago-reference.md) | **对标计划**：对照 mediago-drama 的强弱表与待办清单（生成幂等 / 防绕过提示词 / Agent 可读文档） | 排下一批要做什么、查「这个功能当初为什么不做」 |
 | [`../evals/README.md`](../evals/README.md) | **提示词质量 eval**：怎么跑、怎么加 case、判定标准 | **改任何提示词之后**——这是唯一能提前发现「质量退化」的手段 |
 

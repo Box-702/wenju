@@ -14,7 +14,7 @@ import ScreenplayEditor from './ScreenplayEditor.vue'
 import FolderTree from './FolderTree.vue'
 import VideoWorkbench from './video/VideoWorkbench.vue'
 import AppIcon from './AppIcon.vue'
-import { store, showView, focusScene, exportVersion, syncProjectToWorkspace, setVersionMilestone, notify, loadViewer, loadScenes, reorderScenes } from '../stores/app'
+import { store, showView, focusScene, exportVersion, syncProjectToWorkspace, setVersionMilestone, notify, loadViewer, loadScenes, reorderScenes, openWorkspaceFolder } from '../stores/app'
 
 const TABS = [
   { key: 'editor', label: '剧本', icon: '01' },
@@ -225,6 +225,11 @@ function onSceneDragEnd() {
           <button v-if="store.workspace?.configured" class="ghost small" @click="showWs = !showWs">
             {{ showWs ? '收起目录' : '目录结构' }}
           </button>
+          <button
+            v-if="store.workspace?.configured" class="ghost small"
+            :title="`在文件管理器里打开《${currentTitle}》的文件夹`"
+            @click="openWorkspaceFolder(currentTitle)"
+          >打开文件夹</button>
           <span v-if="exportMsg" class="foot-msg">{{ exportMsg }}</span>
         </div>
         <div v-if="store.workspace?.configured && showWs" class="foot-ws">

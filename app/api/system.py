@@ -10,9 +10,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from ..workspace import SUBDIRS, configure_root, pick_directory
+from ..workspace import SUBDIRS, configure_root, open_in_file_manager, pick_directory, sanitize_folder
 from . import common, deps
-from .schemas import WorkspaceSet
+from .schemas import WorkspaceOpen, WorkspaceSet
 
 router = APIRouter()
 
@@ -147,3 +147,47 @@ def set_workspace(payload: WorkspaceSet) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"无法创建工作目录：{e}") from e
     return {"ok": True, **ws.info(deps.settings().effective_workspace_root)}
+
+
+@router.post("/workspace/open")
+def open_workspace_directory(payload: WorkspaceOpen) -> dict[str, Any]:
+    """在本机文件管理器里打开工作目录（或其内部子路径，如「果园对白/07_成片」）。
+
+    sub 只接受工作目录**内部**的相对路径：解析后必须仍位于根目录之下
+    （挡掉 `..` 穿越与绝对路径），且真实存在——这是「跳转查看产物」的入口，
+    不是任意文件浏览器。
+    """
+    ws = common.workspace()
+    if not ws.root or not ws.root.exists():
+        raise HTTPException(400, "工作目录尚未配置或不存在，先去设置里选择目录")
+    target = ws.root
+    sub = (payload.sub or "").strip().strip("/\\")
+    if sub:
+        root_resolved = ws.root.resolve()
+
+        def _inside(rel: str):
+            cand = (ws.root / rel).resolve()
+            try:
+                ok = cand.is_relative_to(root_resolved)
+            except AttributeError:  # Python < 3.9 兜底
+                ok = str(cand).startswith(str(root_resolved))
+            return cand if ok else None
+
+        # 穿越检查放在 sanitize 之前：`..` 会被清洗器抹平后伪装成合法相对路径
+        candidate = _inside(sub)
+        if candidate is None:
+            raise HTTPException(400, "只能打开工作目录内部的文件夹")
+        if not candidate.is_dir():
+            # 磁盘上的作品文件夹名经过 sanitize（非法字符换 _），前端传的是
+            # 标题原文——原名找不到就再试逐段清洗名。
+            parts = sub.replace("\\", "/").split("/")
+            alt = _inside("/".join(sanitize_folder(p) for p in parts if p))
+            candidate = alt if alt is not None else candidate
+        if not candidate.is_dir():
+            raise HTTPException(404, f"文件夹不存在：{sub}")
+        target = candidate
+    try:
+        open_in_file_manager(target)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"无法打开文件管理器：{e}") from e
+    return {"ok": True, "path": str(target)}

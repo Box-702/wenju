@@ -1856,6 +1856,33 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   的副作用**。③ 验证手段：`resolve_submission_references` 单测直接喂模拟 plan，
   不花钱就能证明接力解析通。
 
+### 5.41 测试垃圾把 data/ 和 ~/.wenju 堆成山：清理 + 会话级清扫 + 工作区跳转（2026-11-12）
+
+- **症状**：`data/` 104MB，其中 150+ 个 `workspace_test_*` 空目录；
+  `~/.wenju/workspace/` 同样混进一批同名目录和孤儿剧名文件夹（DB 里已无对应作品）。
+- **根因**：`tests/test_workspace.py` 的 fixture 在项目 `data/` 建临时目录，
+  Windows 句柄释放延迟让 teardown 的 `rmtree` 偶发失败——以前「重试+出声」只是
+  让垃圾**可见**，没有回收机制，几十轮测试就堆成山。`tmp_db_path` 同理留
+  `test_*.db`。另外历史调试脚本在 `data/` 落过一批 `_*.json`/旧 DB（D-44 迁移后
+  `~/.wenju/app.db` 才是真相，项目 `data/` 早该零用户数据）。
+- **解法**：
+  · 一次性清理：删 `workspace_test_*`、孤儿目录（雨夜*/十日终焉/test/_kongyiji_*/
+    _v6_out/_video_proof）、`data/` 里的历史 scratch 与旧 DB；保留正式档
+    （~/.wenju 的孔乙己/孔乙己v3/果园对白 + runs，data/ 的 13号巷原稿与三部正式成片）。
+    104MB → 24MB。
+  · 堵源头：`tests/conftest.py` 加 session 级 autouse fixture
+    `sweep_stale_test_leftovers`——每轮 pytest 启动先回收**上轮**遗骸
+    （只认 `workspace_test_<pid>_*`/`test_<pid>_*.db` 指纹，mtime<1h 的跳过，
+    不碰并行会话正在用的）。
+  · 顺带做「去工作区地址的跳转」：后端 `POST /api/workspace/open`（sub 限定根内
+    相对路径，`..` 穿越在 sanitize **之前**拦截——sanitize 会把 `..` 抹平伪装成
+    合法路径，这是测试逼出来的顺序坑；标题原文找不到自动试清洗名）+
+    `workspace.open_in_file_manager`（explorer/open/xdg-open 三平台）；
+    前端三处落点：首页「我的作品」行、剧本页脚目录区、成片「打开成片文件夹」。
+- **教训**：① 临时产物的清理策略「失败出声」不够——**必须有下一轮的回收机制**
+  （下次启动清扫陈旧遗骸是最低成本的答案）。② 安全校验的顺序要按「破坏力」排：
+  路径穿越检查必须在名字清洗之前，否则清洗器本身就是绕过通道。
+
 ---
 
 ## 六、排查手册（症状 → 先查什么）

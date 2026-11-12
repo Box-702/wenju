@@ -299,3 +299,23 @@ class Workspace:
             if not self.persist
             else ("工作目录未配置，剧本产物暂不落盘。" if not self.root else None),
         }
+
+
+def open_in_file_manager(path: Path) -> None:
+    """在系统文件管理器里打开一个已存在的目录（Windows 资源管理器 / macOS Finder / Linux 文件管理器）。
+
+    走系统级命令而非 webbrowser：目标目录可能是 UNC 或带中文名，explorer.exe
+    对这类路径的 `file://` URL 处理不可靠，命令行参数才是稳的。失败抛异常，
+    由调用方转成提示。
+    """
+    import subprocess
+    import sys
+
+    target = str(path)
+    if sys.platform == "win32":
+        # explorer 打开文件夹；分隔符归一成 Windows 风格，否则它会把正斜杠当参数解析失败
+        subprocess.Popen(["explorer", target.replace("/", "\\")], shell=False)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", target], shell=False)
+    else:
+        subprocess.Popen(["xdg-open", target], shell=False)

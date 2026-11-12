@@ -7,7 +7,7 @@
 // 点作品卡 = 进入工作区（store.mode 切到 workspace，三栏布局接管渲染）。
 // =====================================================================
 import { computed, ref } from 'vue'
-import { store, selectProject, deleteProject, notify } from '../stores/app.js'
+import { store, selectProject, deleteProject, notify, openWorkspaceFolder } from '../stores/app.js'
 import AppIcon from './AppIcon.vue'
 import HomeComposer from './HomeComposer.vue'
 
@@ -118,11 +118,18 @@ function formatDate(iso) {
 
     <!-- 我的作品：折线以下 -->
     <section class="home-works" aria-label="我的作品">
-      <button class="works-head" title="查看全部作品" @click="store.overlay = 'tasks'">
-        <span class="works-title">我的作品</span>
-        <span class="works-count">{{ works.length ? `${works.length} 部` : '' }}</span>
-        <span class="works-more">全部作品<AppIcon name="chevron-right" /></span>
-      </button>
+      <div class="works-head">
+        <button class="works-main" title="查看全部作品" @click="store.overlay = 'tasks'">
+          <span class="works-title">我的作品</span>
+          <span class="works-count">{{ works.length ? `${works.length} 部` : '' }}</span>
+        </button>
+        <button
+          v-if="store.workspace?.configured"
+          class="works-open" title="在文件管理器里打开工作区目录（剧本与成片落盘处）"
+          @click="openWorkspaceFolder('')"
+        >打开工作区文件夹</button>
+        <button class="works-more" title="查看全部作品" @click="store.overlay = 'tasks'">全部作品<AppIcon name="chevron-right" /></button>
+      </div>
 
       <div class="works-grid">
         <button class="work-card new-card" @click="store.showNewProject = true">
@@ -359,17 +366,33 @@ function formatDate(iso) {
   gap: 10px;
   width: 100%;
   margin-bottom: 14px;
-  padding: 0; background: none; border: none;
-  color: inherit; font-family: inherit; text-align: left; cursor: pointer;
 }
+.works-main {
+  display: inline-flex; align-items: baseline; gap: 10px;
+  padding: 0; background: none; border: none;
+  color: inherit; font-family: inherit; cursor: pointer;
+}
+.works-main .works-title { cursor: inherit; }
 .works-more {
   margin-left: auto;
   display: inline-flex; align-items: center; gap: 2px;
   font-size: 12px; color: var(--dim);
+  padding: 0; background: none; border: none;
+  font-family: inherit; cursor: pointer;
   transition: color 130ms var(--ease);
 }
 .works-more .app-ic { width: 13px; height: 13px; }
-.works-head:hover .works-more { color: var(--ink); }
+.works-more:hover { color: var(--ink); }
+.works-open {
+  font-size: 12px;
+  color: var(--dim);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  transition: color 130ms var(--ease);
+}
+.works-open:hover,
+.works-open:focus-visible { color: var(--ink); }
 
 .works-title {
   font-size: 13px;

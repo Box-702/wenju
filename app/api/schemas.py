@@ -112,6 +112,11 @@ class WorkspaceSet(BaseModel):
     persist: bool = Field(default=True)  # False = 仅应用内、不落盘文件
 
 
+class WorkspaceOpen(BaseModel):
+    """在工作目录**内部**跳转：sub 为根目录下的相对路径（如「果园对白/07_成片」），留空开根目录。"""
+    sub: str = Field(default="", max_length=200)
+
+
 # ---------- Provider / 模型偏好 ----------
 
 

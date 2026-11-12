@@ -16,7 +16,7 @@ import {
   closePromptEditor, loadPromptHistory, saveShotPrompt, bulkReviewPrompts,
   setVideoMode, setVideoResolution, setVideoAspect, setVideoSubtitle, setVideoAudioMode, startVideoBatch,
   pollVideoBatch, ensureBatchPolling, batchCommand,
-  startFinalize, pollFinalize, ensureFinalizePolling,
+  startFinalize, pollFinalize, ensureFinalizePolling, openWorkspaceFolder,
 } from '../../stores/app'
 
 // 画幅：默认横屏 16:9（2026-11-12 调整），竖屏留给手机分发场景
@@ -34,6 +34,11 @@ const RESOLUTIONS = [
   { value: '768P', label: '768P' },
   { value: '2K', label: '2K（最清晰）' },
 ]
+
+// 作品标题（打开成片文件夹用：磁盘上就在 <workspace>/<剧名>/07_成片）
+const currentTitle = computed(
+  () => store.projects.find((p) => p.id === store.pid)?.title || '',
+)
 
 const batch = computed(() => store.videoBatch)
 const running = computed(() => batch.value?.status === 'running')
@@ -264,6 +269,12 @@ function formatVersionTime(value) {
       <div v-if="finalizeResult" class="film-actions">
         <a class="rv ok" :href="finalizeResult.video_url" download>下载成片</a>
         <a v-if="finalizeResult.srt_url" class="rv" :href="finalizeResult.srt_url" download>下载字幕（SRT）</a>
+        <button
+          v-if="store.workspace?.configured && currentTitle"
+          class="rv"
+          title="在文件管理器里打开本作品的成片文件夹（07_成片）"
+          @click="openWorkspaceFolder(`${currentTitle}/07_成片`)"
+        >打开成片文件夹</button>
         <button
           class="rv"
           :disabled="finalizeRunning || !succeededCount"

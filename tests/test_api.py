@@ -536,3 +536,32 @@ def test_clear_model_preference_is_idempotent(client):
     resp = client.delete("/api/models/preferences/some_unknown_task")
     assert resp.status_code == 200
     assert resp.json()["removed"] == 0
+
+
+def test_workspace_open_endpoint(client, tmp_path, monkeypatch):
+    """POST /api/workspace/open：工作区跳转（文件管理器打开）。
+    - 根内子目录放行、标题原文自动映射到清洗名；
+    - `..` 穿越拒绝；不存在的目录 404；实际打开动作打桩不碰真文件系统。"""
+    opened: list = []
+    monkeypatch.setattr("app.api.system.open_in_file_manager", lambda p: opened.append(p))
+    root = tmp_path / "ws"
+    (root / "果园对白" / "07_成片").mkdir(parents=True)
+    (root / "a-b").mkdir()  # sanitize 后标题「a/b」对应的文件夹
+    monkeypatch.setattr(
+        "app.api.common.current_workspace",
+        lambda r, p: type("_WS", (), {"root": root, "persist": True, "configured": True})(),
+    )
+
+    r = client.post("/api/workspace/open", json={"sub": ""})
+    assert r.status_code == 200 and opened[-1] == root
+
+    r = client.post("/api/workspace/open", json={"sub": "果园对白/07_成片"})
+    assert r.status_code == 200 and opened[-1] == root / "果园对白" / "07_成片"
+
+    # 穿越攻击拒绝
+    r = client.post("/api/workspace/open", json={"sub": "../outside"})
+    assert r.status_code == 400
+
+    # 不存在的子目录 404
+    r = client.post("/api/workspace/open", json={"sub": "没有这部"})
+    assert r.status_code == 404

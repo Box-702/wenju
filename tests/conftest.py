@@ -55,6 +55,43 @@ def tmp_db_path(tmp_path_factory: pytest.TempPathFactory):
         warnings.warn(f"临时测试库未能删除（可手动清理 data/）：{leftovers}", stacklevel=1)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def sweep_stale_test_leftovers():
+    """会话开始时清扫上一轮没删掉的测试垃圾（data/ 的 workspace_test_* 与 test_*.db）。
+
+    2026-11-12 清理工作区时发现：Windows 句柄延迟让 fixture 末尾的 rmtree/unlink
+    偶发失败，几十轮测试在 data/ 和 ~/.wenju/workspace 堆出 100+ 个空目录。
+    单靠「失败出声」止不住堆积——本轮先回收上轮的遗骸，目录才能保持干净。
+    只认 workspace_test_<pid>_* / test_<pid>_*.db 这两种带进程号指纹的名字，
+    不碰正在运行会话的（按 mtime 跳过 1 小时内新建的，避免竞争）。
+    """
+    import glob
+    import shutil
+    import time as _t
+
+    d = Path(__file__).resolve().parent.parent / "data"
+    roots = [d, Path.home() / ".wenju" / "workspace"]
+    for r in roots:
+        if not r.is_dir():
+            continue
+        for p in r.glob("workspace_test_*"):
+            try:
+                if _t.time() - p.stat().st_mtime < 3600:
+                    continue  # 可能是并行会话正在用的
+                shutil.rmtree(p, ignore_errors=True)
+            except OSError:
+                pass
+    for db in glob.glob(str(d / "test_*_*.db")):
+        try:
+            if _t.time() - os.path.getmtime(db) < 3600:
+                continue
+            for suffix in ("", "-wal", "-shm"):
+                Path(db + suffix).unlink(missing_ok=True)
+        except OSError:
+            pass
+    yield
+
+
 @pytest.fixture()
 def settings() -> Settings:
     return Settings(

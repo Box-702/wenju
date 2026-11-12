@@ -624,6 +624,15 @@ export async function selectWorkspaceDirectory() {
   return r.path
 }
 
+/** 在本机文件管理器里打开工作目录（sub 是根内相对路径，留空开根目录）。 */
+export async function openWorkspaceFolder(sub = '') {
+  try {
+    await api('/workspace/open', 'POST', { sub })
+  } catch (e) {
+    notify(`打开文件夹失败：${e.message}`)
+  }
+}
+
 /** 把当前项目落盘到工作目录（原稿 + 最新版本），返回目录树文本。 */
 export async function syncProjectToWorkspace() {
   if (!store.pid) throw new Error('请先选择项目')

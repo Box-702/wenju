@@ -348,10 +348,14 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
         None,
     )
 
-    # 已出片的镜头不再重复批准/提交（断点续跑省钱的钥匙）。
-    succeeded_shots = {
+    # 已出片或在途的镜头都不再重复批准/提交（断点续跑省钱的钥匙）。
+    # 只认 succeeded 不够：进程崩在半路时任务还挂在 generating，
+    # 服务商侧照样在生成、照样计费——sweeper 会把它接回来。续跑若把这种
+    # 镜头重新批准提交，同一镜就出两条任务双份钱（2026-11-12 实测：
+    # shot_001_001 账本里两条 succeeded）。failed/cancelled 仍可重提（合法重出片）。
+    busy_shots = {
         j.shot_id for j in st.list_video_jobs(p.id)
-        if j.status == "succeeded" and j.shot_id
+        if j.shot_id and j.status in ("succeeded", "pending", "queued", "generating")
     }
 
     if prompt_version is None:
@@ -394,7 +398,7 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
     n_appr = 0
     for s in shots:
         if (s.get("video_prompt") and n_appr < limit
-                and s.get("id") not in succeeded_shots):
+                and s.get("id") not in busy_shots):
             s["prompt_status"] = "approved"
             n_appr += 1
     refresh_prompt_audits(shots, style_context=_style_context(prompt_version))
@@ -406,7 +410,7 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
     )
     n_ok = sum(1 for s in shots if s.get("prompt_status") == "approved")
     _t(f"⑥ 已批准 {n_ok}/{len(shots)} 镜"
-       + (f"（跳过已出片 {len(succeeded_shots)} 镜）" if succeeded_shots else ""))
+       + (f"（跳过已出片或在途 {len(busy_shots)} 镜）" if busy_shots else ""))
     _dump_shots(title, shots, with_prompt=True)
 
     # ---- 8. 批量出片 ----

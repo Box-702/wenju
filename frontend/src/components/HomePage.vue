@@ -32,6 +32,19 @@ function onGoal(next) {
   goal.value = next
 }
 
+const composer = ref(null)
+
+/** 入口芯片（D-47）：切换产出目标 + 把引导语放进输入框——入口是糖，对话是本体。 */
+function chip(kind) {
+  if (kind === 'novel') {
+    goal.value = 'novel-to-drama'
+    composer.value?.setDraft('我想把一部小说改编成短剧，这是原文：')
+  } else if (kind === 'prompt') {
+    goal.value = 'storyboard'
+    composer.value?.setDraft('按这段成品分镜提示词直接生成视频：\n')
+  }
+}
+
 function onPickLibrary(kind) {
   if (!store.pid) {
     store.showNewProject = true
@@ -87,7 +100,14 @@ function formatDate(iso) {
       <h1 class="hero-title"><em>You call the drama</em></h1>
       <p class="hero-sub">小说进，短剧出</p>
 
+      <!-- 入口芯片（D-47）：点了只把引导语放进输入框，一切仍走对话 -->
+      <div class="hero-chips" aria-label="快捷入口">
+        <button class="chip" @click="chip('novel')">导入小说做剧</button>
+        <button class="chip" @click="chip('prompt')">按提示词直接生成</button>
+      </div>
+
       <HomeComposer
+        ref="composer"
         :goal="goal"
         @goal="onGoal"
         @pick-library="onPickLibrary"
@@ -283,10 +303,37 @@ function formatDate(iso) {
 }
 
 .hero-sub {
-  margin: 12px 0 30px;
+  margin: 12px 0 18px;
   font-size: clamp(14px, 1.5vw, 17px);
   letter-spacing: 0.22em;
   color: rgba(255, 255, 255, 0.56);
+}
+
+/* 入口芯片（D-47）：极简胶囊，hover 提亮；点击只注入引导语，不做新页面 */
+.hero-chips {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin: 0 0 22px;
+}
+
+.hero-chips .chip {
+  padding: 7px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: color 140ms var(--ease), border-color 140ms var(--ease), background 140ms var(--ease);
+}
+
+.hero-chips .chip:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 /* ---------- 我的作品 ---------- */

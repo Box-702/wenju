@@ -130,6 +130,20 @@ function startAssetGen() {
   })
 }
 
+/** 首页入口芯片用：把引导语放进输入框并聚焦（D-47：入口是糖，对话是本体）。 */
+function setDraft(lead) {
+  text.value = lead
+  nextTick(() => {
+    const el = card.value?.$el?.querySelector('textarea')
+    if (el) {
+      el.focus()
+      el.setSelectionRange(el.value.length, el.value.length)
+    }
+  })
+}
+
+defineExpose({ setDraft })
+
 </script>
 
 <template>

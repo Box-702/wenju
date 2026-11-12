@@ -16,7 +16,7 @@
 // 四个胶囊挤一行会换行（首页卡片 1040px 也救不了长作品名）。
 // =====================================================================
 
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
 import { api } from '../api'
 import { store, selectProject, loadProviders, loadChatPref, loadModelStatus, notify } from '../stores/app'
@@ -75,6 +75,17 @@ function modelsOf(provider) {
 }
 
 const providerModels = computed(() => modelsOf(currentProvider.value))
+
+/** 面板对话 tab 的清单：只列当前厂商的模型；当前生效模型若不在清单
+    （比如来自 .env 且厂商没配），补一行保证「在用的看得见」。 */
+const chatModels = computed(() => {
+  const list = [...providerModels.value]
+  const name = activeModelName.value
+  if (name && !list.some((m) => m.model === name)) {
+    list.push({ name, model: name, enabled: true, fromEnv: activeFromEnv.value })
+  }
+  return list
+})
 
 /** 所有已配置厂商的模型，按厂商分组。
     用户配了多个厂商时，下拉里能一次看到每家的模型（选中即切到那家）。 */
@@ -149,6 +160,63 @@ async function chooseModel(provider, m) {
     notify('切换失败：' + (e.detail || e.message))
   }
 }
+
+// ---- 模型面板：对话 / 生图 / 视频 三行（D-47 配套；厂商与 Key 管理仍走设置弹窗） ----
+const panelTab = ref('chat')      // 当前展开的维度行
+const allProviders = ref([])      // 全 kind 厂商（面板打开时拉）
+const modelPrefs = ref([])        // 全部任务偏好
+
+async function refreshPanel() {
+  try { allProviders.value = await api('/providers') } catch { allProviders.value = [] }
+  try { modelPrefs.value = await api('/models/preferences') || [] } catch { modelPrefs.value = [] }
+}
+
+const imageProviders = computed(() =>
+  (allProviders.value || []).filter((p) => p.kind === 'image' && p.configured))
+const videoProviders = computed(() =>
+  (allProviders.value || []).filter((p) => p.kind === 'video' && p.configured))
+
+const imagePref = computed(() =>
+  modelPrefs.value.find((x) => x.task_type === 'image_gen' && x.provider_id) || null)
+const currentImageLabel = computed(() => {
+  if (imagePref.value?.model_name) return imagePref.value.model_name
+  const p = imageProviders.value[0]
+  return p?.config?.model || '未配置'
+})
+const currentVideoLabel = computed(() => {
+  const p = videoProviders.value.find((x) => x.name === 'minimax') || videoProviders.value[0]
+  return p?.config?.model || '未配置'
+})
+
+async function chooseImageModel(p, m) {
+  modelOpen.value = false
+  try {
+    await api('/models/preferences', 'PUT', {
+      task_type: 'image_gen', provider_id: p.id, model_name: m, is_default: true,
+    })
+    await Promise.all([loadModelStatus(), refreshPanel()])
+    notify(`生图模型已切到 ${m}`, 'ok')
+  } catch (e) {
+    notify('切换失败：' + (e.detail || e.message))
+  }
+}
+
+/** 视频档位切换 = 改厂商行的 config.model（与设置页同路径，后端热生效）。 */
+async function chooseVideoModel(p, m) {
+  modelOpen.value = false
+  try {
+    await api(`/providers/${p.id}`, 'PATCH', { config: { ...(p.config || {}), model: m } })
+    await refreshPanel()
+    notify(`视频模型已切到 ${m}`, 'ok')
+  } catch (e) {
+    notify('切换失败：' + (e.detail || e.message))
+  }
+}
+
+const VIDEO_TIERS = ['MiniMax-H3-Lite', 'MiniMax-H3-Highspeed', 'MiniMax-H3']
+const IMAGE_MODELS = ['MiniMax-H3-Image', 'cogview-4-250304', 'cogview-3-flash']
+
+watch(modelOpen, (v) => { if (v) refreshPanel() })
 
 onMounted(() => {
   loadProviders()
@@ -407,38 +475,91 @@ function onInput(e) {
               title="选择对话模型"
               @click.stop="modelOpen = !modelOpen"
             >
-              <AppIcon name="sparkle" />
-              <!-- 展开时胶囊变动作提示（「选择对话模型」），收起后回到当前模型名——
-                   下拉开着的时候当前模型名反而挡住视线（参考用户给的截图交互） -->
-              <span>{{ modelOpen ? '选择对话模型' : modelLabel }}</span>
+              <AppIcon name="gear" />
+              <!-- 徽标常驻「模型设置」：模型名太长显示不过来，徽标不塞具体名字，
+                   当前用了谁在面板三行里看（用户定，2026-11-12）。 -->
+              <span>模型设置</span>
               <AppIcon name="chevron-down" class="cc-chev" />
             </button>
             <Transition name="ccpop">
-              <div v-if="modelOpen" class="cc-model-pop" role="menu">
-                <div class="mp-head">
-                  <span class="mp-provider">对话模型</span>
-                  <span class="mp-hint">{{ activeVendor }}</span>
+              <div v-if="modelOpen" class="cc-model-pop mp-panel" role="menu">
+                <!-- 三行：对话 / 生图 / 视频，点击行内展开该维度清单 -->
+                <button class="mp-row" type="button" :class="{ on: panelTab === 'chat' }"
+                        @click.stop="panelTab = 'chat'">
+                  <span class="mr-key">对话</span>
+                  <span class="mr-val">{{ modelLabel }}</span>
+                  <AppIcon name="chevron-right" class="mr-chev" />
+                </button>
+                <button class="mp-row" type="button" :class="{ on: panelTab === 'image' }"
+                        @click.stop="panelTab = 'image'">
+                  <span class="mr-key">生图</span>
+                  <span class="mr-val">{{ currentImageLabel }}</span>
+                  <AppIcon name="chevron-right" class="mr-chev" />
+                </button>
+                <button class="mp-row" type="button" :class="{ on: panelTab === 'video' }"
+                        @click.stop="panelTab = 'video'">
+                  <span class="mr-key">视频</span>
+                  <span class="mr-val">{{ currentVideoLabel }}</span>
+                  <AppIcon name="chevron-right" class="mr-chev" />
+                </button>
+
+                <!-- 展开区：当前 tab 的可选清单 -->
+                <div class="mp-body">
+                  <!-- 对话：只列当前厂商的模型清单（换厂商/换 key 去完整设置） -->
+                  <template v-if="panelTab === 'chat'">
+                    <div class="mp-label">{{ activeVendor || '当前厂商' }}</div>
+                    <button v-for="m in chatModels" :key="m.model"
+                            class="mp-item" type="button" role="menuitemradio"
+                            :aria-checked="m.model === activeModelName"
+                            @click.stop="chooseModel(currentProvider, m)">
+                      <span class="mi-name">{{ m.name }}</span>
+                      <span class="mi-model">{{ m.model }}</span>
+                      <span v-if="m.model === activeModelName" class="mi-check">✓</span>
+                    </button>
+                    <div v-if="!chatModels.length" class="mp-empty">当前厂商还没配模型。</div>
+                  </template>
+
+                  <!-- 生图：image 厂商 × 模型清单（或常用档位） -->
+                  <template v-else-if="panelTab === 'image'">
+                    <template v-if="imageProviders.length">
+                      <template v-for="p in imageProviders" :key="p.id">
+                        <div class="mp-label">{{ p.label || p.name }}</div>
+                        <button v-for="m in modelsOf(p)" :key="p.id + ':' + m.model"
+                                class="mp-item" type="button" role="menuitemradio"
+                                :aria-checked="m.model === currentImageLabel"
+                                @click.stop="chooseImageModel(p, m.model)">
+                          <span class="mi-name">{{ m.name }}</span>
+                          <span v-if="m.model === currentImageLabel" class="mi-check">✓</span>
+                        </button>
+                      </template>
+                    </template>
+                    <template v-else>
+                      <div class="mp-label">常用生图档位</div>
+                      <button v-for="m in IMAGE_MODELS" :key="m" class="mp-item" type="button"
+                              :aria-checked="m === currentImageLabel"
+                              @click.stop="imageProviders[0] && chooseImageModel(imageProviders[0], m)">
+                        <span class="mi-name">{{ m }}</span>
+                        <span v-if="m === currentImageLabel" class="mi-check">✓</span>
+                      </button>
+                    </template>
+                  </template>
+
+                  <!-- 视频：H3 三档（改厂商 config.model） -->
+                  <template v-else-if="panelTab === 'video'">
+                    <div class="mp-label">MiniMax H3 档位</div>
+                    <button v-for="m in VIDEO_TIERS" :key="m" class="mp-item" type="button"
+                            role="menuitemradio" :aria-checked="m === currentVideoLabel"
+                            @click.stop="videoProviders[0] && chooseVideoModel(videoProviders[0], m)">
+                      <span class="mi-name">{{ m }}</span>
+                      <span v-if="m === currentVideoLabel" class="mi-check">✓</span>
+                    </button>
+                    <div v-if="!videoProviders.length" class="mp-empty">还没有配置视频厂商。</div>
+                  </template>
                 </div>
-                <template v-for="g in modelGroups" :key="g.provider.id || g.label">
-                  <div class="mp-label">{{ g.label }}</div>
-                  <button
-                    v-for="m in g.models"
-                    :key="g.provider.id + ':' + m.model"
-                    class="mp-item"
-                    type="button"
-                    role="menuitemradio"
-                    :aria-checked="m.model === activeModelName"
-                    @click.stop="chooseModel(g.provider, m)"
-                  >
-                    <span class="mi-name">{{ m.name }}</span>
-                    <span class="mi-model">{{ m.model }}</span>
-                    <span v-if="m.fromEnv" class="mi-src">来自 .env</span>
-                    <span v-if="m.model === activeModelName" class="mi-check">✓</span>
-                  </button>
-                </template>
-                <div v-if="!modelGroups.length" class="mp-empty">
-                  还没有配好模型，去「设置 → 模型」里加厂商与模型。
-                </div>
+
+                <button class="mp-more" type="button" @click.stop="modelOpen = false; emit('open-settings')">
+                  完整模型设置（厂商 / Key）<AppIcon name="chevron-right" />
+                </button>
               </div>
             </Transition>
           </div>
@@ -671,6 +792,39 @@ function onInput(e) {
 }
 .mp-item .mi-check { color: var(--accent); flex: none; font-size: 12px; }
 .mp-item .mi-src { flex: none; font-size: 10px; color: var(--dim); }
+
+/* 模型面板三行（对话/生图/视频）：行=维度+当前值，点击切展开区 */
+.mp-panel { min-width: 280px; }
+.mp-row {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 8px 10px; border: none; border-radius: var(--radius-md);
+  background: transparent; color: var(--muted);
+  font-size: var(--fs-sm); font-family: inherit; text-align: left; cursor: pointer;
+}
+.mp-row:hover { background: rgba(255, 255, 255, .06); }
+.mp-row.on { background: rgba(255, 255, 255, .08); color: var(--ink); }
+.mp-row .mr-key { flex: none; width: 34px; color: var(--muted); font-weight: 600; }
+.mp-row.on .mr-key { color: var(--ink); }
+.mp-row .mr-val {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); font-size: 11px; color: var(--dim);
+}
+.mp-row.on .mr-val { color: var(--muted); }
+.mp-row .mr-chev { flex: none; width: 11px; height: 11px; opacity: .4; transform: rotate(90deg); }
+.mp-row.on .mr-chev { opacity: .8; }
+.mp-body {
+  border-top: 1px solid var(--line); margin-top: 3px; padding-top: 2px;
+  max-height: 240px; overflow-y: auto;
+}
+.mp-more {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  margin-top: 3px; padding: 8px 10px;
+  border: none; border-top: 1px solid var(--line); border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  background: transparent; color: var(--muted);
+  font-size: var(--fs-sm); font-family: inherit; text-align: left; cursor: pointer;
+}
+.mp-more:hover { color: var(--ink); background: rgba(255, 255, 255, .05); }
+.mp-more .app-ic { width: 11px; height: 11px; margin-left: auto; opacity: .5; }
 .mp-empty { padding: 9px; font-size: var(--fs-xs); color: var(--dim); line-height: 1.6; }
 .cc-project { max-width: 190px; }
 /* 作品名超长就截断：不给它撑破胶囊的宽度 */

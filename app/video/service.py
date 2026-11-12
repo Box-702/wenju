@@ -225,7 +225,55 @@ def _same_intent(job: Any, payload: VideoJobCreate, effective_params: dict[str, 
     return True
 
 
-# ---------- 提交（单镜） ----------
+# ---------- 提交（单镜 / 镜头组，S2 PLAN-shot-group） ----------
+
+
+def _generation_units(shots: list[Any]) -> list[dict[str, Any]]:
+    """把镜头列表折叠成生成单元：单镜自成单元；同 group_id 的机位合成一个单元。
+
+    单元 = 一次视频生成。组单元的 prompt 取组头 group_prompt（DP 折叠产物，
+    缺则回落组头 video_prompt），时长 = 组内各机位之和；job 的 shot_id 用
+    组头 id，成员 id 列表进 params（finalize/配音按成员展开，S2b）。
+    旧数据（无 group 字段）逐字节等价于「每镜一单元」——兼容是设计出来的。
+    """
+    by_gid: dict[str, list[dict[str, Any]]] = {}
+    units: list[dict[str, Any]] = []
+    for s in shots:
+        if not isinstance(s, dict) or not s.get("id"):
+            continue
+        gid = str(s.get("group_id") or "")
+        if gid:
+            by_gid.setdefault(gid, []).append(s)
+        else:
+            units.append(_unit_of([s]))
+    for members in by_gid.values():
+        members.sort(key=lambda x: (int(x.get("group_index") or 0),
+                                    int(x.get("order") or 0)))
+        units.append(_unit_of(members))
+    units.sort(key=lambda u: u["head_order"])
+    return units
+
+
+def _unit_of(members: list[dict[str, Any]]) -> dict[str, Any]:
+    head = members[0]
+    prompt = str(head.get("group_prompt") or "") if len(members) > 1 else ""
+    prompt = prompt or str(head.get("video_prompt") or "")
+    return {
+        "shot_id": str(head.get("id")),
+        "group_id": str(head.get("group_id") or "") if len(members) > 1 else "",
+        "member_ids": [str(m.get("id")) for m in members],
+        "prompt": prompt,
+        "duration_sec": sum(max(0.0, float(m.get("duration_sec") or 0)) for m in members),
+        "head_order": int(head.get("order") or 0),
+    }
+
+
+def _unit_approved(all_shots: list[Any], unit: dict[str, Any]) -> bool:
+    """单元的批准状态看组头（单镜单元即自己）。组内任何机位没批都不投——
+    批了半段戏就提交等于替用户做主。"""
+    head = next((s for s in all_shots
+                 if isinstance(s, dict) and s.get("id") == unit["shot_id"]), None)
+    return bool(head) and head.get("prompt_status") == "approved"
 
 
 def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, bool]:
@@ -270,18 +318,27 @@ def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, boo
     )
     if shot is None:
         raise HTTPException(404, f"镜头 {payload.shot_id} 不在该方案里，无法提交出片")
-    if not shot.get("video_prompt"):
+    # ---- 镜头组感知（S2，PLAN-shot-group）----
+    # 提交单元可以是组：payload.shot_id 是组头，等值校验对 group_prompt，
+    # 时长对组内各机位之和。单镜（无 group_id）走原路径，逐字节不变。
+    gid = str(shot.get("group_id") or "")
+    members = [s for s in (version.shots or [])
+               if isinstance(s, dict) and str(s.get("group_id") or "") == gid] \
+        if gid else [shot]
+    approved_prompt = (str(shot.get("group_prompt") or "") if gid and len(members) > 1
+                       else str(shot.get("video_prompt") or ""))
+    if not approved_prompt:
         raise HTTPException(409, "该镜头还没有 Prompt，无法提交出片")
     if shot.get("prompt_status") != "approved":
         raise HTTPException(409, "该镜头的 Prompt 尚未批准，请先完成人工审阅")
-    if (payload.prompt or "").strip() != str(shot.get("video_prompt") or "").strip():
+    if (payload.prompt or "").strip() != approved_prompt.strip():
         raise HTTPException(409, "提交内容与该镜头已批准的 Prompt 不一致——改过内容需要重新批准")
 
-    # 时长：显式 > 导演 > 节奏默认（按本场 pacing + 项目改编类型给的建议值）。
+    # 时长：显式 > 导演（组=各机位之和）> 节奏默认（按本场 pacing + 项目改编类型给的建议值）。
     # 短剧项目默认 4–5 秒一镜——短视频时代的注意力只给开头三秒，不能用电影的
     # 8 秒基准（2026-10-31 用户反馈）。
     explicit = payload.params.get("duration_sec")
-    director_sec = float((shot or {}).get("duration_sec") or 0)
+    director_sec = sum(float(m.get("duration_sec") or 0) for m in members)
     pacing = getattr(version, "pacing", None) if version else None
     project = store.get_project(project_id)
     fmt = getattr(project, "adaptation_type", None)
@@ -293,6 +350,10 @@ def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, boo
     # 落库固定下来：重试、批量重投都要用同一个时长，不能再各自回落到默认值。
     stored_params["duration_sec"] = duration
     stored_params.setdefault("resolution", default_resolution())
+    # 组任务：成员机位清单随任务落库——finalize/配音按它把一条组视频展开
+    # 回各机位的时间轴（S2b），也让 UI 知道这条任务覆盖哪几个镜头。
+    if gid and len(members) > 1:
+        stored_params["group_member_ids"] = [str(m.get("id")) for m in members]
     for key in ("first_frame_image", "last_frame_image", "reference_images",
                 "reference_audios", "content"):
         value = getattr(payload, key)
@@ -529,21 +590,32 @@ def _batch_submit(
         versions = sorted(store.list_video_versions(project_id), key=lambda v: v.created_at)
         shots = versions[-1].shots if versions else []
 
+    # 单元索引：批次推进传的是单元 id（组头），prompt 取折叠后的单元文本
+    # （组=group_prompt，单镜=video_prompt）——与 generate_batch 的名单同源。
+    unit_by_id = {u["shot_id"]: u for u in _generation_units(shots)}
+
     def _submit(shot_id: str) -> str | None:
         shot = next((s for s in shots if isinstance(s, dict) and s.get("id") == shot_id), None)
-        if shot is None or not shot.get("video_prompt") or shot.get("prompt_status") != "approved":
+        unit = unit_by_id.get(shot_id)
+        if shot is None or not unit or not unit["prompt"] or shot.get("prompt_status") != "approved":
             return None
         try:
             job, _created = submit_video_job(project_id, VideoJobCreate(
                 shot_id=shot_id, provider=provider, model=model,
-                prompt=shot.get("video_prompt") or "", version_id=version_id,
+                prompt=unit["prompt"], version_id=version_id,
                 params={
                     **({"resolution": resolution} if resolution else {}),
                     **({"aspect_ratio": aspect_ratio} if aspect_ratio else {}),
                 },
                 # 镜头级参考图随镜头计划透传；
                 # 参考视频由 _auto_references 统一合并（用户挑的参考素材 + 自动接力）。
-                reference_images=[u for u in shot.get("reference_images") or [] if u],
+                # 组单元：成员参考图并集去重（各机位可能点不同角色）。
+                reference_images=list(dict.fromkeys(
+                    u for m in ([shot] if not unit["group_id"] else
+                                [s for s in shots if isinstance(s, dict)
+                                 and str(s.get("group_id") or "") == unit["group_id"]])
+                    for u in (m.get("reference_images") or []) if u
+                )),
             ))
             return job.id
         except Exception as e:  # noqa: BLE001
@@ -572,13 +644,13 @@ def generate_batch(project_id: str, payload: BatchCreateRequest) -> dict[str, An
     if version is None or not version.shots:
         raise HTTPException(400, "还没有镜头方案：请先完成导演与摄影指导阶段")
 
-    shot_ids = [
-        s["id"] for s in version.shots
-        if isinstance(s, dict)
-        and s.get("id")
-        and s.get("video_prompt")
-        and s.get("prompt_status") == "approved"
+    # 提交名单按**生成单元**折叠（S2）：同组成员只投组头一次——逐镜提交
+    # 会把一段戏生成 N 遍（N 倍计费），这是镜头组架构必须堵的洞。
+    units = [
+        u for u in _generation_units(version.shots)
+        if u["prompt"] and _unit_approved(version.shots, u)
     ]
+    shot_ids = [u["shot_id"] for u in units]
     if not shot_ids:
         raise HTTPException(400, "还没有批准任何视频 Prompt，请先逐镜编辑并批准")
 

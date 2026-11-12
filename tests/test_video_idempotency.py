@@ -460,3 +460,53 @@ def test_submit_rejects_prompt_not_matching_approved(client, sample_text, monkey
                 prompt="A totally different, never-approved prompt.")
     assert r.status_code == 409
     assert "不一致" in r.json()["detail"]
+
+
+# ---------- 镜头组提交单元（S2a，PLAN-shot-group） ----------
+
+
+def _group_shots():
+    """一个 2 机组（g1）+ 一个单镜。"""
+    return [
+        {"id": "shot_scene_001_000", "scene_id": "scene_001", "order": 0,
+         "duration_sec": 4, "video_prompt": "P0", "group_id": "g1", "group_index": 0,
+         "group_prompt": "GROUP-PROMPT", "prompt_status": "approved"},
+        {"id": "shot_scene_001_001", "scene_id": "scene_001", "order": 1,
+         "duration_sec": 3, "video_prompt": "P1", "group_id": "g1", "group_index": 1,
+         "prompt_status": "approved"},
+        {"id": "shot_scene_001_002", "scene_id": "scene_001", "order": 2,
+         "duration_sec": 5, "video_prompt": "P2", "prompt_status": "approved"},
+    ]
+
+
+def test_generation_units_折叠组只留组头():
+    from app.video.service import _generation_units
+
+    units = _generation_units(_group_shots())
+    assert [u["shot_id"] for u in units] == ["shot_scene_001_000", "shot_scene_001_002"]
+    g = units[0]
+    assert g["group_id"] == "g1"
+    assert g["member_ids"] == ["shot_scene_001_000", "shot_scene_001_001"]
+    assert g["prompt"] == "GROUP-PROMPT"
+    assert g["duration_sec"] == 7          # 组时长=机位之和
+    assert units[1]["prompt"] == "P2"      # 单镜走 video_prompt
+
+
+def test_generation_units_旧数据等价单镜():
+    """无 group 字段的旧版本数据 → 每镜一单元，逐字节兼容。"""
+    from app.video.service import _generation_units
+
+    legacy = [{"id": f"shot_scene_001_{i:03d}", "order": i, "duration_sec": 4,
+               "video_prompt": f"P{i}"} for i in range(3)]
+    units = _generation_units(legacy)
+    assert [u["shot_id"] for u in units] == [s["id"] for s in legacy]
+    assert all(not u["group_id"] for u in units)
+
+
+def test_unit_approved_组内未批不投():
+    from app.video.service import _generation_units, _unit_approved
+
+    shots = _group_shots()
+    shots[0]["prompt_status"] = "needs_review"   # 组头没批
+    units = _generation_units(shots)
+    assert not any(_unit_approved(shots, u) and u["group_id"] == "g1" for u in units)

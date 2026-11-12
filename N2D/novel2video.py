@@ -7,13 +7,13 @@
 # 每一步的输入输出都直接可见、可复跑。
 #
 # 用法（在项目根目录）：
-#   uv run python scripts/novel2video.py 素材/孔乙己.txt --title 孔乙己
-#   可选：--out output/孔乙己_成片.mp4  --shot-limit 15
+#   uv run python N2D/novel2video.py 素材/孔乙己.txt --title 孔乙己
+#   可选：--out N2D/output/孔乙己_成片.mp4  --shot-limit 15
 #        --no-dubbing  --no-subtitles
 #
 # 断点续跑：每一步的产物都实时落库（script_versions / video_versions /
 # video_style / video_jobs / media_assets）。中途挂了不用从头再来：
-#   uv run python scripts/novel2video.py --resume proj_xxxx
+#   uv run python N2D/novel2video.py --resume proj_xxxx
 # 脚本会探测哪些步骤已有产物、直接跳过；已出片的镜头不会重复提交（省钱）。
 #
 # 说明：
@@ -34,7 +34,8 @@ import time
 import traceback
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent   # 项目根（app/、素材/ 都从这找）
+WF = Path(__file__).resolve().parent            # workflow/ —— 脚本与产物自成一夹
 sys.path.insert(0, str(ROOT))
 
 _LOG_FH = None  # main() 里初始化；_t 双写用
@@ -55,7 +56,7 @@ def _t(msg: str) -> None:
 def _open_log(title: str) -> Path:
     """UTF-8 带 BOM 的日志文件——Windows 自带查看器按 GBK 猜编码会满屏乱码，
     BOM 让它认准 UTF-8。"""
-    log_dir = ROOT / "output" / "logs"
+    log_dir = WF / "output" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     path = log_dir / f"{title}_{time.strftime('%m%d_%H%M%S')}.log"
     return path
@@ -127,7 +128,7 @@ def main() -> int:
         hint = state.get("project_id") or args.resume or ""
         if hint:
             _t(f"断点信息：作品 id={hint}")
-            _t(f"续跑命令：uv run python scripts/novel2video.py --resume {hint}")
+            _t(f"续跑命令：uv run python N2D/novel2video.py --resume {hint}")
         else:
             _t("（还没建成作品，无需续跑；修复后直接重跑即可）")
         return 1
@@ -382,7 +383,7 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
     if asset is None or not asset.content:
         _t("!! 成片资产缺失，无法导出")
         sys.exit(1)
-    out = Path(args.out) if args.out else ROOT / "output" / f"{p.title}_成片.mp4"
+    out = Path(args.out) if args.out else WF / "output" / f"{p.title}_成片.mp4"
     if not out.is_absolute():
         out = ROOT / out
     out.parent.mkdir(parents=True, exist_ok=True)

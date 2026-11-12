@@ -6,8 +6,8 @@
 # 用真 key 实测一遍，把响应原文打出来对字段——对不上就改适配器，别硬跑。
 #
 # 用法（项目根目录，先配好 ARK_API_KEY 环境变量或 .env）：
-#   uv run python scripts/probe_seedance.py
-#   uv run python scripts/probe_seedance.py --model doubao-seedance-1-0-lite-t2v-250428
+#   uv run python N2D/probe_seedance.py
+#   uv run python N2D/probe_seedance.py --model doubao-seedance-1-0-lite-t2v-250428
 # 探针会真实产生一次生成费用（4 秒 480p 最小任务），跑前知悉。
 # =====================================================================
 

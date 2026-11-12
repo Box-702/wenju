@@ -100,11 +100,12 @@ function formatDate(iso) {
       <h1 class="hero-title"><em>You call the drama</em></h1>
       <p class="hero-sub">小说进，短剧出</p>
 
-      <!-- 入口芯片（D-47）：点了只把引导语放进输入框，一切仍走对话 -->
-      <div class="hero-chips" aria-label="快捷入口">
-        <button class="chip" @click="chip('novel')">导入小说做剧</button>
-        <button class="chip" @click="chip('prompt')">按提示词直接生成</button>
-      </div>
+      <!-- 入口指引（D-47）：一行淡字，/ 分隔；点击只把引导语放进输入框，一切仍走对话 -->
+      <p class="hero-hints">
+        <button class="hint" @click="chip('novel')">导入小说做剧</button>
+        <span class="hint-sep" aria-hidden="true">/</span>
+        <button class="hint" @click="chip('prompt')">按提示词直接生成</button>
+      </p>
 
       <HomeComposer
         ref="composer"
@@ -309,31 +310,37 @@ function formatDate(iso) {
   color: rgba(255, 255, 255, 0.56);
 }
 
-/* 入口芯片（D-47）：极简胶囊，hover 提亮；点击只注入引导语，不做新页面 */
-.hero-chips {
+/* 入口指引（D-47）：不是按钮——一行淡灰小字，/ 分隔，hover 提亮。
+   视觉上是「提示」而不是「控件」，避免和输入卡片抢注意力。 */
+.hero-hints {
   display: flex;
-  gap: 10px;
+  gap: 8px;
+  align-items: center;
   justify-content: center;
-  margin: 0 0 22px;
+  margin: 0 0 20px;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.34);
 }
 
-.hero-chips .chip {
-  padding: 7px 16px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 13px;
+.hero-hints .hint {
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
   font-family: inherit;
   cursor: pointer;
-  backdrop-filter: blur(6px);
-  transition: color 140ms var(--ease), border-color 140ms var(--ease), background 140ms var(--ease);
+  transition: color 140ms var(--ease);
 }
 
-.hero-chips .chip:hover {
-  color: #fff;
-  border-color: rgba(255, 255, 255, 0.34);
-  background: rgba(255, 255, 255, 0.1);
+.hero-hints .hint:hover,
+.hero-hints .hint:focus-visible {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.hero-hints .hint-sep {
+  color: rgba(255, 255, 255, 0.2);
+  user-select: none;
 }
 
 /* ---------- 我的作品 ---------- */

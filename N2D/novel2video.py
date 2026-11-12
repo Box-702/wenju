@@ -35,7 +35,7 @@ import traceback
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent   # 项目根（app/、素材/ 都从这找）
-WF = Path(__file__).resolve().parent            # workflow/ —— 脚本与产物自成一夹
+WF = Path(__file__).resolve().parent            # N2D/ —— 脚本与产物自成一夹
 sys.path.insert(0, str(ROOT))
 
 _LOG_FH = None  # main() 里初始化；_t 双写用
@@ -60,6 +60,64 @@ def _open_log(title: str) -> Path:
     log_dir.mkdir(parents=True, exist_ok=True)
     path = log_dir / f"{title}_{time.strftime('%m%d_%H%M%S')}.log"
     return path
+
+
+def _dump(title: str, name: str, text: str) -> None:
+    """把关键产物快照写成文件（output/<作品>/<文件>），与日志并排。
+    数据库里有全量，但体检提示词/分镜时翻库不方便——文件直接可读可比对，
+    两次跑之间 diff 一下就知道提示词改动带来什么变化。"""
+    d = WF / "output" / title
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_text(text, encoding="utf-8")
+
+
+def _dump_script(title: str, script) -> None:
+    lines = [f"# 《{script.title}》剧本（{len(script.scenes)} 场 · {len(script.characters)} 角色）", ""]
+    lines.append(f"logline：{script.logline}\n")
+    for sc in script.scenes:
+        lines.append(f"## {sc.id} {sc.title}｜地点 {sc.location_id}｜人物 {'、'.join(sc.characters)}")
+        lines.append(f"目的：{sc.purpose}  冲突：{sc.conflict}")
+        for b in sc.beats:
+            tag = f"[{b.type}]"
+            body = (b.line or b.summary or "").strip()
+            lines.append(f"  {tag} {body[:120]}")
+        lines.append("")
+    _dump(title, "剧本.md", "\n".join(lines))
+
+
+def _dump_shots(title: str, shots: list[dict], *, with_prompt: bool) -> None:
+    lines = [f"# 分镜表（{len(shots)} 镜）", ""]
+    for s in shots:
+        if not isinstance(s, dict):
+            continue
+        lines.append(f"## {s.get('id')}（{s.get('duration_sec')}s · {s.get('shot_type')} · function={s.get('function') or '—'}）")
+        lines.append(f"- 主体：{s.get('subject', '')[:80]}")
+        lines.append(f"- 动作：{s.get('action', '')[:120]}")
+        lines.append(f"- 运镜：{(s.get('camera') or {}).get('path', '') if isinstance(s.get('camera'), dict) else ''}")
+        lines.append(f"- cut_reason：{s.get('cut_reason', '')[:100]}")
+        if with_prompt:
+            lines.append(f"- prompt_status：{s.get('prompt_status', '')}")
+            lines.append(f"- 提示词：\n\n```\n{s.get('video_prompt', '')}\n```\n")
+        lines.append("")
+    _dump(title, "分镜与提示词.md" if with_prompt else "分镜表.md", "\n".join(lines))
+
+
+def _dump_qa(title: str, jobs: list) -> None:
+    lines = [f"# 出片与质检记录（{time.strftime('%m-%d %H:%M')}）", ""]
+    for j in jobs:
+        qa = (j.params or {}).get("qa") or {}
+        mark = {"pass": "✅", "fail": "❌", "skipped": "⏭"}.get(qa.get("verdict", ""), "…")
+        lines.append(f"## {mark} {j.shot_id} · {j.status} · job={j.id}")
+        if (j.params or {}).get("qa_attempt"):
+            lines.append(f"- 重 roll 第 {j.params['qa_attempt']} 次"
+                         + ("（提示词已降级改写）" if j.params.get("qa_rewritten") else ""))
+        if qa.get("issues"):
+            for i in qa["issues"]:
+                lines.append(f"- QA：{i}")
+        if j.error_message:
+            lines.append(f"- 备注：{j.error_message}")
+        lines.append("")
+    _dump(title, "质检记录.md", "\n".join(lines))
 
 
 def main() -> int:
@@ -140,6 +198,7 @@ def main() -> int:
 def run_pipeline(llm, st, args, title: str, state: dict) -> str:
     """十步流水线。每步先探测 DB 里已有的产物，有就跳过（幂等续跑）。
     state["project_id"] 实时登记——异常时调用方能报出续跑命令。"""
+    from app.config import get_settings
     from app.domain import (
         SceneBreakdown,
         StyleGuide,
@@ -180,7 +239,7 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
         _t("① 剧本生成：故事圣经 → 场景/节拍 …")
         t0 = time.time()
         script, artifacts = run_generation(
-            llm, settings(), title=p.title, raw_text=p.raw_text or "",
+            llm, get_settings(), title=p.title, raw_text=p.raw_text or "",
             adaptation_type=p.adaptation_type, language=p.language,
         )
         version = st.create_version(
@@ -189,6 +248,7 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
         )
         _t(f"   完成（{time.time()-t0:.0f}s）：{len(script.scenes)} 场 · "
            f"{len(script.characters)} 角色 · 模式 {artifacts.get('mode')}")
+    _dump_script(title, script)
 
     # ---- 3. 导演拆镜（breakdown 已落版本则复用） ----
     breakdown_data = st.get_version_breakdown(version.id)
@@ -214,6 +274,8 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
         )
         st.set_version_breakdown(version.id, [bd.model_dump() for bd in breakdowns])
         _t(f"   完成：{len(shots_plan)} 镜 · {res.summary[:80]}")
+    _dump_shots(title, [s.model_dump() for bd in breakdowns for s in bd.shots],
+                with_prompt=False)
 
     # ---- 4. 美术指导：风格指南（已有色彩方案则复用） ----
     from app.crew.dp import language_for
@@ -326,6 +388,7 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
     n_ok = sum(1 for s in shots if s.get("prompt_status") == "approved")
     _t(f"⑥ 已批准 {n_ok}/{len(shots)} 镜"
        + (f"（跳过已出片 {len(succeeded_shots)} 镜）" if succeeded_shots else ""))
+    _dump_shots(title, shots, with_prompt=True)
 
     # ---- 8. 批量出片 ----
     from app.video.service import BatchCreateRequest, generate_batch
@@ -350,9 +413,11 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
                 last_done = done
             time.sleep(10)
         b = batch_manager().latest_for_project(p.id)
-        ok_jobs = [j for j in st.list_video_jobs(p.id) if j.status == "succeeded"]
+        all_jobs = st.list_video_jobs(p.id)
+        ok_jobs = [j for j in all_jobs if j.status == "succeeded"]
         _t(f"   批次结束：status={b.status if b else '?'} · 成功任务 {len(ok_jobs)} 个"
            f"（{time.time()-t0:.0f}s）")
+        _dump_qa(title, all_jobs)
         if b is None or b.status != "done":
             _t("!! 批次未全部完成——成片合成仍按已成功镜头继续（降级阶梯）")
     else:

@@ -14,7 +14,7 @@ import AppIcon from '../AppIcon.vue'
 import {
   store, loadShots, loadVideoJobs, submitVideoJob, playVideo, closeVideo, openPromptEditor,
   closePromptEditor, loadPromptHistory, saveShotPrompt, bulkReviewPrompts,
-  setVideoMode, setVideoResolution, setVideoAspect, setVideoSubtitle, startVideoBatch,
+  setVideoMode, setVideoResolution, setVideoAspect, setVideoSubtitle, setVideoAudioMode, startVideoBatch,
   pollVideoBatch, ensureBatchPolling, batchCommand,
   startFinalize, pollFinalize, ensureFinalizePolling,
 } from '../../stores/app'
@@ -178,6 +178,27 @@ function formatVersionTime(value) {
         >
           <option v-for="r in RESOLUTIONS" :key="r.value" :value="r.value">{{ r.label }}</option>
         </select>
+      </div>
+
+      <div class="ctrl-group">
+        <span class="ctrl-label">声音</span>
+        <div class="seg">
+          <button
+            :class="['seg-btn', { active: store.videoAudioMode === 'native' }]"
+            title="用视频模型的原生音轨：台词随提示词音画同生，唇形同步"
+            @click="setVideoAudioMode('native')"
+          >原生</button>
+          <button
+            :class="['seg-btn', { active: store.videoAudioMode === 'dub' }]"
+            title="用 TTS 重新配音混入（原生音轨压成环境声底）"
+            @click="setVideoAudioMode('dub')"
+          >配音</button>
+          <button
+            :class="['seg-btn', { active: store.videoAudioMode === 'silent' }]"
+            title="静片：台词只走字幕"
+            @click="setVideoAudioMode('silent')"
+          >静片</button>
+        </div>
       </div>
 
       <div class="ctrl-group">

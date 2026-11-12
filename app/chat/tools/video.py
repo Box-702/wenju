@@ -205,14 +205,18 @@ def build(ctx: ToolContext) -> list:
                 "随时可以重跑或继续其他镜头。")
 
     @tool
-    def finalize_film(project_id: str, subtitles: bool = True, dubbing: bool = True) -> str:
-        """把已生成成功的镜头合成为完整成片（拼装 + 台词配音 + 台词字幕，后台执行）。用户说「合成成片 / 拼成片 / 出完整视频」时调用。参数：project_id=项目 id，subtitles=是否烧台词字幕（默认开），dubbing=是否配台词语音（默认开，无台词或未配语音 key 时自动跳过）。"""
+    def finalize_film(project_id: str, subtitles: bool = True,
+                      audio_mode: str = "native") -> str:
+        """把已生成成功的镜头合成为完整成片（拼装 + 台词字幕，后台执行）。用户说「合成成片 / 拼成片 / 出完整视频」时调用。参数：project_id=项目 id，subtitles=是否烧台词字幕（默认开），audio_mode=声音模式：native（默认，用视频模型原生音轨，台词随提示词音画同生、唇形同步）/ dub（用 TTS 重新配音）/ silent（静片，台词只走字幕）。用户没特别要求声音时用默认 native。"""
         from ...deps import finalize_manager as _manager
 
         p = ctx.project(project_id)
-        _manager().start(p.id, subtitles=subtitles, dubbing=dubbing)
-        opts = [o for o, on in (("配音", dubbing), ("字幕", subtitles)) if on]
-        suffix = f"（含{'/'.join(opts)}）" if opts else ""
+        mode = (audio_mode or "native").strip().lower()
+        if mode not in ("native", "dub", "silent"):
+            mode = "native"
+        _manager().start(p.id, subtitles=subtitles, audio_mode=mode)
+        voice = {"native": "原生音画同生", "dub": "TTS 配音", "silent": "静片"}[mode]
+        suffix = f"（声音：{voice}{'，含字幕' if subtitles else ''}）"
         return (
             f"已开始合成成片{suffix}，正在后台拼装各镜头。"
             "完成后成片会出现在作品工作台里，稍等片刻或直接问「合成好了吗」。"

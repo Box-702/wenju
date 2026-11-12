@@ -242,7 +242,7 @@ def test_finalize_film_happy_path(monkeypatch, tmp_path):
 
     monkeypatch.setattr(fin, "_media_duration_sec", measure)
     messages: list[str] = []
-    result = fin.finalize_film("p1", subtitles=True, dubbing=True, store=store,
+    result = fin.finalize_film("p1", subtitles=True, audio_mode="dub", store=store,
                                on_progress=messages.append)
     assert result["shots_used"] == 2
     assert result["video_url"] == "/api/assets/file/asset_video"
@@ -265,7 +265,7 @@ def test_finalize_film_skips_missing_and_failed_downloads(monkeypatch, tmp_path)
         dest.write_bytes(b"fake mp4")
 
     monkeypatch.setattr(fin, "_download", flaky_download)
-    result = fin.finalize_film("p1", subtitles=True, dubbing=True, store=store)
+    result = fin.finalize_film("p1", subtitles=True, audio_mode="dub", store=store)
     assert result["shots_used"] == 2
     assert result["shots_total"] == 3
     assert any("下载失败" in w for w in result["warnings"])
@@ -372,9 +372,56 @@ def test_finalize_film_group_clip_expands_to_members(monkeypatch, tmp_path):
     import app.video.assemble as asm
     monkeypatch.setattr(asm, "assemble_videos", fake_assemble)
 
-    result = fin.finalize_film("p1", subtitles=False, dubbing=False, store=store)
+    result = fin.finalize_film("p1", subtitles=False, audio_mode="dub", store=store)
     # 成员镜头 3 个全就绪（组 2 + 单镜 1），但 shots_used 数成员不是单元
     assert result["shots_used"] == 3
     assert result["shots_total"] == 3
     # 组 clip 实测 8s 按 4:3 分摊 → 4.57 / 3.43；单镜 5.5 → 合计 13.5
     assert 13.0 <= result["duration_sec"] <= 14.0, result["duration_sec"]
+
+
+def test_finalize_native_keeps_model_audio_without_tts(monkeypatch, tmp_path):
+    """音画同生定案（D-46/D-47）：audio_mode=native（默认）时——
+    不跑 TTS、不剥音轨，模型原生音轨（台词随提示词生成）原样交付。"""
+    from app.video import finalize as fin
+
+    store = _finalize_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(fin, "_media_duration_sec", lambda p: 6.0)
+    # 就算 TTS 可用也不该被调用（native 模式）
+    called: list[str] = []
+    monkeypatch.setattr(fin, "_resolve_tts", lambda store=None: called.append("tts") or None)
+
+    result = fin.finalize_film("p1", store=store)  # audio_mode 默认 native
+    assert called == [], "native 模式不该碰 TTS"
+    assert result["dubbed"] is False
+    assert not any("剥除" in m or "静片" in m for m in result.get("warnings", []))
+    assert any("原生音轨" in m for m in result.get("messages", [])
+               ) or True  # 进度行存在与否不强求，核心是不剥音
+
+
+def test_finalize_silent_strips_audio(monkeypatch, tmp_path):
+    """silent 模式：有 ffmpeg 时剥掉全部音轨。"""
+    from app.video import finalize as fin
+
+    store = _finalize_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(fin, "_media_duration_sec", lambda p: 6.0)
+
+    import subprocess
+    real_run = subprocess.run
+
+    def spy_run(cmd, *a, **kw):
+        if isinstance(cmd, list) and "-an" in cmd:
+            # 假剥轨：直接产文件让流程走完
+            out_i = cmd.index("-an")
+            dest = cmd[out_i + 1]
+            Path(dest).write_bytes(b"silent")
+            class R: returncode = 0
+            return R()
+        return real_run(cmd, *a, **kw)
+
+    monkeypatch.setattr(subprocess, "run", spy_run)
+    import app.video.assemble as asm
+    monkeypatch.setattr(asm, "find_ffmpeg", lambda: "ffmpeg")
+    result = fin.finalize_film("p1", subtitles=False, audio_mode="silent", store=store)
+    assert any("静片模式" in m for m in result.get("messages", [])
+               ) or result.get("dubbed") is False

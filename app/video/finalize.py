@@ -43,7 +43,7 @@ class FinalizeOptions:
     """成片合成选项（用户可选项都收在这里）。"""
 
     subtitles: bool = True   # 台词字幕烧录
-    dubbing: bool = True     # 台词配音（无台词/无 TTS 自动跳过）
+    audio_mode: str = "native"  # native 原生音画同生（默认）/ dub TTS 配音 / silent 静片
 
 
 def _emit(rec: dict[str, Any], msg: str) -> None:
@@ -113,14 +113,23 @@ def finalize_film(
     *,
     version_id: str | None = None,
     subtitles: bool = True,
-    dubbing: bool = True,
+    audio_mode: str = "native",
     on_progress: Any = None,
     store: Any = None,
 ) -> dict[str, Any]:
     """把已生成的镜头合成为完整成片。阻塞执行（调用方负责放线程里跑）。
 
+    audio_mode（2026-11-12 音画同生定案，D-46/D-47）：
+      native —— 默认。保留视频模型的原生音轨（台词/环境声都来自提示词，
+              唇形同步是它的原生能力）；TTS 不参与。
+      dub    —— 两段式：TTS 配音混入、原生音轨压成环境声底；配音失败
+              且本片有台词时剥音轨交静片（旧行为，兜底不乱响）。
+      silent —— 一律静片（字幕承担台词）。
     返回 result 字典；致命失败（无可用镜头/拼装失败）抛异常，由调用方记录。
     """
+    audio_mode = (audio_mode or "native").strip().lower()
+    if audio_mode not in ("native", "dub", "silent"):
+        audio_mode = "native"
     store = store or _default_store()
     rec: dict[str, Any] = {"messages": []}
 
@@ -227,12 +236,12 @@ def finalize_film(
             raise RuntimeError(f"拼装失败：{result.get('error')}")
         emit(f"拼装完成（{result.get('duration', 0):.1f}s）")
 
-        # ---- 3) 配音（可选）----
+        # ---- 3) 声音：按 audio_mode 分流（2026-11-12 音画同生定案）----
         current, track = base, []
         script = _resolve_script(store, project)
         dubbed = False
         cast_rows: list[dict[str, Any]] = []
-        if dubbing and script is not None:
+        if audio_mode == "dub" and script is not None:
             tts = _resolve_tts(store)
             if tts is None or not tts.available:
                 emit("未配置 TTS（可用 MINIMAX_API_KEY），跳过配音")
@@ -263,36 +272,43 @@ def finalize_film(
                 except Exception as e:  # noqa: BLE001
                     warnings.append(f"配音失败，成片为静片：{e}")
                     emit(f"配音失败，跳过：{e}")
-        elif dubbing:
+        elif audio_mode == "dub":
             emit("剧本不可读或无版本，跳过配音")
+        elif audio_mode == "native":
+            emit("声音走视频模型原生音轨（台词/环境声随提示词同生成，唇形同步）")
 
-        # ---- 3b) 静片兜底：台词没配上时剥掉模型自生的假语音 ----
-        # 视频模型的原始音轨是含混"叽喳声"（台词按设计不进提示词），留着它
-        # 观众只听到"听不清的说话声却不知道谁在说什么"（2026-11-12 v2 反馈）。
-        # 静片 + 字幕远好于假语音。仅在「本片有台词且配音没成功」时剥音轨。
-        if not dubbed and script is not None:
+        # ---- 3b) 音轨处理：silent 一律静片；dub 失败时剥假语音；native 保留 ----
+        def _strip_audio(tag: str) -> None:
+            nonlocal current
+            try:
+                from .assemble import find_ffmpeg as _find_ff
+
+                ff = _find_ff()
+                if ff:
+                    import subprocess
+
+                    silent = tmp / "silent.mp4"
+                    r = subprocess.run(
+                        [ff, "-y", "-loglevel", "error", "-i", str(current),
+                         "-c:v", "copy", "-an", str(silent)],
+                        capture_output=True, text=True, timeout=300)
+                    if r.returncode == 0 and silent.exists():
+                        current = silent
+                        emit(tag)
+            except Exception as e:  # noqa: BLE001
+                log.debug("剥音轨失败（保留原音轨交付）：%s", e)
+
+        if audio_mode == "silent":
+            _strip_audio("静片模式：已移除全部音轨（台词由字幕承担）")
+        elif audio_mode == "dub" and not dubbed and script is not None:
+            # dub 模式下模型原生音轨是含混"叽喳声"（台词没进提示词的旧产物），
+            # 配音又没成功——静片 + 字幕远好于假语音（2026-11-12 v2 反馈）。
             has_dialogue = any(
                 (b.type == "dialogue" and (b.line or "").strip())
                 for sc in (script.scenes if script else []) for b in sc.beats
             )
             if has_dialogue:
-                try:
-                    from .assemble import find_ffmpeg as _find_ff
-
-                    ff = _find_ff()
-                    if ff:
-                        import subprocess
-
-                        silent = tmp / "silent.mp4"
-                        r = subprocess.run(
-                            [ff, "-y", "-loglevel", "error", "-i", str(current),
-                             "-c:v", "copy", "-an", str(silent)],
-                            capture_output=True, text=True, timeout=300)
-                        if r.returncode == 0 and silent.exists():
-                            current = silent
-                            emit("配音未产出台词音轨：已剥除模型自生语音，交付静片+字幕")
-                except Exception as e:  # noqa: BLE001
-                    log.debug("剥音轨失败（保留原音轨交付）：%s", e)
+                _strip_audio("配音未产出台词音轨：已剥除模型自生语音，交付静片+字幕")
 
         # ---- 4) 字幕（可选）----
         subtitled = False
@@ -403,7 +419,11 @@ class FinalizeManager:
         self._lock = threading.Lock()
 
     def start(self, project_id: str, *, version_id: str | None = None,
-              subtitles: bool = True, dubbing: bool = True) -> dict[str, Any]:
+              subtitles: bool = True, audio_mode: str = "native",
+              dubbing: bool | None = None) -> dict[str, Any]:
+        # 兼容旧调用：dubbing=True/False（未给 audio_mode 时）映射 dub/native。
+        if audio_mode == "native" and dubbing is True:
+            audio_mode = "dub"
         fid = f"fin_{int(time.time() * 1000):x}"
         rec: dict[str, Any] = {
             "id": fid, "project_id": project_id, "status": "running",
@@ -412,17 +432,17 @@ class FinalizeManager:
         }
         with self._lock:
             self._jobs[fid] = rec
-        t = threading.Thread(target=self._run, args=(rec, version_id, subtitles, dubbing),
+        t = threading.Thread(target=self._run, args=(rec, version_id, subtitles, audio_mode),
                              daemon=True, name=f"finalize-{fid}")
         t.start()
         return dict(rec)
 
     def _run(self, rec: dict[str, Any], version_id: str | None,
-             subtitles: bool, dubbing: bool) -> None:
+             subtitles: bool, audio_mode: str) -> None:
         try:
             result = finalize_film(
                 rec["project_id"], version_id=version_id, subtitles=subtitles,
-                dubbing=dubbing, on_progress=lambda m: _emit(rec, m),
+                audio_mode=audio_mode, on_progress=lambda m: _emit(rec, m),
             )
             rec["result"] = result
             rec["status"] = "succeeded"

@@ -860,12 +860,14 @@ def batch_command(batch_id: str, payload: BatchCommandRequest) -> dict[str, Any]
 class FinalizeCreate(BaseModel):
     """成片合成请求。version_id 缺省用项目当前视频版本。
 
-    subtitles：台词字幕烧录（默认开）；dubbing：台词配音（默认开，无台词/无 TTS 自动跳过）。
+    subtitles：台词字幕烧录（默认开）；audio_mode：声音模式——
+    native（默认，视频模型原生音轨，台词随提示词音画同生）/
+    dub（TTS 配音混入）/ silent（静片，字幕承担台词）。
     """
 
     version_id: str | None = None
     subtitles: bool = True
-    dubbing: bool = True
+    audio_mode: str = "native"
 
 
 @router.post("/projects/{project_id}/video/finalize")
@@ -878,7 +880,7 @@ def finalize_film(project_id: str, payload: FinalizeCreate) -> dict[str, Any]:
             raise HTTPException(404, "视频版本不存在")
     rec = deps.finalize_manager().start(
         project_id, version_id=payload.version_id,
-        subtitles=payload.subtitles, dubbing=payload.dubbing,
+        subtitles=payload.subtitles, audio_mode=payload.audio_mode,
     )
     return rec
 

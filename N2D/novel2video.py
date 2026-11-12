@@ -145,9 +145,14 @@ def main() -> int:
                     help="只出前 N 镜（分批试跑省预算；0=全部）")
     ap.add_argument("--resume", default="", metavar="PROJECT_ID",
                     help="续跑已有作品：跳过已完成的步骤，不重复烧钱")
-    ap.add_argument("--no-dubbing", action="store_true", help="不配音")
+    ap.add_argument("--audio-mode", default="native", choices=["native", "dub", "silent"],
+                    help="成片声音：native=模型原生音画同生（默认）dub=TTS 配音 silent=静片")
+    ap.add_argument("--no-dubbing", action="store_true",
+                    help="（旧参数，等价 --audio-mode silent 的前身）不再使用 dub 默认")
     ap.add_argument("--no-subtitles", action="store_true", help="不烧字幕")
     args = ap.parse_args()
+    if args.no_dubbing and args.audio_mode == "native":
+        args.audio_mode = "silent"   # 旧参数：不配音=静片
 
     if not args.resume and not args.novel:
         ap.error("需要小说路径，或 --resume <作品id> 续跑")
@@ -450,10 +455,10 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
     # ---- 9. 成片合成 ----
     from app.video.finalize import finalize_film
 
-    _t("⑧ 成片合成：实测时长校准 → 拼接 → 配音 → 字幕 …")
+    _t(f"⑧ 成片合成：实测时长校准 → 拼接 → 声音({args.audio_mode}) → 字幕 …")
     info = finalize_film(
         p.id, version_id=approved_v.id,
-        subtitles=not args.no_subtitles, dubbing=not args.no_dubbing,
+        subtitles=not args.no_subtitles, audio_mode=args.audio_mode,
         on_progress=lambda m: _t(f"   · {m}"),
     )
     _t(f"   合成完成：{info['shots_used']}/{info['shots_total']} 镜 · "

@@ -64,11 +64,16 @@ const secs = computed(() => (props.elapsed / 1000).toFixed(1))
   flex: none;
 }
 
-/* 扫过的高光：一道微弱的亮线掠过文字，暗示「在动」 */
+/* 扫过的高光：文字**常驻实色**（--ink），一道更亮的白光带循环掠过——
+   旧版把底色做成 transparent、文字全靠光带照亮，光带不在时几乎看不见（用户指正）。 */
 .ss-label {
   position: relative;
-  color: var(--ink);
-  background-image: linear-gradient(100deg, transparent 38%, rgba(255, 255, 255, .55) 50%, transparent 62%);
+  background-image: linear-gradient(
+    100deg,
+    var(--ink) 40%,
+    #fff 50%,
+    var(--ink) 60%
+  );
   background-size: 220% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -79,7 +84,7 @@ const secs = computed(() => (props.elapsed / 1000).toFixed(1))
 .ss-time {
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--dim);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 

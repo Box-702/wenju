@@ -28,8 +28,6 @@ const props = defineProps({
     type: String,
     default: '描述画面、人物与剧情，支持使用 @ 快速调用参考素材。内容将由 AI 生成。',
   },
-  /** 阶段状态（生成中），显示在胶囊行左侧 */
-  statusText: { type: String, default: '' },
   /** 上下文提示（只在有提示时显示） */
   hintText: { type: String, default: '' },
   canSend: { type: Boolean, default: false },
@@ -488,9 +486,8 @@ function onInput(e) {
               </div>
             </Transition>
           </div>
-          <span v-if="statusText" class="cc-status">
-            <span class="cc-pulse" aria-hidden="true"></span>{{ statusText }}
-          </span>
+          <!-- 阶段状态不在这里重复：对话顶部 StatusStrip 已带光点+耗时，
+               输入条再挂一颗就是双份（用户指正 2026-11-13）。 -->
           <!-- 模型：下拉内容 = 当前供应商在「模型设置」里配好的模型清单 -->
           <div class="cc-model-wrap">
             <button
@@ -704,29 +701,6 @@ function onInput(e) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.cc-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 550;
-  white-space: nowrap;
-}
-
-.cc-pulse {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: ccpulse 1.4s ease-in-out infinite;
-}
-
-@keyframes ccpulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
 }
 
 .cc-right { display: flex; align-items: center; gap: 8px; flex: none; }

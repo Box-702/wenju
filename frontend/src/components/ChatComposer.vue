@@ -27,8 +27,6 @@ const fileInput = ref(null)
 const hasImages = computed(() => attachedImages.value.some((i) => i.id))
 const canSend = computed(() => (!!text.value.trim() || hasImages.value) && !store.streaming && uploadingCount.value === 0)
 
-const statusText = computed(() => (store.streaming ? store.streamingStage || '正在处理' : ''))
-
 onMounted(() => {
   loadModelStatus()
   loadProviders()
@@ -162,7 +160,6 @@ watch(() => store.draftSeq, () => {
       placeholder="描述你的故事想法"
       :can-send="canSend"
       :busy="store.streaming"
-      :status-text="statusText"
       :hint-text="store.hint"
       @send="send"
       @open-settings="store.showSettings = true"

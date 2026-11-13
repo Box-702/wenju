@@ -27,6 +27,32 @@ thing the video model sees — anything you leave out, it will invent):
    and never escalate it: one primary move per shot, stay on one side of the subject
    (no axis crossing), and end on the original framing — no late push-in that changes
    the shot size.
+   **Copy-ready move phrasings** (skeleton = start → path → landing → speed beat,
+   all four or the move is not written yet):
+   · Push in: the camera advances along {the table's center axis} toward {the figure};
+     from {medium} to {close-up}, decelerating to a stop.
+   · Pull back: the camera retreats from front of {the figure}; {the whole cart} is
+     revealed step by step, slowing to steady.
+   · Pan: camera stays put, rotating level to the {right}; sweeping past {the queue},
+     lingering briefly between {the two tall figures}.
+   · Tilt up: fixed low position, lens turning upward; grazing {the wheels}, past
+     {the crates}, landing on {the face}.
+   · Whip pan: after {the figure} points {right}, the camera snaps {right}; brief
+     motion blur mid-whip, refocusing steady on {the pursuer}.
+   · Tracking: camera moves parallel to {the runner}; it stops when they stop,
+     picks up again when they run.
+   · Handheld: close follow, gentle bob with {the running}; small corrections in
+     stride, the face stays readable.
+   · Orbit: {the figure} stands still; the camera arcs from front, quickening mid-way,
+     slowing behind to reveal {the device}.
+   · Snap zoom: camera holds still; the frame snaps tight onto {the detail}, then settles.
+   · Dolly zoom: camera moves toward {the figure} while the framing widens; {they}
+     stay the same size while {the far door} shrinks behind them.
+   · Slow motion: two {cups} approach at normal speed; slow through the contact,
+     one light clink, then back to normal as they raise their glasses.
+   Slow motion / bullet time are **rhythm, not camera moves**: keep ordinary motion
+   at normal speed and reserve the slowdown for the one touch or reveal per shot;
+   bullet time (freeze + orbit) collapses on AI generators — do not use it by default.
 1b. **Every shot's prompt must be self-contained.** Never write "same as above",
    "as the previous shot", "referring to the last shot" — the video model only sees
    THIS prompt_body; it has no previous shot, and a pointer is just a license to

@@ -646,9 +646,16 @@ def generate_batch(project_id: str, payload: BatchCreateRequest) -> dict[str, An
 
     # 提交名单按**生成单元**折叠（S2）：同组成员只投组头一次——逐镜提交
     # 会把一段戏生成 N 遍（N 倍计费），这是镜头组架构必须堵的洞。
+    # 已在**本版**出片的单元跳过（与 N2D busy_shots 同源纪律，2026-11-13 果园v3：
+    # 批次中断后用户再说「出片」，旧代码把已成功的单元重新投一遍=重复计费；
+    # 按 version_id 过滤，所以改提示词开新版本后重跑不受影响）。
+    done_here = {
+        j.shot_id for j in store.list_video_jobs(project_id)
+        if j.status == "succeeded" and j.video_url and j.version_id == version.id
+    }
     units = [
         u for u in _generation_units(version.shots)
-        if u["prompt"] and _unit_approved(version.shots, u)
+        if u["prompt"] and _unit_approved(version.shots, u) and u["shot_id"] not in done_here
     ]
     shot_ids = [u["shot_id"] for u in units]
     if not shot_ids:

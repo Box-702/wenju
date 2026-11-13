@@ -172,3 +172,38 @@ def test_已终态的任务不会被巡检捡起来(store, fast_poll, manager):
     counts = resume_orphans(store=store, manager=manager, resolve_provider=lambda _n: FakeProvider())
     assert counts == {"attached": 0, "already": 0, "dropped": 0}
     assert store.list_unfinished_video_jobs() == []
+
+
+class FlakyThenOkProvider(FakeProvider):
+    """前 N 次查询抛网络异常，之后正常成功——果园v3 冤案现场复刻：
+    一次瞬断绝不能把厂商侧活着的任务判死。"""
+
+    def __init__(self, *, fail_times: int = 3, **kw) -> None:
+        super().__init__(**kw)
+        self.fail_times = fail_times
+        self._fails = 0
+
+    async def create_job(self, prompt, params=None):
+        return VideoJobResponse(external_task_id="ext_flaky", status="queued")
+
+    async def poll_job(self, external_task_id: str) -> VideoJobStatus:
+        if self._fails < self.fail_times:
+            self._fails += 1
+            raise RuntimeError("")  # 真实案例里 str(e) 是空的，连消息都没有
+        return await FakeProvider.poll_job(self, external_task_id)
+
+
+def test_transient_poll_errors_do_not_fail_job(manager):
+    """查询异常容忍：瞬断重试到成功，任务状态终态是 succeeded 而非 failed。"""
+    seen: list[dict] = []
+    manager.on_complete(lambda job_id, info: seen.append(dict(info)))
+    p = FlakyThenOkProvider(fail_times=3)
+    manager.submit("vjob_flaky", p, "prompt")
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if any(i["status"] in ("succeeded", "failed") for i in seen):
+            break
+        time.sleep(0.02)
+    finals = [i for i in seen if i["status"] in ("succeeded", "failed")]
+    assert finals and finals[-1]["status"] == "succeeded", f"瞬断被误判成死：{finals}"
+    assert finals[-1]["video_url"] == p.url

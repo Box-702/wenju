@@ -25,6 +25,11 @@ log = logging.getLogger(__name__)
 POLL_INTERVAL = 5
 # 最大轮询次数（20分钟 / 5秒 = 240 次；MiniMax 高峰期排队可能超过 10 分钟）
 MAX_POLLS = 240
+# 连续查询异常容忍次数（果园v3 实测：任务提交 32 秒后一次瞬断网络错误，
+# 旧代码零容忍把厂商侧已成功出片的任务判死——冤案且重复计费）。
+# 超过容忍数**不判失败**：留在 generating，让巡检线程下一轮重新接管，
+# 轮询预算（MAX_POLLS）重新计。
+POLL_ERROR_TOLERANCE = 6
 
 
 class VideoJobManager:
@@ -143,7 +148,15 @@ class VideoJobManager:
         """
         for _ in range(MAX_POLLS):
             time.sleep(POLL_INTERVAL)
-            status = loop.run_until_complete(provider.poll_job(external_id))
+            try:
+                status = loop.run_until_complete(provider.poll_job(external_id))
+            except Exception as e:  # noqa: BLE001
+                # 查询出错 ≠ 任务死了。厂商侧任务继续活着，本地零容忍判死是冤案
+                #（果园v3：判死后厂商任务其实 succeeded，钱已烧、片子在 OSS、
+                # 批次整条中断）。先攒容忍度，超了也只退回 generating 等巡检
+                # 重新接管——**永远不要把一次网络抖动写成 failed**。
+                log.warning("任务 %s 查询异常（%s），容忍重试", job_id, e)
+                continue
 
             self._update(
                 job_id,

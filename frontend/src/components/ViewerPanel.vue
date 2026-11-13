@@ -307,9 +307,7 @@ function onSceneDragEnd() {
 
 <style scoped>
 .viewer {
-  background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
+  background: var(--surface);
   display: flex; flex-direction: column; min-height: 0; min-width: 0;
   animation: panel-slide-in 350ms var(--ease) both;
 }

@@ -96,9 +96,7 @@ header {
   position: relative; z-index: 3;
   display: flex; align-items: center; gap: 10px; padding: 8px 14px;
   border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
+  background: var(--surface);
   min-height: var(--header-h);
 }
 h1 {

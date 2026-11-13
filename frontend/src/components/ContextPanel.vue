@@ -390,9 +390,7 @@ watch(() => store.assetRefreshSeq, refresh)
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  background: rgba(255, 255, 255, .03);
-  backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
+  background: var(--surface);
   border-left: 1px solid var(--line);
 }
 

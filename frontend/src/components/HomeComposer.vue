@@ -12,10 +12,6 @@ import { store, sendMessage, loadModelStatus, loadProviders, notify } from '../s
 import { uploadChatImage } from '../api'
 import ComposerCard from './ComposerCard.vue'
 
-const props = defineProps({
-  /** 产出目标：决定发送时给 Agent 的意图前缀 */
-  goal: { type: String, default: 'novel-to-drama' },
-})
 const emit = defineEmits(['pick-library', 'open-skills'])
 
 const text = ref('')
@@ -24,18 +20,14 @@ const card = ref(null)
 const attachedImages = ref([])
 const uploadingCount = ref(0)
 
-const GOALS = [
-  { id: 'novel-to-drama', label: '小说改编' },
-  { id: 'storyboard', label: '分镜设计' },
-  { id: 'production', label: '成片交付' },
-]
-
 // 「+」菜单：只留当前模型里真实存在的东西。
 // 旧模型那套「主体库（支持音色）」「音色库」已删——它们跟「资产库」是同一个面板，
 // 点了也只是打开左栏，属于名不副实的重复入口。
 
+// 2026-11-13 用户指正：旧版发送时把「产出目标」拼成【小说改编】类前缀塞进
+// 消息——污染用户原文、Agent 误读意图（打个「你好」收到「【小说改编】你好」）。
+// 意图本来就该由用户的话决定，前缀整链拆除（GOALS/goal prop 一并删）。
 
-const goalLabel = computed(() => (GOALS.find((g) => g.id === props.goal) || GOALS[0]).label)
 const canSend = computed(() => (!!text.value.trim() || attachedImages.value.some((i) => i.id))
   && !store.streaming && uploadingCount.value === 0)
 
@@ -105,11 +97,9 @@ function send() {
   attachedImages.value.forEach((i) => URL.revokeObjectURL(i.preview))
   text.value = ''
   attachedImages.value = []
-  // 产出目标作为意图前缀，让 Agent 一上来就知道这轮要什么
-  const prefix = goalLabel.value ? `【${goalLabel.value}】` : ''
   const used = refs.value
   refs.value = []
-  sendMessage(prefix + t, imageIds, used)
+  sendMessage(t, imageIds, used)
   // 发送即进对话视图：首页不渲染消息流，不切过去用户会看到「输入了毫无反应」。
   // 对话优先——首页输入框是「开一部新作品的起点」，不是独立模式。
   store.mode = 'workspace'

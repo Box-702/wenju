@@ -605,10 +605,8 @@ function onInput(e) {
   position: relative;
   border-radius: var(--radius-card);
   padding: 14px 14px 12px;
-  background: rgba(255, 255, 255, 0.055);
+  background: var(--surface);
   border: 1px solid var(--line);
-  backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
   box-shadow: var(--shadow-3);
   transition: border-color 0.18s ease, background 0.18s ease;
 }

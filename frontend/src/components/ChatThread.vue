@@ -148,7 +148,6 @@ watch(() => store.messages.length, () => { nearBottom.value = true; toBottom() }
 .jump {
   position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
   z-index: 5; background: var(--panel-solid); border: 1px solid var(--line-strong);
-  backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass);
   box-shadow: var(--shadow-2);
 }
 </style>

@@ -44,9 +44,7 @@ const secs = computed(() => (props.elapsed / 1000).toFixed(1))
   padding: 6px 14px 6px 11px;
   border-radius: var(--radius-full);
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, .045);
-  backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
+  background: var(--surface-2);
   color: var(--muted);
   font-size: 12.5px;
   box-shadow: var(--shadow-1);

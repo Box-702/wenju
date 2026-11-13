@@ -233,10 +233,9 @@ onUnmounted(() => clearTimeout(copiedTimer))
 .cmd-bar {
   display: inline-flex; align-items: baseline; gap: 8px;
   max-width: min(82%, 620px); padding: 10px 15px;
-  background: rgba(255, 255, 255, .08);
+  background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg); border-bottom-right-radius: 5px;
-  backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass);
   box-shadow: var(--shadow-2);
 }
 .cmd-text { font-size: 15px; color: var(--ink); line-height: 1.7; font-weight: 400; white-space: pre-wrap; word-break: break-word; }

@@ -21,26 +21,19 @@ const works = computed(() =>
   }),
 )
 
-/** 产出目标：小说改编 / 分镜设计 / 成片交付 */
-const goal = ref('novel-to-drama')
-
+/** 入口引导（D-47）：点击只把引导语放进输入框——入口是糖，对话是本体。
+    旧版还同时切「产出目标」并在发送时拼【小说改编】前缀，前缀链已整拆
+    （污染用户原文 + Agent 误读意图，见 HomeComposer 注释 2026-11-13）。 */
 function enter(pid) {
   selectProject(pid)
 }
 
-function onGoal(next) {
-  goal.value = next
-}
-
 const composer = ref(null)
 
-/** 入口芯片（D-47）：切换产出目标 + 把引导语放进输入框——入口是糖，对话是本体。 */
 function chip(kind) {
   if (kind === 'novel') {
-    goal.value = 'novel-to-drama'
     composer.value?.setDraft('我想把一部小说改编成短剧，这是原文：')
   } else if (kind === 'prompt') {
-    goal.value = 'storyboard'
     composer.value?.setDraft('按这段成品分镜提示词直接生成视频：\n')
   }
 }
@@ -109,8 +102,6 @@ function formatDate(iso) {
 
       <HomeComposer
         ref="composer"
-        :goal="goal"
-        @goal="onGoal"
         @pick-library="onPickLibrary"
         @open-skills="store.overlay = 'skills'"
       />

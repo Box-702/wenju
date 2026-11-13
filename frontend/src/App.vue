@@ -410,9 +410,7 @@ onUnmounted(() => {
 .pane { min-width: 0; flex: none; }
 .pane-left {
   display: flex; flex-direction: column; overflow: hidden;
-  background: rgba(255, 255, 255, 0.035);
-  backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
+  background: var(--surface);
   border-right: 1px solid var(--line);
 }
 .left-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }

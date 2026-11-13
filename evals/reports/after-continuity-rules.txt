@@ -1,0 +1,91 @@
+模型：deepseek / deepseek-flash（温度 0.0）
+case 数：11｜judge：关
+
+  [FAIL] single_pressure      shots=12  critical=3   warn=6   judge=—
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: c9f67ae4-7075-41d8-8563-e93a211000a5)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 752e5da6-9e45-4f03-9a44-33896decc58d)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+  [FAIL] dialogue_tension     shots=0   critical=0   warn=0   judge=—
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: ab195faa-f083-4bdb-8e94-c3611e05d3dc)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: c57deeac-aa4e-4ac3-883c-ea5bba73a409)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+  [FAIL] contact_action       shots=0   critical=0   warn=0   judge=—
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 4ef7edbe-1243-4b45-8130-95b8a1f79f07)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 433b36aa-7bd8-4782-9685-8c95e319126f)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+  [FAIL] crowd_background     shots=0   critical=0   warn=0   judge=—
+导演拆解失败（scene_001、scene_002）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 86553d1b-5c88-4215-8b92-1ac6198491e0)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+导演拆解失败（scene_001、scene_002）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 6d9c01e6-18f9-4d6b-b706-55b4b4cfdfad)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+  [FAIL] two_scenes_chain     shots=0   critical=0   warn=0   judge=—
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: a5eb6402-7f49-4cf5-81d8-485f93e4a9b2)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 57ecfa93-b634-46cb-b3e3-7296b563c0ba)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+  [FAIL] emotion_flip         shots=0   critical=0   warn=0   judge=—
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 40f94982-34b2-49f2-8b6b-de7648d2289a)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: bfbd416c-9182-43e9-84ec-b2989a283b7b)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+  [FAIL] object_carry         shots=0   critical=0   warn=0   judge=—
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: f87c1807-2fc4-48d9-b1a7-416dfb763fc9)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: f13ac11c-74d4-4346-a659-d045cf873df2)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+  [FAIL] chain_action         shots=0   critical=0   warn=0   judge=—
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 77b27418-e5da-4cab-b653-b5a612ce2d2c)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: abc36a53-7510-4e2d-9b43-a7860f9ae420)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+  [FAIL] night_exterior       shots=0   critical=0   warn=0   judge=—
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 2c50f4db-95d1-4328-955f-4e652eb0f72c)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: b067ba96-cbb4-46f6-88c6-5a64cb7f8c22)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+  [FAIL] slow_threat          shots=0   critical=0   warn=0   judge=—
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 4d1efe36-1670-4217-8a27-11dc15806387)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+导演拆解失败（scene_001）：Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: cca6ed02-c2f8-4169-a474-20a55b9a17db)', 'type': 'insufficient_balance_error', 'param': None, 'code': 'invalid_request_error'}}
+  [FAIL] money_group          shots=0   critical=0   warn=0   judge=—
+
+====================================================================
+提示词质量 eval 报告
+视频方言=minimax  对话模型=deepseek-flash
+====================================================================
+[FAIL] single_pressure      单人压迫戏          shots=12  critical=3   warn=6   judge=—
+      说明：两次运行都出现 critical（首次 3 条 / 复跑 3 条），判为稳定缺陷
+      [critical] DIR-10 @ director: 特写占比 5/12（>40%）：全片怼脸 = 畸变高发 + 观感疲劳
+      [critical] DIR-11 @ director: 固定机位占比 10/12（>75%）：镜头不动 = 摄影机不存在
+      [warn] DPT-15 @ scene_001/shot_scene_001_001: 提示词里同一句出现两遍：「地面湿滑积着雨水与烟头」——视频模型会当成两个连续动作或两次运镜
+      [warn] DPT-15 @ scene_001/shot_scene_001_003: 提示词里同一句出现两遍：「水珠沿玻璃内侧滑落」——视频模型会当成两个连续动作或两次运镜
+      [warn] DPT-15 @ scene_001/shot_scene_001_004: 提示词里同一句出现两遍：「水珠沿玻璃内侧滑落」——视频模型会当成两个连续动作或两次运镜
+      [warn] DPT-15 @ scene_001/shot_scene_001_007: 提示词里同一句出现两遍：「水珠沿玻璃内侧滑落」——视频模型会当成两个连续动作或两次运镜
+      [critical] DPT-04 @ scene_001/shot_scene_001_008: 含否定式描述（没有）：视频模型会把被否定的动作画出来
+      [warn] DPT-15 @ scene_001/shot_scene_001_009: 提示词里同一句出现两遍：「水珠沿玻璃内侧滑落」——视频模型会当成两个连续动作或两次运镜
+      [warn] DPT-15 @ scene_001/shot_scene_001_010: 提示词里同一句出现两遍：「地面湿滑积着雨水与烟头」——视频模型会当成两个连续动作或两次运镜
+[ERR ] dialogue_tension     对峙对话戏          shots=0   critical=0   warn=0   judge=—
+      错误：导演拆解失败：导演工作失败：scene_001 拆解失败
+      说明：两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷
+[ERR ] contact_action       接触动作戏          shots=0   critical=0   warn=0   judge=—
+      错误：导演拆解失败：导演工作失败：scene_001 拆解失败
+      说明：两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷
+[ERR ] crowd_background     公共场合群戏         shots=0   critical=0   warn=0   judge=—
+      错误：导演拆解失败：导演工作失败：scene_001 拆解失败
+      说明：两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷
+[ERR ] two_scenes_chain     两场戏 + 接力       shots=0   critical=0   warn=0   judge=—
+      错误：导演拆解失败：导演工作失败：scene_001、scene_002 拆解失败
+      说明：两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001、scene_002 拆解失败），判为稳定缺陷
+[ERR ] emotion_flip         情绪骤变           shots=0   critical=0   warn=0   judge=—
+      错误：导演拆解失败：导演工作失败：scene_001 拆解失败
+      说明：两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷
+[ERR ] object_carry         物件承担戏剧         shots=0   critical=0   warn=0   judge=—
+      错误：导演拆解失败：导演工作失败：scene_001 拆解失败
+      说明：两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷
+[ERR ] chain_action         连续动作链          shots=0   critical=0   warn=0   judge=—
+      错误：导演拆解失败：导演工作失败：scene_001 拆解失败
+      说明：两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷
+[ERR ] night_exterior       室外夜景           shots=0   critical=0   warn=0   judge=—
+      错误：导演拆解失败：导演工作失败：scene_001 拆解失败
+      说明：两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷
+[ERR ] slow_threat          慢节奏威胁          shots=0   critical=0   warn=0   judge=—
+      错误：导演拆解失败：导演工作失败：scene_001 拆解失败
+      说明：两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷
+[ERR ] money_group          排钱多机位戏         shots=0   critical=0   warn=0   judge=—
+      错误：导演拆解失败：导演工作失败：scene_001 拆解失败
+      说明：两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷
+--------------------------------------------------------------------
+确定性层：critical=3  warn=6
+judge 平均分：（未运行）
+按规则统计：
+  DPT-15: 6
+  DIR-10: 1
+  DIR-11: 1
+  DPT-04: 1
+结论：未通过（存在 critical 或 case 失败）
+
+报告已写入 evals/reports/after-continuity-rules.json

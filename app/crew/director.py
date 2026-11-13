@@ -368,6 +368,8 @@ class DirectorAgent(CrewAgent):
     name = "director"
     label = "导演"
     emoji = "🎬"
+    # 最近一次拆解的底层死因（网络/欠费等），随 summary 带出给 evals 分类用。
+    _last_error: str | None = None
 
     def run(
         self,
@@ -423,9 +425,10 @@ class DirectorAgent(CrewAgent):
                     critique=_critique_for(batch, critique),
                 )
                 if bds is None:
+                    why = f"（{self._last_error}）" if self._last_error else ""
                     return CrewTaskResult(
                         success=False,
-                        summary=f"导演工作失败：{'、'.join(sc.id for sc in batch)} 拆解失败",
+                        summary=f"导演工作失败：{'、'.join(sc.id for sc in batch)} 拆解失败{why}",
                         errors=critique,
                     )
                 breakdowns.extend(bds)
@@ -487,7 +490,12 @@ class DirectorAgent(CrewAgent):
                 raw, default_pacing=default_pacing, start_order=start_order,
             )
         except Exception as e:  # noqa: BLE001
+            # 死因必须带出去（2026-11-13 eval 误判复盘）：402 欠费被吞成
+            # 「拆解失败」后，evals 把基础设施故障判成规则稳定缺陷——
+            # 排查方向整个被带偏。上层 summary 拼这条原文，_classify_block
+            # 的 marker（402/insufficient balance）才够得着。
             log.warning("导演拆解失败（%s）：%s", "、".join(sc.id for sc in targets), e)
+            self._last_error = f"{type(e).__name__}: {e}"[:200]
             return None, start_order
 
         # 截断救援后可能少几个场景：把没拆出来的单独补拆（一次一场，输出够短），

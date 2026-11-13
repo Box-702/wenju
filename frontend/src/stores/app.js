@@ -1096,6 +1096,25 @@ export async function startVideoBatch() {
   }
 }
 
+/** 批准卡上的「出片」按钮专用：不依赖本地镜头缓存（卡片出现时右栏可能还没加载），
+ *  服务端 generate_batch 本来就只投「已批准且未出片」的单元，没有可投的会 400 说清楚。
+ *  返回 {ok, batch}，调用方（卡片）自己渲染进度态。 */
+export async function submitApprovedBatch() {
+  if (!store.pid) return { ok: false, error: '没有选定作品' }
+  try {
+    const b = await api(`/projects/${store.pid}/video/generate-batch`, 'POST', {
+      mode: store.videoMode,
+      resolution: store.videoResolution || null,
+      aspect_ratio: store.videoAspect || null,
+    })
+    store.videoBatch = b
+    ensureBatchPolling()
+    return { ok: true, batch: b }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+}
+
 /** 查询最新批次进度。 */
 export async function pollVideoBatch() {
   if (!store.pid) return

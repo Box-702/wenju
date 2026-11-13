@@ -108,7 +108,7 @@ def apply_approval(store: Store, project_id: str, version_id: str, shot_ids: lis
     names = "、".join(s["id"] for s in targets)
     return {
         "ok": True,
-        "message": f"已批准 {len(targets)} 个镜头的提示词（{names}），新镜头版本 {new_version.id}。现在可以说「出片」来提交视频生成。",
+        "message": f"已批准 {len(targets)} 个镜头的提示词（{names}），新镜头版本 {new_version.id}。批准卡片上已长出「出片」按钮，用户点一下就能提交视频生成——不用他打字。",
         "approved_count": len(targets),
         "version_id": new_version.id,
     }

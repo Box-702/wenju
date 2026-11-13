@@ -1,0 +1,240 @@
+{
+  "provider": "minimax",
+  "model": "deepseek-flash",
+  "cases": 11,
+  "critical_total": 3,
+  "warn_total": 6,
+  "blocked_total": 0,
+  "failed_total": 10,
+  "judge_average": null,
+  "passed": false,
+  "by_rule": {
+    "DPT-15": 6,
+    "DIR-10": 1,
+    "DIR-11": 1,
+    "DPT-04": 1
+  },
+  "avg_dims": {},
+  "results": [
+    {
+      "case": "single_pressure",
+      "name": "单人压迫戏",
+      "ok": true,
+      "blocked": false,
+      "error": "",
+      "note": "两次运行都出现 critical（首次 3 条 / 复跑 3 条），判为稳定缺陷",
+      "shots": 12,
+      "critical": 3,
+      "warn": 6,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [
+        {
+          "rule": "DIR-10",
+          "severity": "critical",
+          "where": "director",
+          "message": "特写占比 5/12（>40%）：全片怼脸 = 畸变高发 + 观感疲劳"
+        },
+        {
+          "rule": "DIR-11",
+          "severity": "critical",
+          "where": "director",
+          "message": "固定机位占比 10/12（>75%）：镜头不动 = 摄影机不存在"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_001",
+          "message": "提示词里同一句出现两遍：「地面湿滑积着雨水与烟头」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_003",
+          "message": "提示词里同一句出现两遍：「水珠沿玻璃内侧滑落」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_004",
+          "message": "提示词里同一句出现两遍：「水珠沿玻璃内侧滑落」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_007",
+          "message": "提示词里同一句出现两遍：「水珠沿玻璃内侧滑落」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-04",
+          "severity": "critical",
+          "where": "scene_001/shot_scene_001_008",
+          "message": "含否定式描述（没有）：视频模型会把被否定的动作画出来"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_009",
+          "message": "提示词里同一句出现两遍：「水珠沿玻璃内侧滑落」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_010",
+          "message": "提示词里同一句出现两遍：「地面湿滑积着雨水与烟头」——视频模型会当成两个连续动作或两次运镜"
+        }
+      ],
+      "judge": []
+    },
+    {
+      "case": "dialogue_tension",
+      "name": "对峙对话戏",
+      "ok": false,
+      "blocked": false,
+      "error": "导演拆解失败：导演工作失败：scene_001 拆解失败",
+      "note": "两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷",
+      "shots": 0,
+      "critical": 0,
+      "warn": 0,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [],
+      "judge": []
+    },
+    {
+      "case": "contact_action",
+      "name": "接触动作戏",
+      "ok": false,
+      "blocked": false,
+      "error": "导演拆解失败：导演工作失败：scene_001 拆解失败",
+      "note": "两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷",
+      "shots": 0,
+      "critical": 0,
+      "warn": 0,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [],
+      "judge": []
+    },
+    {
+      "case": "crowd_background",
+      "name": "公共场合群戏",
+      "ok": false,
+      "blocked": false,
+      "error": "导演拆解失败：导演工作失败：scene_001 拆解失败",
+      "note": "两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷",
+      "shots": 0,
+      "critical": 0,
+      "warn": 0,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [],
+      "judge": []
+    },
+    {
+      "case": "two_scenes_chain",
+      "name": "两场戏 + 接力",
+      "ok": false,
+      "blocked": false,
+      "error": "导演拆解失败：导演工作失败：scene_001、scene_002 拆解失败",
+      "note": "两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001、scene_002 拆解失败），判为稳定缺陷",
+      "shots": 0,
+      "critical": 0,
+      "warn": 0,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [],
+      "judge": []
+    },
+    {
+      "case": "emotion_flip",
+      "name": "情绪骤变",
+      "ok": false,
+      "blocked": false,
+      "error": "导演拆解失败：导演工作失败：scene_001 拆解失败",
+      "note": "两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷",
+      "shots": 0,
+      "critical": 0,
+      "warn": 0,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [],
+      "judge": []
+    },
+    {
+      "case": "object_carry",
+      "name": "物件承担戏剧",
+      "ok": false,
+      "blocked": false,
+      "error": "导演拆解失败：导演工作失败：scene_001 拆解失败",
+      "note": "两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷",
+      "shots": 0,
+      "critical": 0,
+      "warn": 0,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [],
+      "judge": []
+    },
+    {
+      "case": "chain_action",
+      "name": "连续动作链",
+      "ok": false,
+      "blocked": false,
+      "error": "导演拆解失败：导演工作失败：scene_001 拆解失败",
+      "note": "两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷",
+      "shots": 0,
+      "critical": 0,
+      "warn": 0,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [],
+      "judge": []
+    },
+    {
+      "case": "night_exterior",
+      "name": "室外夜景",
+      "ok": false,
+      "blocked": false,
+      "error": "导演拆解失败：导演工作失败：scene_001 拆解失败",
+      "note": "两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷",
+      "shots": 0,
+      "critical": 0,
+      "warn": 0,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [],
+      "judge": []
+    },
+    {
+      "case": "slow_threat",
+      "name": "慢节奏威胁",
+      "ok": false,
+      "blocked": false,
+      "error": "导演拆解失败：导演工作失败：scene_001 拆解失败",
+      "note": "两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷",
+      "shots": 0,
+      "critical": 0,
+      "warn": 0,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [],
+      "judge": []
+    },
+    {
+      "case": "money_group",
+      "name": "排钱多机位戏",
+      "ok": false,
+      "blocked": false,
+      "error": "导演拆解失败：导演工作失败：scene_001 拆解失败",
+      "note": "两次运行链路都失败（首次：导演拆解失败：导演工作失败：scene_001 拆解失败），判为稳定缺陷",
+      "shots": 0,
+      "critical": 0,
+      "warn": 0,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [],
+      "judge": []
+    }
+  ]
+}

@@ -611,9 +611,11 @@ function onInput(e) {
   transition: border-color 0.18s ease, background 0.18s ease;
 }
 
+/* 聚焦态跟着厚实化走：旧版是半透明白纱（聚焦瞬间极光透出来，颜色跳变），
+   现在用亮一档的实面 --surface-2，只靠边框提亮表达「正在输入」。 */
 .cc-card:focus-within {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.075);
+  border-color: var(--line-strong);
+  background: var(--surface-2);
 }
 
 .cc-top { display: flex; align-items: flex-start; gap: 12px; }

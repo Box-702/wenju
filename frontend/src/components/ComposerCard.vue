@@ -854,19 +854,13 @@ function onInput(e) {
               border-color 150ms var(--ease), box-shadow 150ms var(--ease), filter 150ms var(--ease);
 }
 .cc-send:not(:disabled) {
-  background: var(--accent-grad);
+  background: #fff;
   border-color: transparent;
-  color: var(--on-accent);
+  color: #0a0a0f;
   cursor: pointer;
-  box-shadow: 0 0 0 4px rgba(74, 222, 128, .14),
-              0 8px 22px rgba(74, 222, 128, .42);
 }
-.cc-send:not(:disabled):hover {
-  filter: brightness(1.06);
-  box-shadow: 0 0 0 5px rgba(74, 222, 128, .2),
-              0 10px 26px rgba(74, 222, 128, .55);
-}
-.cc-send:not(:disabled):active { filter: brightness(.97); }
+.cc-send:not(:disabled):hover { background: rgba(255, 255, 255, 0.86); }
+.cc-send:not(:disabled):active { background: rgba(255, 255, 255, 0.78); }
 .cc-send .app-ic { width: 16px; height: 16px; transform: translateY(-0.5px); }
 
 .ccpop-enter-active,

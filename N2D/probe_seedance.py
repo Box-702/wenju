@@ -35,9 +35,11 @@ def main() -> int:
     bootstrap_env()
     import os
 
-    key = args.key or os.environ.get("ARK_API_KEY", "")
+    # 与适配器同口径：ARK_API_KEY（官方名）> SEEDANCE_API_KEY（用户 .env 实际名）
+    key = (args.key or os.environ.get("ARK_API_KEY", "")
+           or os.environ.get("SEEDANCE_API_KEY", ""))
     if not key:
-        print("!! 没有 ARK_API_KEY（.env 或环境变量），探针终止")
+        print("!! 没有 ARK_API_KEY / SEEDANCE_API_KEY（.env 或环境变量），探针终止")
         return 1
 
     from app.video import get_registry
@@ -53,11 +55,11 @@ def main() -> int:
     print(f"provider={prov.name} model={prov.model} base={prov.base_url}")
 
     async def run() -> int:
-        # 1) 创建：最短最便宜的一发
+        # 1) 创建：最短的一发，720p（用户指定清晰度口径；2.0 系列 duration 下限 4s）
         try:
             resp = await prov.create_job(
-                "一个水墨风格的少年推开木门走进酒店，镜头缓慢推近，竖屏",
-                VideoJobParams(duration_sec=4, resolution="480p", aspect_ratio="9:16"),
+                "一个水墨风格的少年推开木门走进酒店，镜头缓慢推近，横屏",
+                VideoJobParams(duration_sec=4, resolution="720p", aspect_ratio="16:9"),
             )
         except Exception as e:  # noqa: BLE001
             print(f"!! 创建失败：{e}")

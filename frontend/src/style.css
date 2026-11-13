@@ -158,13 +158,13 @@ button {
   font-weight: 500; cursor: pointer; font-family: inherit;
   transition: background-color 130ms var(--ease), border-color 130ms var(--ease), color 130ms var(--ease), opacity 130ms var(--ease);
 }
-/* 主行动：绿色渐变（全站唯一的大面积亮色） */
+/* 主行动：白色实底（2026-11-13 用户指正：绿色发光「太花哨」，按钮要
+   白/黑清晰简洁）。全站唯一亮按钮 = 白底黑字，无光晕。 */
 button.primary {
-  background: var(--accent-grad); color: var(--on-accent); border-color: transparent;
-  box-shadow: 0 8px 24px rgba(34, 197, 94, .26);
+  background: #fff; color: #0a0a0f; border-color: transparent;
 }
-button.primary:hover:not(:disabled) { filter: brightness(1.06); }
-button.primary:active:not(:disabled) { filter: brightness(.97); }
+button.primary:hover:not(:disabled) { background: rgba(255, 255, 255, 0.86); }
+button.primary:active:not(:disabled) { background: rgba(255, 255, 255, 0.78); }
 /* 基础层 hover/active 用 :where() 压到零特异性：
    只对「没有自己背景样式的裸按钮」生效——任何组件只要自定义了背景，
    就自动免疫米白悬停填充（否则卡片类按钮悬停会被染成米白、文字反色不可读） */
@@ -178,7 +178,8 @@ button.ghost { background: transparent; border-color: var(--line); color: var(--
 button.ghost:hover:not(:disabled) { background: rgba(255, 255, 255, .07); border-color: var(--line-strong); color: var(--ink); }
 button.ghost:active:not(:disabled) { background: rgba(255, 255, 255, .11); }
 button.small { padding: 3px 8px; font-size: 11.5px; }
-button.dashed { border-style: dashed; }
+/* 虚线按钮退役（用户指正）：dashed 类保留兼容，样式改正常实线 */
+button.dashed { border-style: solid; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .mono { font-family: var(--mono); font-size: 11.5px; letter-spacing: -0.2px; }
@@ -475,16 +476,16 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 .menu-item.on { color: var(--ink); background: rgba(255, 255, 255, .08); }
 
 /* ---------- 主行动 ---------- */
+/* 与 button.primary 同一口径：白底黑字，无光晕（2026-11-13 去花哨） */
 .cta {
-  background: var(--accent-grad); color: var(--on-accent);
+  background: #fff; color: #0a0a0f;
   border: 1px solid transparent; border-radius: var(--radius-md);
   font-weight: 600; letter-spacing: .03em;
-  box-shadow: 0 8px 24px rgba(34, 197, 94, .28);
-  transition: filter 130ms var(--ease), transform 130ms var(--ease), opacity 130ms var(--ease);
+  transition: background 130ms var(--ease), transform 130ms var(--ease), opacity 130ms var(--ease);
 }
-.cta:hover:not(:disabled) { filter: brightness(1.06); }
-.cta:active:not(:disabled) { transform: translateY(1px); filter: brightness(.97); }
-.cta:disabled { opacity: .42; cursor: not-allowed; box-shadow: none; }
+.cta:hover:not(:disabled) { background: rgba(255, 255, 255, 0.86); }
+.cta:active:not(:disabled) { transform: translateY(1px); background: rgba(255, 255, 255, 0.78); }
+.cta:disabled { opacity: .42; cursor: not-allowed; }
 
 /* =====================================================================
    浮层外壳 —— 弹窗 / 抽屉（全站统一一套）

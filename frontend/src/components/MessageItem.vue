@@ -67,6 +67,8 @@ const visibleSteps = computed(() => {
   return rows.slice(-STEP_COLLAPSE)
 })
 const hiddenCount = computed(() => Math.max(0, mergedSteps.value.length - STEP_COLLAPSE))
+/** 有没有真可展开的内容：折叠态下仍有被藏起来的步骤才允许展开。 */
+const canToggleSteps = computed(() => hiddenCount.value > 0)
 
 // ---- 步骤行：一次工具调用 = 一行 ----
 // 后端发的是 tool_call / tool_result 两条事件；这里配对成一行，
@@ -180,14 +182,18 @@ onUnmounted(() => clearTimeout(copiedTimer))
 
       <!-- 工作步骤面板 -->
       <div v-if="stepEvents.length" class="steps-panel">
-        <div class="steps-header" @click="stepsExpanded = !stepsExpanded">
+        <div class="steps-header" @click="canToggleSteps && (stepsExpanded = !stepsExpanded)"
+             :class="{ togglable: canToggleSteps }">
           <span class="steps-icon">{{ message.streaming ? '· · ·' : '✓' }}</span>
           <span class="steps-title">
             {{ message.streaming ? '正在处理…' : `已完成 ${mergedSteps.length} 步` }}
           </span>
-          <span class="steps-toggle">{{ stepsExpanded ? '收起' : '展开' }}</span>
+          <!-- 展开只在真有隐藏步骤时出现（2026-11-13 修假按钮）：
+               旧版判定混用了 stepEvents（原始事件，一调用两条）和 mergedSteps
+               （合并行），1-2 步的消息体永远展开、点「展开」只换字不动内容。 -->
+          <span v-if="canToggleSteps" class="steps-toggle">{{ stepsExpanded ? '收起' : '展开' }}</span>
         </div>
-        <div v-if="stepsExpanded || stepEvents.length <= STEP_COLLAPSE" class="steps-body">
+        <div v-if="stepsExpanded || mergedSteps.length <= STEP_COLLAPSE" class="steps-body">
           <div v-if="hiddenCount > 0 && !stepsExpanded" class="steps-more" @click="stepsExpanded = true">
             还有 {{ hiddenCount }} 个步骤…
           </div>
@@ -255,8 +261,10 @@ onUnmounted(() => clearTimeout(copiedTimer))
 }
 .steps-header {
   display: flex; align-items: center; gap: 8px; padding: 2px 0;
-  cursor: pointer; user-select: none; font-size: 11.5px;
+  user-select: none; font-size: 11.5px;
 }
+/* 没得展开就不给手型——别做出「看着能点」的假 affordance */
+.steps-header.togglable { cursor: pointer; }
 .steps-header:hover { color: var(--ink); }
 .steps-icon { flex: none; }
 .steps-title { flex: 1; color: var(--dim); font-weight: 400; }

@@ -56,43 +56,16 @@ class Settings(BaseSettings):
     checkpointer: str = Field(default="memory", alias="CHECKPOINTER")  # memory | postgres
     checkpoint_dsn: str = Field(default="", alias="CHECKPOINT_DSN")
 
-    # ---------- 对话模型（OpenAI 兼容 / DeepSeek / 智谱） ----------
-    # 默认优先级：OPENAI_* > ZHIPUAI_* > DEEPSEEK_*（见 app/llm/registry.py）。
-    # 想换顺序或指定别的厂商，设 CHAT_PROVIDER=ollama/moonshot/qwen 等即可。
-    chat_provider: str = Field(default="", alias="CHAT_PROVIDER")
-    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
-    openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
-    openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
-    zhipuai_api_key: str = Field(default="", alias="ZHIPUAI_API_KEY")
-    zhipuai_base_url: str = Field(default="https://open.bigmodel.cn/api/paas/v4/", alias="ZHIPUAI_BASE_URL")
-    zhipuai_model: str = Field(default="GLM-5.3-Flash", alias="ZHIPUAI_MODEL_NAME")
-    deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
-    deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
-    deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL_NAME")
+    # ---------- 模型配置：DB/BYOK 唯一权威（D-48） ----------
+    # 对话/视觉/生图/配音/TTS 的厂商、key、模型名一律存在数据库
+    # （api_providers / model_preferences，即「设置 → 模型」界面配的那份）。
+    # .env 里的 *_API_KEY / CHAT_PROVIDER / *_MODEL 从 D-48 起**不再被读取**，
+    # 老安装的 key 由 llm/seed.py 在启动时一次性搬进 DB。
+    # env 仅存两个豁免（都不是配置入口）：
+    #   - DEEPSEEK_THINKING：思考链行为开关（下面这个字段）；
+    #   - MINIMAX_API_KEY_FALLBACKS：备用 key 故障转移安全网（app/keys.py 直读
+    #     os.environ，主 key 永远以 DB 为准）。
     deepseek_thinking: bool = Field(default=False, alias="DEEPSEEK_THINKING")
-    # MiniMax：一把 key 打通对话 / 视频（H3）/ 配音（T2A）。
-    # 注意：其 /chat/completions 不支持 response_format=json_object，
-    # 结构化输出走 client.LLM.structured() 的降级路径。
-    minimax_api_key: str = Field(default="", alias="MINIMAX_API_KEY")
-    # 备用 key（逗号/分号分隔）：主 key 欠费或失效时自动顶上，
-    # 轮换逻辑见 app/keys.py；顺序即优先级，冷却时长由 KEY_COOLDOWN_SEC 控制。
-    minimax_api_keys: str = Field(default="", alias="MINIMAX_API_KEY_FALLBACKS")
-    minimax_base_url: str = Field(default="https://api.minimax.cn/v1", alias="MINIMAX_BASE_URL")
-    minimax_model: str = Field(default="MiniMax-Text-01", alias="MINIMAX_MODEL_NAME")
-    # 本地模型（无 key，仅当 CHAT_PROVIDER=ollama 时启用）。
-    ollama_base_url: str = Field(default="http://127.0.0.1:11434/v1", alias="OLLAMA_BASE_URL")
-    ollama_model: str = Field(default="qwen2.5:7b", alias="OLLAMA_MODEL")
-
-    # ---------- 视觉（定妆图质检）与文生图（参考资产） ----------
-    # 留空则自动复用支持该能力的厂商 key（见 app/llm/registry.py 的 resolve_vision/resolve_image）。
-    vision_provider: str = Field(default="", alias="VISION_PROVIDER")
-    vision_api_key: str = Field(default="", alias="VISION_API_KEY")
-    vision_base_url: str = Field(default="", alias="VISION_BASE_URL")
-    vision_model: str = Field(default="", alias="VISION_MODEL")
-    image_provider: str = Field(default="", alias="IMAGE_PROVIDER")
-    image_api_key: str = Field(default="", alias="IMAGE_API_KEY")
-    image_base_url: str = Field(default="", alias="IMAGE_BASE_URL")
-    image_model: str = Field(default="", alias="IMAGE_MODEL")
 
     # ---------- 可选第三方服务 ----------
     # LangSmith 监控：开启后 LangGraph / LLM 运行轨迹自动上报。
@@ -131,11 +104,7 @@ class Settings(BaseSettings):
 
     # ---------- 配音（TTS） ----------
     # 视频模型没有「文字→语音」通路，台词语音由 TTS 合成后按时间轴混入成片。
-    # key 留空时回落 MINIMAX_API_KEY（TTS 与视频同厂商，零配置可用）。
-    tts_provider: str = Field(default="minimax", alias="TTS_PROVIDER")
-    tts_api_key: str = Field(default="", alias="TTS_API_KEY")
-    tts_base_url: str = Field(default="", alias="TTS_BASE_URL")
-    tts_model: str = Field(default="speech-02-hd", alias="TTS_MODEL")
+    # 厂商/key/模型一律走「设置 → 模型」的 DB 配置（D-48）。
     # 台词混入时的环境音音量（0-1），防止人声被环境音盖住。
     dubbing_bg_volume: float = Field(default=0.25, alias="DUBBING_BG_VOLUME")
 
@@ -173,17 +142,7 @@ class Settings(BaseSettings):
                 v = v[1:-1].strip()
         return v
 
-    @property
-    def model_available(self) -> bool:
-        """是否配置了有效的对话模型 key。"""
-        return bool(self.openai_api_key.strip() or self.zhipuai_api_key.strip() or self.deepseek_api_key.strip())
 
-    @property
-    def minimax_key_list(self) -> list[str]:
-        """MiniMax 的 key 列表（主 key + 备用 key，去重保序）。"""
-        from .keys import merge_keys
-
-        return merge_keys(self.minimax_api_key, self.minimax_api_keys)
 
     @property
     def effective_checkpoint_dsn(self) -> str:

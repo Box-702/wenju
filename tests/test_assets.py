@@ -179,11 +179,9 @@ def test_resolve_chat_ui_preference_beats_chat_provider(store):
     assert cfg.source == "db"
 
 
-def test_resolve_chat_clears_back_to_env(store):
+def test_resolve_chat_without_db_is_unconfigured(store):
+    """D-48：清掉 UI 偏好且 DB 无行 = 未配置（env 兜底链已整拆）。"""
     from app.llm import resolve_chat
 
-    # 无 UI 偏好时回落 env 链：zhipu 无 key → deepseek 命中
     cfg = resolve_chat(_settings(DEEPSEEK_API_KEY="ds", CHAT_PROVIDER="deepseek"), store)
-    assert cfg is not None
-    assert cfg.provider == "deepseek"
-    assert cfg.source == "env"
+    assert cfg is None

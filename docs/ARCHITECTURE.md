@@ -183,19 +183,22 @@ ProviderSpec(
 > 协议客户端，而不是加一条 `ProviderSpec`。这是有意的取舍——主流可选厂商里它不占多数，
 > 且引入后要多维护一套 SDK 依赖。
 
-### 2.3 配置解析优先级（`registry.py`，D-41 起 DB 权威）
+### 2.3 配置解析优先级（`registry.py`，D-48 起 DB/BYOK 唯一权威）
 
 ```
-数据库 api_providers / model_preferences（前端「设置 → 模型」里配的）——唯一权威
+数据库 api_providers / model_preferences（前端「设置 → 模型」里 BYOK 配的）——唯一权威
    ↓ DB 该模态为空
-.env 兜底链（显式指定 > 厂商优先级链），保住「克隆下来就能跑」
+未配置（None）→ 界面引导贴 key；不再有 .env 回落
 ```
 
-- **DB 优先是 BYOK 的应有之义**（D-41）：以前 env 压过 DB，用户在 UI 选的模型会被
-  `.env` 悄悄盖掉（实测 UI 选 v4-pro、实际跑 env 的 flash）。现在界面说话算数；
-  env 降级为「空库兜底」，只在新装/删库时起作用。
-- **首次启动自动入库**（`app/llm/seed.py`，lifespan 与 CLI 都挂）：把 .env 现有 key
-  幂等搬进 DB——只补缺不覆盖、不设偏好、空 env 不动空库，跑一百遍不改坏用户数据。
+- **env 彻底退出模型选择**（D-48，取代 D-41 的「空库兜底」）：`CHAT_PROVIDER` /
+  `*_API_KEY` / `*_MODEL` 不再被 resolver 读取。老安装的 key 由 `llm/seed.py`
+  启动时一次性搬进 DB——只补缺不覆盖、不设偏好、空 env 不动空库，跑一百遍不改坏用户数据。
+- env 仅存两个豁免，都不是配置入口：`MINIMAX_API_KEY_FALLBACKS`（备用 key
+  故障转移安全网，`app/keys.py` 直读）、`DEEPSEEK_THINKING`（行为开关）。
+- **厂商名与模型名严格分离**（D-48 同轮）：provider 的 label 只写厂商
+  （MiniMax / 智谱 / 火山方舟），模型名（MiniMax-H3-Image、cogview-4…）
+  只出现在厂商的模型清单里——设置页与对话框面板三行都显示厂商，点进去选模型。
   备用 key 轮换（`app/keys.py`）继续读 os.environ，那是故障转移安全网不是配置入口。
 - **三个能力维度各自解析，互不干扰**：对话用 DeepSeek、质检用智谱视觉、文生图用 CogView 是允许的。
 - 视觉未配置时，自动复用一个「自带视觉能力且 key 可用」的厂商，并把模型名换成该厂商的视觉模型。

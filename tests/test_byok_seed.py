@@ -37,26 +37,24 @@ def _settings(**overrides) -> Settings:
 # ---------- 优先级：DB 压过 env ----------
 
 
-def test_db_row_beats_env_chain(store):
-    """DB 里有对话厂商时，即使 env 也有 key，也必须用 DB 的（UI 选择优先）。"""
+def test_db_row_beats_env_leftovers(store):
+    """DB 里有对话厂商时，env 残留 key 完全不参与（D-48：env 链已删）。"""
     store.create_api_provider(
         kind="llm", name="deepseek", label="DeepSeek",
         base_url="https://api.deepseek.com", api_key="db-key",
         config={"model": "deepseek-v4-pro"},
     )
-    # env 指向另一家（openai），若优先级没翻转就会选到 openai
+    # env 里还留着另一家的 key（老配置残留），resolver 必须无视它
     cfg = resolve_chat(_settings(OPENAI_API_KEY="env-oa", CHAT_PROVIDER="openai"), store)
     assert cfg.provider == "deepseek"
     assert cfg.model == "deepseek-v4-pro"
     assert cfg.source == "db"
 
 
-def test_empty_store_falls_back_to_env(store):
-    """DB 空 → env 兜底（保持'克隆下来就能跑'，也保持无 store 的既有行为）。"""
+def test_empty_store_is_unconfigured(store):
+    """D-48：DB 空 = 未配置——env 兜底链已删，界面引导用户贴 key。"""
     cfg = resolve_chat(_settings(DEEPSEEK_API_KEY="env-ds", CHAT_PROVIDER="deepseek"), store)
-    assert cfg is not None
-    assert cfg.provider == "deepseek"
-    assert cfg.source == "env"
+    assert cfg is None
 
 
 def test_no_store_no_env_returns_none(store):
@@ -66,9 +64,13 @@ def test_no_store_no_env_returns_none(store):
 # ---------- 种子：只补缺、不覆盖、幂等 ----------
 
 
-def test_seed_is_idempotent(store):
-    """跑两遍：第二遍什么都不做（不产生重复行）。"""
-    s = _settings(DEEPSEEK_API_KEY="ds", MINIMAX_API_KEY="mm", ZHIPUAI_API_KEY="zp")
+def test_seed_is_idempotent(store, monkeypatch):
+    """跑两遍：第二遍什么都不做（不产生重复行）。
+    D-48：seed 读 os.environ（一次性迁移语义），测试要显式设环境而不是 Settings。"""
+    for var, val in (("DEEPSEEK_API_KEY", "ds"), ("MINIMAX_API_KEY", "mm"),
+                     ("ZHIPUAI_API_KEY", "zp")):
+        monkeypatch.setenv(var, val)
+    s = _settings()
     first = seed_keys_from_env(s, store)
     assert first, "首次应补齐 env 里的配置"
     second = seed_keys_from_env(s, store)
@@ -78,39 +80,46 @@ def test_seed_is_idempotent(store):
     assert len(rows) == len(set(rows)), f"出现重复行：{rows}"
 
 
-def test_seed_never_overwrites_existing_key(store):
+def test_seed_never_overwrites_existing_key(store, monkeypatch):
     """已有带 key 的行是用户在 UI 定的，种子绝不覆盖。"""
     store.create_api_provider(
         kind="llm", name="deepseek", label="DeepSeek",
         base_url="https://api.deepseek.com", api_key="user-key",
         config={"model": "deepseek-v4-pro"},
     )
-    seed_keys_from_env(_settings(DEEPSEEK_API_KEY="env-key"), store)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "env-key")
+    seed_keys_from_env(_settings(), store)
     row = next(r for r in store.list_api_providers(kind="llm") if r.name == "deepseek")
     assert row.api_key == "user-key", "种子把用户 key 覆盖成 env 的了"
 
 
-def test_seed_does_not_set_preference(store):
+def test_seed_does_not_set_preference(store, monkeypatch):
     """种子不越俎代庖设默认偏好——多行时由用户在 UI 选，设偏好会盖掉选择。"""
-    seed_keys_from_env(_settings(DEEPSEEK_API_KEY="ds", MINIMAX_API_KEY="mm"), store)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds")
+    monkeypatch.setenv("MINIMAX_API_KEY", "mm")
+    seed_keys_from_env(_settings(), store)
     assert store.get_model_preference("chat") is None
 
 
 def test_seed_skips_when_env_has_nothing(store, monkeypatch):
-    """空 env（无 key）→ 什么都不种，空库保持空库。
-
-    注意 seed 的 video 分支走 minimax_keys() 读 os.environ（备用 key 轮换的
-    既定设计），所以这里必须显式清掉进程环境里的 MINIMAX_* 才算真"空 env"。
-    """
-    for var in ("MINIMAX_API_KEY", "MINIMAX_API_KEYS", "MINIMAX_API_KEY_FALLBACKS"):
+    """空 env（无 key）→ 什么都不种，空库保持空库。"""
+    for var in ("MINIMAX_API_KEY", "MINIMAX_API_KEYS", "MINIMAX_API_KEY_FALLBACKS",
+                "OPENAI_API_KEY", "ZHIPUAI_API_KEY", "DEEPSEEK_API_KEY",
+                "IMAGE_API_KEY", "TTS_API_KEY"):
         monkeypatch.delenv(var, raising=False)
     acts = seed_keys_from_env(_settings(), store)
     assert acts == []
     assert store.list_api_providers() == []
 
 
-def test_seed_then_chat_is_db_authoritative(store):
-    """端到端：种子入库后，chat 从 db 解析（不再是 env）。"""
-    seed_keys_from_env(_settings(DEEPSEEK_API_KEY="ds", CHAT_PROVIDER="deepseek"), store)
-    cfg = resolve_chat(_settings(DEEPSEEK_API_KEY="ds", CHAT_PROVIDER="deepseek"), store)
-    assert cfg.source == "db"
+def test_seed_then_chat_is_db_authoritative(store, monkeypatch):
+    """端到端：老安装的 env key 经迁移入库后，chat 从 db 解析。
+
+    清掉真实 .env 可能被 bootstrap_env 带进 os.environ 的其他厂商 key——
+    seed 会把它们全搬进 DB，行顺序（新行优先）会让断言漂到别的厂商上。"""
+    for var in ("OPENAI_API_KEY", "ZHIPUAI_API_KEY", "MINIMAX_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds")
+    seed_keys_from_env(_settings(), store)
+    cfg = resolve_chat(_settings(), store)
+    assert cfg is not None and cfg.source == "db" and cfg.provider == "deepseek"

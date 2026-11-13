@@ -415,10 +415,10 @@
             <h4>任务模型偏好</h4>
             <div class="active-line">
               对话任务：<strong>{{ chatPrefLabel }}</strong>
-              <span class="active-src">{{ chatPref ? '界面指定' : '跟随 .env' }}</span>
+              <span class="active-src">{{ chatPref ? '界面指定' : '未指定' }}</span>
             </div>
             <p class="pref-hint">
-              在「对话模型」里选中厂商后点「设为默认」即可切换；切回 .env 默认用「恢复 .env 默认」。
+              在「对话模型」里选中厂商后点「设为默认」即可切换。模型配置只走这里（自带 Key），不读环境变量。
             </p>
           </div>
         </div>
@@ -760,7 +760,7 @@ const llmFormError = ref('')
 const savingLlm = ref(false)
 
 const chatPrefLabel = computed(() => {
-  if (!chatPref.value) return '跟随 .env 默认'
+  if (!chatPref.value) return '未指定（用第一个已配置的厂商）'
   const p = llmProviders.value.find(x => x.id === chatPref.value.provider_id)
   const model = chatPref.value.model_name || p?.config?.model || ''
   return (p?.label || chatPref.value.provider_id) + (model ? ' · ' + model : '')

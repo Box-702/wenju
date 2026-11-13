@@ -80,7 +80,7 @@ class SeedanceProvider(VideoProvider):
     """火山方舟 Seedance 2.0 系列视频生成（异步任务 + 轮询）。"""
 
     name = "seedance"
-    label = "Seedance 2.0（火山方舟）"
+    label = "火山方舟（豆包）"
     supports_text_to_video = True
     supports_image_to_video = True
     max_duration_sec = 15.0
@@ -89,12 +89,8 @@ class SeedanceProvider(VideoProvider):
     chinese_prompt_support = True
 
     def __init__(self, api_key: str = "", base_url: str = "", **kwargs: Any) -> None:
-        import os
-
-        # key 来源三个名字都认：显式传入 > ARK_API_KEY（方舟官方名）
-        # > SEEDANCE_API_KEY（用户 .env 实际用的名字，2026-11-12）。
-        api_key = (api_key or os.environ.get("ARK_API_KEY", "")
-                   or os.environ.get("SEEDANCE_API_KEY", ""))
+        # key 只从调用方注入（DB api_providers 行，D-48：env 不再是配置入口）。
+        # 老安装迁移由 llm/seed.py 负责搬家，这里不再读 ARK/SEEDANCE 变量。
         super().__init__(api_key, base_url, **kwargs)
         if not self.base_url:
             self.base_url = ARK_BASE

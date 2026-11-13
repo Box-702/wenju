@@ -77,10 +77,11 @@ def _has_task_object(data: Any) -> bool:
 
 
 class MiniMaxProvider(VideoProvider):
-    """MiniMax H3（海螺）视频生成，V2 任务接口。"""
+    """MiniMax（海螺）视频生成，V2 任务接口。厂商名不带模型名（D-48：
+    MiniMax 就是厂商，H3/H3-Lite 是它的模型档位）。"""
 
     name = "minimax"
-    label = "MiniMax H3"
+    label = "MiniMax"
     supports_text_to_video = True
     supports_image_to_video = True
     max_duration_sec = 15.0
@@ -124,8 +125,8 @@ class MiniMaxProvider(VideoProvider):
     _TASK_KEYS_CAP = 512
 
     def __init__(self, api_key: str = "", base_url: str = "", **kwargs: Any) -> None:
-        import os
-        api_key = api_key or os.environ.get("MINIMAX_API_KEY", "")
+        # key 只从调用方注入（DB api_providers 行，D-48：env 不再是配置入口）。
+        # 备用 key 故障转移（_ring → minimax_keys 读 FALLBACKS）保留——那是安全网。
         super().__init__(api_key, base_url, **kwargs)
         self._last_key = ""
         if not self.base_url:

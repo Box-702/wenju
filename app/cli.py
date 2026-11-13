@@ -65,7 +65,7 @@ def main() -> None:
         language="zh-CN",
         raw_text=SAMPLE_TEXT,
     )
-    print(f"项目 id: {project.id}，模型可用: {cfg.model_available}")
+    print(f"项目 id: {project.id}，模型可用: {llm_.available}")
 
     print("\n【2】生成剧本版本")
     script, artifacts = generate_script(

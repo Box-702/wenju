@@ -1,33 +1,30 @@
 # =====================================================================
-# seed.py —— 把 .env 现有配置幂等入库，让 DB 成为唯一权威（D-41）
+# seed.py —— .env → DB 的一次性迁移（D-48：env 彻底退出模型配置）
 #
-# 为什么需要：原来读取优先级是「.env 压过 DB」——用户在设置里选的模型会被
-# .env 悄悄盖掉（实测：UI 选了 deepseek-v4-pro，实际跑的却是 env 的
-# deepseek-flash）。BYOK 产品里 key 和选择都是用户的，界面必须说话算数。
+# 历史：D-41 时代 .env 是空库兜底。2026-11-13 用户定案「模型设置完全移除
+# env，只走 BYOK」——解析层（registry.py）已删掉全部 env 链，本模块只剩
+# 一个职责：**把老安装 .env 里已有的 key 搬进 DB，一次，只补缺**。
+# 不直接删掉本模块的原因：那会让所有靠 .env 跑着的老安装一夜之间变
+# 「未配置」。迁移完成后 DB 就是唯一权威，界面引导用户贴 key。
 #
-# 原则：**只补缺，绝不覆盖，也绝不替用户改选择。**
-#   - 某 (kind, name) 已有带 key 的行 → 跳过（那是用户在 UI 里定的，原样生效）；
-#   - DB 里还没有的模态 → 按 env 当前实际生效的配置建一行（保住"能跑"）；
-#   - 不设 model_preference：单行时 DB 兜底自然选中它，多行时由用户在 UI 里选，
-#     种子不越俎代庖（设偏好反而可能把用户的选择盖回 env 的字面值）。
-#   - env 里没有对应 key 就什么都不做——空库保持空库（新装靠 env 兜底起跑）。
+# env 仅存的两个豁免（都不是配置入口）：
+#   - MINIMAX_API_KEY_FALLBACKS：备用 key 故障转移安全网（app/keys.py）；
+#   - DEEPSEEK_THINKING：行为开关（思考链），不选模型不选 key。
 #
-# 幂等：跑一百遍结果一致，用户数据不会被改坏。
+# 原则不变：**只补缺，绝不覆盖，绝不替用户改选择。**幂等，跑一百遍结果一致。
 # =====================================================================
 
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 log = logging.getLogger(__name__)
 
 
 def seed_keys_from_env(settings: Any, store: Any) -> list[str]:
-    """把 .env 里现有 key 与当前生效配置幂等写进 api_providers（只补缺）。
-
-    返回本次新建的行清单（供日志），空列表 = 什么都没做。
-    """
+    """把 .env 里现有 key 幂等搬进 api_providers（只补缺）。返回本次新建的行清单。"""
     actions: list[str] = []
 
     def find_row(kind: str, name: str):
@@ -49,36 +46,45 @@ def seed_keys_from_env(settings: Any, store: Any) -> list[str]:
         )
         actions.append(f"{kind}/{name}")
 
-    # store=None 的 resolver = 「env 视图」：现在真正在跑什么，就搬什么。
-    from .registry import resolve_chat, resolve_image, resolve_tts
+    def env_first(*names: str) -> str:
+        # 直接读 os.environ（bootstrap_env 已把 .env 落进来）——resolver
+        # 已 DB-only，迁移就是要绕开它看一眼老配置。
+        for n in names:
+            v = (os.environ.get(n, "") or "").strip()
+            if v:
+                return v
+        return ""
 
-    # ---- 对话：env 链当前生效的那家 + 实际模型名 ----
-    cur = resolve_chat(settings, None)
-    if cur is not None and cur.api_key:
-        ensure_row("llm", cur.provider, cur.label, cur.api_key, cur.base_url, cur.model)
+    # ---- 对话：env 链原优先级（OPENAI > ZHIPUAI > DEEPSEEK）----
+    if k := env_first("OPENAI_API_KEY"):
+        ensure_row("llm", "openai", "OpenAI 兼容", k,
+                   env_first("OPENAI_BASE_URL"), env_first("OPENAI_MODEL"))
+    if k := env_first("ZHIPUAI_API_KEY"):
+        ensure_row("llm", "zhipu", "智谱 GLM", k,
+                   env_first("ZHIPUAI_BASE_URL"), env_first("ZHIPUAI_MODEL_NAME"))
+    if k := env_first("DEEPSEEK_API_KEY"):
+        ensure_row("llm", "deepseek", "DeepSeek", k,
+                   env_first("DEEPSEEK_BASE_URL"), env_first("DEEPSEEK_MODEL_NAME"))
+    if k := env_first("MINIMAX_API_KEY"):
+        ensure_row("llm", "minimax", "MiniMax", k,
+                   env_first("MINIMAX_BASE_URL"), env_first("MINIMAX_MODEL_NAME"))
 
     # ---- 文生图（cogview 与智谱共用 key） ----
-    img = resolve_image(settings, None)
-    if img is not None and img.api_key:
-        ensure_row("image", img.provider, img.label, img.api_key, img.base_url, img.model)
+    if k := env_first("IMAGE_API_KEY", "ZHIPUAI_API_KEY"):
+        ensure_row("image", "cogview", "智谱", k, "",
+                   env_first("IMAGE_MODEL"))
 
     # ---- 配音 ----
-    tts = resolve_tts(settings, None)
-    if tts is not None and tts.api_key:
-        ensure_row("tts", tts.provider, tts.label, tts.api_key, tts.base_url, tts.model)
+    if k := env_first("TTS_API_KEY", "MINIMAX_API_KEY"):
+        ensure_row("tts", "minimax", "MiniMax 语音合成", k, "",
+                   env_first("TTS_MODEL"))
 
-    # ---- 视频：MiniMax 一把 key 打通全链；env 主 key 入库 ----
-    # 备用 key 轮换机制（app/keys.py）继续读 os.environ——那是故障转移的
-    # 安全网，不是配置入口；主 key 以 DB 为准，UI 里改了就立刻生效。
-    from ..keys import minimax_keys
-
-    mm_key = (getattr(settings, "minimax_api_key", "") or "").strip()
-    if not mm_key:
-        ring = minimax_keys()
-        mm_key = ring[0] if ring else ""
-    if mm_key:
-        ensure_row("video", "minimax", "MiniMax 视频", mm_key, "", "")
+    # ---- 视频：MiniMax 一把 key 打通全链 ----
+    # 备用 key 轮换（MINIMAX_API_KEY_FALLBACKS，见 app/keys.py）继续走
+    # os.environ——那是故障转移安全网，不是配置入口。
+    if k := env_first("MINIMAX_API_KEY"):
+        ensure_row("video", "minimax", "MiniMax", k, "", "")
 
     if actions:
-        log.info("BYOK 入库（幂等，只补缺不覆盖）：%s", "、".join(actions))
+        log.info("BYOK 一次性迁移（幂等，只补缺不覆盖）：%s", "、".join(actions))
     return actions

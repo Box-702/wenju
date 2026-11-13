@@ -296,48 +296,45 @@ Wenju/
 │   ├── runner.py             #   引擎
 │   └── fixtures/             #   录制的真实产出（离线回归用）
 │
-└── tests/                    # 测试套件（547 tests，43 个测试文件）
+└── tests/                    # 测试套件（548 tests，43 个测试文件）
 ```
 
 ## 环境变量
 
-模型接入统一由 `app/llm/registry.py` 解析：**显式指定 > `.env` 优先级链（OPENAI > ZHIPUAI > DEEPSEEK）> 数据库里配的 provider**。
-对话、视觉质检、文生图三维度可分别配置，互相独立。
+**模型配置只走数据库（BYOK，D-48）**：对话 / 视觉 / 生图 / 视频 / 配音的厂商、Key、
+模型名一律存在 `~/.wenju/app.db`（`api_providers` / `model_preferences`），
+在「设置 → 模型」界面里配。`.env` 里的 `CHAT_PROVIDER` / `*_API_KEY` / `*_MODEL`
+**不再被读取**——老安装的 key 由 `app/llm/seed.py` 启动时一次性搬进 DB（只补缺不覆盖）。
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `CHAT_PROVIDER` | 强制指定对话厂商（`openai` / `deepseek` / `zhipu` / `minimax` / `ollama` / `moonshot` / `qwen`） | 按优先级链自动选 |
-| `ZHIPUAI_API_KEY` | 智谱 key（GLM 对话 / CogView 文生图 / CogVideoX 视频共用） | - |
-| `DEEPSEEK_API_KEY` | DeepSeek key（也用于默认视觉质检模型） | - |
-| `OPENAI_API_KEY` | OpenAI 或任意兼容服务的 key | - |
-| `MINIMAX_API_KEY` | MiniMax key（**对话 / 视频 H3 / 配音 T2A 一把 key 全链路**） | - |
-| `MINIMAX_API_KEY_FALLBACKS` | 备用 key（逗号分隔，可多把）。主 key 欠费/失效时自动顶上，顺序即优先级；坏 key 冷却期间不再试 | - |
+| `DEEPSEEK_THINKING` | 推理模型是否开启思考链（行为开关，不选模型不选 key） | `false` |
+| `MINIMAX_API_KEY_FALLBACKS` | 备用 key（逗号分隔，可多把）。主 key 欠费/失效时自动顶上，顺序即优先级；坏 key 冷却期间不再试。**故障转移安全网，不是配置入口**——主 key 以 DB 为准 | - |
 | `KEY_COOLDOWN_SEC` | key 被判失效后的冷却时长（秒），到期自动复活，无需重启 | `600` |
-| `DEEPSEEK_THINKING` | 推理模型是否开启思考链 | `false` |
-| `VISION_PROVIDER` / `VISION_MODEL` / `VISION_API_KEY` | 视觉质检单独配置（留空则自动复用支持视觉的厂商） | 自动 |
-| `IMAGE_PROVIDER` / `IMAGE_MODEL` / `IMAGE_API_KEY` | 文生图单独配置（`cogview` / `openai`） | `cogview` → `openai` |
-| `DATABASE_URL` | 数据库连接串（`sqlite:///./data/script_agent.db` 或 `postgresql+psycopg://…`） | 项目内 SQLite |
+| `DATABASE_URL` | 数据库连接串（默认 `~/.wenju/app.db`，D-44；或 `postgresql+psycopg://…`） | 产品主目录 SQLite |
 | `DB_CONNECT_TIMEOUT` | 数据库连接超时（秒）。不给的话 libpq 会一直等，库没起来时请求永久挂住 | `5` |
 | `CHECKPOINTER` | checkpointer 类型（`memory` / `postgres`） | `memory` |
-| `TTS_PROVIDER` / `TTS_MODEL` / `TTS_API_KEY` | 配音单独配置；`TTS_API_KEY` 留空时回落 `MINIMAX_API_KEY` | `minimax` / `speech-02-hd` |
 | `VIDEO_QA_ENABLED` / `VIDEO_QA_FRAMES` / `VIDEO_QA_MAX_REROLL` | 成片抽帧质检与有界重 roll | `true` / `5` / `1` |
 | `VIDEO_SWEEPER_ENABLED` / `VIDEO_SWEEPER_INTERVAL_SEC` | 孤儿视频任务巡检（重启后把无人轮询的任务挂回去） | `true` / `60` |
-| `WORKSPACE_PERSIST` / `WORKSPACE_ROOT` | 是否把剧本/版本落成文件；`false` 时只留应用内 | `true` / `data/` |
+| `VIDEO_DEFAULT_RESOLUTION` | 视频默认分辨率（MiniMax 方言；Seedance 侧自动映射 768P→720p） | `768P` |
+| `WORKSPACE_PERSIST` / `WORKSPACE_ROOT` | 是否把剧本/版本落成文件；`false` 时只留应用内 | `true` / `~/.wenju/workspace` |
+| `WENJU_HOME` | 产品主目录（app.db + workspace/ + runs/） | `~/.wenju` |
 | `FFMPEG_PATH` | ffmpeg 可执行文件路径（抽帧/拼接），留空用 PATH 里的 | - |
 | `LANGSMITH_TRACING` / `LANGSMITH_API_KEY` / `LANGSMITH_PROJECT` | LangSmith 轨迹上报；启动时映射为 `LANGCHAIN_*` | `false` |
 
-> **两类配置的坑**：`MINIMAX_API_KEY_FALLBACKS`、`KEY_COOLDOWN_SEC`、`FFMPEG_PATH`、
-> `LANGSMITH_*` 由代码**直接读 `os.environ`**，不经过 `Settings`。所有入口都必须调用
+> **直读 `os.environ` 的坑**：`MINIMAX_API_KEY_FALLBACKS`、`KEY_COOLDOWN_SEC`、`FFMPEG_PATH`、
+> `LANGSMITH_*` 由代码**直接读环境变量**，不经过 `Settings`。所有入口都必须调用
 > `config.bootstrap_env()`（`main.py` / `cli.py` 已调用），否则这些配置会静默取默认值。
 >
-> **界面偏好优先于 `.env`**：在「设置 → 模型」里选过模型后，`.env` 的模型名不再生效；
-> 点「恢复 .env 默认」或调 `DELETE /api/models/preferences/chat` 清除即可。
+> **模型配置没有第二入口**：想换模型/厂商/Key，只有「设置 → 模型」一条路；
+> 清除某任务的界面指定 = 对该 task_type PUT preference {provider_id: null}，
+> 之后按 DB 行顺序取第一个启用的厂商（不再有 .env 回落）。
 
 ## 运行测试
 
 ```bash
 python -m pytest tests -q
-# 547 passed
+# 548 passed
 ```
 
 ## 提示词质量 eval

@@ -1702,6 +1702,47 @@ S2 · D-43 · D-46 · DEVELOPMENT 5.39
 
 ---
 
+<a id="d-48-模型配置移除-env"></a>
+## D-48 模型配置完全移除 .env：DB/BYOK 唯一权威 + 厂商名与模型名分离 —— 已定（2026-11-13）
+
+**背景**：用户定案两条：①「本项目模型设置完全移除 env 从现在开始，只走 BYOK」；
+②「minimax 就是 minimax 这个厂商，不要再把模型名字当厂商使用」（界面上出现过
+"MiniMax H3-Image"当厂商标签、"MiniMax H3"当厂商名等混用）。D-41 只把 env 降级为
+「空库兜底」，resolver 里仍留着整条 env 链与十余个 Settings 字段——双入口意味着
+行为不可预测（.env 改一个值就能在暗处换厂商），且"恢复 .env 默认"这类界面话术
+对 BYOK 产品是多余的复杂度。
+
+**选项**：① 维持 D-41（env 作空库兜底）；② 彻底删 env 链，DB 唯一权威，老安装
+的 env key 由一次性迁移搬进 DB；③ 删 env 链且不做迁移（老安装一夜变未配置）。
+
+**决定**：选 ②。
+**理由**：① 双入口的暗坑正是 D-41 要治的病，留尾巴就是留病灶；③ 会把靠 .env
+跑着的存量安装直接打回未配置，不可接受；② 迁移只补缺不覆盖、幂等，跑完
+DB 就是唯一真相。实现要点：
+- `registry.py` 重写：resolve_chat/vision/image/tts 只认 DB；`_from_settings`、
+  `_ENV_CHAIN`、`*_PROVIDER` 解析全删；Settings 里模型类字段（chat_provider/
+  各家 api_key/base_url/model、vision_*/image_*/tts_*、model_available、
+  minimax_key_list）整块移除；
+- env 仅存两个豁免（都不是配置入口）：`MINIMAX_API_KEY_FALLBACKS` 备用 key
+  故障转移安全网（keys.py 直读）、`DEEPSEEK_THINKING` 行为开关；
+- `seed.py` 语义从「每次启动幂等兜底」改为「一次性迁移」：直接读 os.environ
+  把老 key 搬进 DB 后，env 再无读者；
+- 视频 provider 的 `os.environ` key 兜底删除（minimax/seedance 只认 DB 注入）；
+- 厂商名与模型名分离：provider label 只写厂商（MiniMax / 智谱 / 火山方舟（豆包）），
+  模型名（MiniMax-H3-Image、cogview-4、MiniMax-H3-Lite…）只出现在厂商的模型清单；
+  DB 存量行 label 已一次性改写；
+- 前端「跟随 .env / 恢复 .env 默认」话术全部移除。
+
+**什么时候该推翻**：出现「必须无 DB 跑一次性脚本」的真实需求时，再考虑给 CLI
+加显式 `--provider/--api-key` 参数（而不是恢复全局 env 链）。
+
+**相关**：`app/llm/registry.py` · `app/llm/seed.py` · `app/config.py` ·
+`app/video/providers/{minimax,seedance}.py` · `docs/ARCHITECTURE.md` 2.3 ·
+README 环境变量表 · D-41（本决策取代其 env 兜底部分）· DEVELOPMENT 5.43 同族
+（配置传到底原则）
+
+---
+
 ## 记录新决策的模板
 
 ```markdown

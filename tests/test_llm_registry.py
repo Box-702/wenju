@@ -2,6 +2,8 @@
 # test_llm_registry.py —— 模型接入层的配置解析
 #
 # 只测「配置 → ModelConfig」这一步（纯逻辑，不触网、不构造真实模型）。
+# D-48 定案：模型配置只走 DB（BYOK），env 链彻底移除——本文件的用例
+# 全部改为「建 DB 行 → 解析」，并锁住「env 里有 key 也不生效」。
 # =====================================================================
 
 from __future__ import annotations
@@ -35,15 +37,29 @@ def test_no_keys_means_no_chat_config():
     assert cfg is None
 
 
-def test_env_priority_chain_openai_beats_deepseek():
-    cfg = resolve_chat(_settings(OPENAI_API_KEY="oa", DEEPSEEK_API_KEY="ds"))
-    assert cfg is not None
-    assert cfg.provider == "openai"
-    assert cfg.source == "env"
+def test_env_keys_alone_no_longer_configure_anything(store):
+    """D-48：.env 里的 key 不再参与模型选择——空库就是未配置。"""
+    cfg = resolve_chat(_settings(OPENAI_API_KEY="oa", DEEPSEEK_API_KEY="ds"), store)
+    assert cfg is None
 
 
-def test_deepseek_thinking_becomes_extra_body():
-    cfg = resolve_chat(_settings(DEEPSEEK_API_KEY="ds", DEEPSEEK_THINKING="false"))
+def test_db_row_order_decides_vendor(store):
+    """无显式偏好时取第一个启用的行（list_api_providers 按创建时间倒序，
+    最新配的优先——D-41 以来的既有行为，这里锁住它）。"""
+    store.create_api_provider(kind="llm", name="openai", label="OpenAI 兼容",
+                              api_key="oa", config={"model": "gpt-4o-mini"})
+    store.create_api_provider(kind="llm", name="deepseek", label="DeepSeek",
+                              api_key="ds", config={"model": "deepseek-chat"})
+    cfg = resolve_chat(_settings(), store)
+    assert cfg is not None and cfg.provider == "deepseek" and cfg.source == "db"
+
+
+def test_deepseek_thinking_becomes_extra_body(store):
+    """DEEPSEEK_THINKING 是行为开关（env 豁免之一），对 DB 解析出的
+    deepseek 配置仍然生效——它不选模型也不选 key。"""
+    store.create_api_provider(kind="llm", name="deepseek", label="DeepSeek",
+                              api_key="ds", config={"model": "deepseek-chat"})
+    cfg = resolve_chat(_settings(DEEPSEEK_THINKING="false"), store)
     assert cfg is not None
     assert cfg.provider == "deepseek"
     assert cfg.extra_body == {"_thinking": False}
@@ -53,38 +69,49 @@ def test_deepseek_thinking_becomes_extra_body():
     assert model.extra_body == {"thinking": {"type": "disabled"}}
 
 
-def test_chat_provider_forces_vendor_and_skips_chain():
-    # 显式指定 deepseek 时，即使配了 openai key 也应选 deepseek。
-    cfg = resolve_chat(_settings(CHAT_PROVIDER="deepseek", OPENAI_API_KEY="oa", DEEPSEEK_API_KEY="ds"))
-    assert cfg is not None
-    assert cfg.provider == "deepseek"
+def test_ui_preference_forces_vendor(store):
+    """界面显式偏好压过行顺序（CHAT_PROVIDER 环境变量已退役）。"""
+    store.create_api_provider(kind="llm", name="openai", label="OpenAI 兼容",
+                              api_key="oa", config={"model": "gpt-4o-mini"})
+    p = store.create_api_provider(kind="llm", name="deepseek", label="DeepSeek",
+                                  api_key="ds", config={"model": "deepseek-chat"})
+    store.set_model_preference(task_type="chat", provider_id=p.id, model_name="deepseek-chat")
+    cfg = resolve_chat(_settings(CHAT_PROVIDER="openai"), store)
+    assert cfg is not None and cfg.provider == "deepseek"
 
 
-def test_vision_falls_back_to_a_vision_capable_vendor():
-    cfg = resolve_vision(_settings(DEEPSEEK_API_KEY="ds"))
+def test_vision_falls_back_to_chat_vendor(store):
+    """没有 vision 行时复用对话厂商（若带视觉能力），换成视觉模型名。"""
+    store.create_api_provider(kind="llm", name="deepseek", label="DeepSeek",
+                              api_key="ds", config={"model": "deepseek-chat"})
+    cfg = resolve_vision(_settings(), store)
     assert cfg is not None
     assert cfg.provider == "deepseek"
-    # 应换成该厂商的视觉模型，而不是复用对话模型
     assert cfg.model == "deepseek-v4-flash-vision-exp"
 
 
-def test_vision_explicit_key_wins():
-    cfg = resolve_vision(_settings(VISION_PROVIDER="zhipu", VISION_API_KEY="vk", VISION_MODEL="glm-4v-flash"))
-    assert cfg is not None
-    assert cfg.provider == "zhipu"
+def test_vision_row_beats_chat_reuse(store):
+    """vision 行优先于「复用对话厂商」路径。"""
+    store.create_api_provider(kind="llm", name="deepseek", label="DeepSeek",
+                              api_key="ds", config={"model": "deepseek-chat"})
+    store.create_api_provider(kind="vision", name="zhipu", label="智谱",
+                              api_key="zk", config={"model": "glm-4v-flash"})
+    cfg = resolve_vision(_settings(), store)
+    assert cfg is not None and cfg.provider == "zhipu"
     assert cfg.model == "glm-4v-flash"
-    assert cfg.api_key == "vk"
 
 
-def test_image_defaults_to_cogview_with_zhipu_key():
-    cfg = resolve_image(_settings(ZHIPUAI_API_KEY="zp"))
-    assert cfg is not None
-    assert cfg.provider == "cogview"
-    assert cfg.model == "cogview-3-flash"
+def test_image_resolves_from_db_row(store):
+    store.create_api_provider(kind="image", name="cogview", label="智谱",
+                              api_key="zp", config={"model": "cogview-4-250304"})
+    cfg = resolve_image(_settings(), store)
+    assert cfg is not None and cfg.provider == "cogview"
+    assert cfg.model == "cogview-4-250304"
 
 
-def test_image_returns_none_without_capable_key():
-    assert resolve_image(_settings(DEEPSEEK_API_KEY="ds")) is None
+def test_image_returns_none_without_db_row(store):
+    """env 里有 zhipu/deepseek key 也不再自动配生图——BYOK 界面没建行就是未配置。"""
+    assert resolve_image(_settings(ZHIPUAI_API_KEY="zp", DEEPSEEK_API_KEY="ds"), store) is None
 
 
 def test_provider_table_exposes_modalities():
@@ -96,13 +123,13 @@ def test_provider_table_exposes_modalities():
     assert get_provider_spec("ollama").requires_key is False
 
 
-def test_minimax_chat_uses_same_key_as_video_and_tts():
-    """MiniMax：一个 key 同时打通对话 / 视频（H3）/ 配音（T2A）。"""
-    cfg = resolve_chat(_settings(CHAT_PROVIDER="minimax", MINIMAX_API_KEY="mm"))
-    assert cfg is not None
-    assert cfg.provider == "minimax"
+def test_minimax_chat_row_resolves_with_factory_defaults(store):
+    """MiniMax 对话行：模型/端点缺省走厂商表（key 由用户在界面贴）。"""
+    store.create_api_provider(kind="llm", name="minimax", label="MiniMax",
+                              api_key="mm", config={})
+    cfg = resolve_chat(_settings(), store)
+    assert cfg is not None and cfg.provider == "minimax"
     assert cfg.model == "MiniMax-Text-01"
-    assert cfg.api_key == "mm"
     assert cfg.base_url.startswith("https://api.minimax.cn")
 
 
@@ -128,9 +155,12 @@ def test_structured_falls_back_when_provider_has_no_json_mode():
     class Tiny(BaseModel):
         title: str
 
-    llm = LLM(_settings(CHAT_PROVIDER="minimax", MINIMAX_API_KEY="mm"))
+    from app.deps import store as _noop  # noqa: F401 —— 仅示意依赖方向
+    llm = LLM(_settings())
+    llm.config = type("C", (), {"provider": "minimax", "model": "MiniMax-Text-01",
+                                "api_key": "mm", "base_url": "https://api.minimax.cn/v1",
+                                "extra_body": {}, "temperature": None})()
     assert llm.config is not None
-    llm.config.provider = "minimax"
     calls: list[list] = []
 
     class FakeModel:
@@ -155,5 +185,8 @@ def test_structured_uses_json_mode_for_normal_providers():
     """普通厂商仍走 json_mode（行为不变）。"""
     from app.llm.client import LLM
 
-    llm = LLM(_settings(CHAT_PROVIDER="deepseek", DEEPSEEK_API_KEY="ds"))
+    llm = LLM(_settings())
+    llm.config = type("C", (), {"provider": "deepseek", "model": "deepseek-chat",
+                                "api_key": "ds", "base_url": "https://api.deepseek.com",
+                                "extra_body": {}, "temperature": None})()
     assert llm._supports_json_mode() is True

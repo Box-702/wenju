@@ -607,9 +607,8 @@ function onInput(e) {
         </div>
 
         <div class="cc-right">
-          <button class="cc-gear" type="button" title="设置" aria-label="设置" @click.stop="emit('open-settings')">
-            <AppIcon name="gear" />
-          </button>
+          <!-- 输入卡不放第三个设置入口（2026-11-13 用户指正）：
+               快速切模型走「模型设置」胶囊，完整设置走面板底部链接与页面顶栏齿轮。 -->
           <button
             class="cc-send"
             type="button"
@@ -733,20 +732,6 @@ function onInput(e) {
 
 .cc-right { display: flex; align-items: center; gap: 8px; flex: none; }
 
-/* 齿轮：低调的图标钮 */
-.cc-gear {
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border-radius: var(--radius-md);
-  display: grid;
-  place-items: center;
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--dim);
-  cursor: pointer;
-  transition: color 130ms var(--ease), background 130ms var(--ease);
-}
 /* @ 候选列表：贴着输入框上方浮起 */
 .cc-mention {
   position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 30;
@@ -763,7 +748,6 @@ function onInput(e) {
 .mi-sub { font-size: 10px; color: var(--dim); flex: none; }
 .mi-id { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--dim); }
 
-.cc-gear:hover { color: var(--ink); background: rgba(255, 255, 255, .07); }
 
 /* 作品选择胶囊 + 下拉 */
 .cc-project-wrap { position: relative; }
@@ -861,7 +845,6 @@ function onInput(e) {
 .pi-meta { margin-left: auto; font-size: 10px; color: var(--dim); flex: none; }
 .pi-chev { width: 13px; height: 13px; flex: none; opacity: .5; }
 .cc-menu-sep { height: 1px; background: var(--line); margin: 4px 2px; }
-.cc-gear .app-ic { width: 15px; height: 15px; }
 
 /* 发送：圆形箭头钮。
    可用状态用**全站主行动绿**（--accent-grad，与首页 CTA 同一套渐变）——

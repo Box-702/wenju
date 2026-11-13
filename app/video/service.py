@@ -486,6 +486,10 @@ def _auto_references(project_id: str, shot_id: str | None, version_id: str | Non
         j.shot_id: j.video_url
         for j in store.list_video_jobs(project_id)
         if j.status == "succeeded" and j.video_url and j.shot_id
+        # 只认**本镜头版本**的成片（与 generate_batch 幂等跳过同源纪律，
+        # 2026-11-13 果园 v4 排查发现）：同作品开新版本后，旧版 shot_id 若
+        # 相同（import 重号）会把上一代的成片当成本代的接力锚——片子货不对板。
+        and (version_id is None or j.version_id == version_id)
     }
     registry = dict((store.get_video_style(project_id) or {}).get("reference_images") or {})
 

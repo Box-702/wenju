@@ -510,3 +510,49 @@ def test_unit_approved_组内未批不投():
     shots[0]["prompt_status"] = "needs_review"   # 组头没批
     units = _generation_units(shots)
     assert not any(_unit_approved(shots, u) and u["group_id"] == "g1" for u in units)
+
+
+def test_auto_relay_only_uses_same_version_clips(store, llm, settings, monkeypatch):
+    """接力锚必须限定**本镜头版本**的成片（果园 v4 排查发现）：
+    同作品 import 重号后，旧版 shot_001_000 的成片不得当成本代的接力锚。"""
+    import types
+
+    import app.deps as app_deps
+    import app.video.service as svc
+
+    class _Ver:
+        def __init__(self, vid, shots):
+            self.id, self.shots, self.created_at = vid, shots, "2026-01-01"
+
+    class _Job:
+        def __init__(self, shot_id, url, version_id):
+            self.shot_id, self.video_url, self.status, self.version_id = \
+                shot_id, url, "succeeded", version_id
+
+    shots = [
+        {"id": "shot_001_000", "order": 0, "duration_sec": 5},
+        {"id": "shot_001_001", "order": 1, "duration_sec": 5, "chain_from": 0},
+    ]
+    fake = types.SimpleNamespace(
+        list_video_versions=lambda pid: [_Ver("vver_new", shots)],
+        get_video_version=lambda vid: _Ver("vver_new", shots),
+        list_video_jobs=lambda pid: [
+            _Job("shot_001_000", "https://x/OLD.mp4", "vver_old"),   # 上一代同号成片
+        ],
+        get_video_style=lambda pid: {},
+        get_project=lambda pid: None,
+        latest_version=lambda p: None,
+    )
+    monkeypatch.setattr(app_deps, "store", lambda: fake)
+    monkeypatch.setattr(svc.deps, "store", lambda: fake)
+
+    params: dict = {}
+    svc._auto_references("proj_x", "shot_001_001", "vver_new", params)
+    assert params.get("reference_videos") == []  # 旧版成片不能当本代锚
+
+    # 同版本成片则正常挂上
+    fake.list_video_jobs = lambda pid: [
+        _Job("shot_001_000", "https://x/NEW.mp4", "vver_new")]
+    params2: dict = {}
+    svc._auto_references("proj_x", "shot_001_001", "vver_new", params2)
+    assert params2.get("reference_videos") == ["https://x/NEW.mp4"]

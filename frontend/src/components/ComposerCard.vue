@@ -169,10 +169,12 @@ async function refreshPanel() {
   try { modelPrefs.value = await api('/models/preferences') || [] } catch { modelPrefs.value = [] }
 }
 
+// 面板列的厂商 = 配置好**且启用**的（与批次路由 _pick_video_provider 同口径，
+// 2026-11-13：minimax 停用后面板必须显示在用的 seedance，不能还列停用那家）
 const imageProviders = computed(() =>
-  (allProviders.value || []).filter((p) => p.kind === 'image' && p.configured))
+  (allProviders.value || []).filter((p) => p.kind === 'image' && p.configured && p.enabled !== false))
 const videoProviders = computed(() =>
-  (allProviders.value || []).filter((p) => p.kind === 'video' && p.configured))
+  (allProviders.value || []).filter((p) => p.kind === 'video' && p.configured && p.enabled !== false))
 
 /** 当前在用的生图厂商：偏好指定的那家优先，否则第一个配好的——
     面板只列这一家（选厂商/换 key 是完整设置的职责，用户定 2026-11-12）。 */
@@ -183,16 +185,20 @@ const currentImageProvider = computed(() => {
 })
 
 /** 生图 tab 的可选模型：当前厂商配置里的清单；厂商没配清单时，
-    按厂商家族给常用档（minimax→H3-Image 系，其余→cogview 系），
+    按厂商家族给官方现役档（与后端 image.py 实测模型名一致），
     并保证在用的那个一定在列。 */
+const IMAGE_FAMILY = {
+  minimax: ['MiniMax-H3-Image'],
+  cogview: ['cogview-4-250304', 'cogview-3-flash'],
+  zhipu: ['cogview-4-250304', 'cogview-3-flash'],
+  openai: ['gpt-image-1'],
+}
 const imageModelChoices = computed(() => {
   const p = currentImageProvider.value
   if (!p) return []
   const listed = modelsOf(p).map((m) => m.model)
-  const base = listed.length ? listed
-    : (String(p.name).toLowerCase().includes('minimax')
-        ? IMAGE_MODELS.filter((m) => m.startsWith('MiniMax'))
-        : IMAGE_MODELS.filter((m) => !m.startsWith('MiniMax')))
+  const fam = String(p.name).toLowerCase()
+  const base = listed.length ? listed : (IMAGE_FAMILY[fam] || listed)
   const cur = currentImageLabel.value
   if (cur && cur !== '未配置' && !base.includes(cur)) base.unshift(cur)
   return base
@@ -208,6 +214,25 @@ const currentImageLabel = computed(() => {
 const currentVideoLabel = computed(() => {
   const p = videoProviders.value.find((x) => x.name === 'minimax') || videoProviders.value[0]
   return p?.config?.model || '未配置'
+})
+
+/** 在用的视频厂商行：偏好/第一个启用的——面板只列这一家的模型清单
+    （2026-11-13 与对话/生图同口径：行显厂商，点进去选模型）。 */
+const currentVideoProvider = computed(() => videoProviders.value[0] || null)
+
+/** 当前视频厂商的可选模型：厂商清单优先，没清单按家族给常用档。 */
+const videoModelChoices = computed(() => {
+  const p = currentVideoProvider.value
+  if (!p) return []
+  const listed = modelsOf(p).map((m) => m.model)
+  const fam = String(p.name).toLowerCase()
+  const base = listed.length ? listed
+    : fam.includes('seedance') || fam.includes('doubao')
+      ? ['doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-0-fast-260128', 'doubao-seedance-2-0-260128']
+      : VIDEO_TIERS
+  const cur = p.config?.model
+  if (cur && !base.includes(cur)) base.unshift(cur)
+  return base
 })
 
 async function chooseImageModel(p, m) {
@@ -236,7 +261,6 @@ async function chooseVideoModel(p, m) {
 }
 
 const VIDEO_TIERS = ['MiniMax-H3-Lite', 'MiniMax-H3-Highspeed', 'MiniMax-H3']
-const IMAGE_MODELS = ['MiniMax-H3-Image', 'cogview-4-250304', 'cogview-3-flash']
 
 watch(modelOpen, (v) => { if (v) refreshPanel() })
 
@@ -508,19 +532,21 @@ function onInput(e) {
                 <button class="mp-row" type="button" :class="{ on: panelTab === 'chat' }"
                         @click.stop="panelTab = 'chat'">
                   <span class="mr-key">对话</span>
-                  <span class="mr-val">{{ modelLabel }}</span>
+                  <!-- 行显示厂商（2026-11-13 用户指正：选中模型按厂商显示，
+                       点进去选的才是该厂商模型列表里的哪一个） -->
+                  <span class="mr-val">{{ activeVendor || '对话厂商' }}</span>
                   <AppIcon name="chevron-right" class="mr-chev" />
                 </button>
                 <button class="mp-row" type="button" :class="{ on: panelTab === 'image' }"
                         @click.stop="panelTab = 'image'">
                   <span class="mr-key">生图</span>
-                  <span class="mr-val">{{ currentImageLabel }}</span>
+                  <span class="mr-val">{{ currentImageProvider?.label || currentImageProvider?.name || '生图厂商' }}</span>
                   <AppIcon name="chevron-right" class="mr-chev" />
                 </button>
                 <button class="mp-row" type="button" :class="{ on: panelTab === 'video' }"
                         @click.stop="panelTab = 'video'">
                   <span class="mr-key">视频</span>
-                  <span class="mr-val">{{ currentVideoLabel }}</span>
+                  <span class="mr-val">{{ currentVideoProvider?.label || currentVideoProvider?.name || '视频厂商' }}</span>
                   <AppIcon name="chevron-right" class="mr-chev" />
                 </button>
 
@@ -555,16 +581,18 @@ function onInput(e) {
                     <div v-else class="mp-empty">还没有配置生图厂商，去「完整模型设置」里加。</div>
                   </template>
 
-                  <!-- 视频：H3 三档（改厂商 config.model） -->
+                  <!-- 视频：当前厂商的模型清单（换厂商去完整设置） -->
                   <template v-else-if="panelTab === 'video'">
-                    <div class="mp-label">MiniMax H3 档位</div>
-                    <button v-for="m in VIDEO_TIERS" :key="m" class="mp-item" type="button"
-                            role="menuitemradio" :aria-checked="m === currentVideoLabel"
-                            @click.stop="videoProviders[0] && chooseVideoModel(videoProviders[0], m)">
-                      <span class="mi-name">{{ m }}</span>
-                      <span v-if="m === currentVideoLabel" class="mi-check">✓</span>
-                    </button>
-                    <div v-if="!videoProviders.length" class="mp-empty">还没有配置视频厂商。</div>
+                    <template v-if="currentVideoProvider">
+                      <div class="mp-label">{{ currentVideoProvider.label || currentVideoProvider.name }}</div>
+                      <button v-for="m in videoModelChoices" :key="m" class="mp-item" type="button"
+                              role="menuitemradio" :aria-checked="m === currentVideoLabel"
+                              @click.stop="chooseVideoModel(currentVideoProvider, m)">
+                        <span class="mi-name">{{ m }}</span>
+                        <span v-if="m === currentVideoLabel" class="mi-check">✓</span>
+                      </button>
+                    </template>
+                    <div v-else class="mp-empty">还没有配置视频厂商。</div>
                   </template>
                 </div>
 

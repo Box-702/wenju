@@ -303,37 +303,111 @@
             </div>
           </div>
 
-          <!-- 生图模型 -->
-          <div v-if="tab === 'image'" class="section">
-            <h4>生图模型（定妆图 / 场景参考图）</h4>
-            <div class="active-line">
-              <template v-if="imageInfo.available">
-                当前生效：<strong>{{ imageInfo.label || imageInfo.provider }}</strong>
-                <template v-if="imageInfo.model"> · {{ imageInfo.model }}</template>
-                <span class="active-src">{{ imageSourceLabel }}</span>
-              </template>
-              <template v-else>未配置生图模型（需要智谱或 OpenAI 的 API Key）</template>
-            </div>
-            <p class="pref-hint">
-              生图与智谱 GLM 共用同一个 API Key，无需重复填写；在这里选择定妆图、场景参考图用哪个模型出图。
-            </p>
-            <div class="form-row">
-              <label>模型</label>
-              <select v-model="imageForm.model" class="modal-select">
-                <option v-for="opt in IMAGE_MODEL_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-                <option value="custom">自定义…</option>
-              </select>
-            </div>
-            <div v-if="imageForm.model === 'custom'" class="form-row">
-              <label>自定义模型名</label>
-              <input v-model.trim="imageForm.customModel" class="modal-input" placeholder="例如 cogview-4" />
-            </div>
-            <div class="form-actions">
-              <button class="primary" @click="saveImageModel" :disabled="savingImage">
-                {{ savingImage ? '保存中…' : '保存' }}
+          <!-- 生图模型：与对话同款「左厂商列表 + 右模型清单」（2026-11-13 用户指正，
+               旧版是单下拉框——厂商/模型混在一起，和对话体验两套语言） -->
+          <div v-if="tab === 'image'" class="section llm-split">
+            <aside class="llm-side">
+              <button
+                v-for="p in imageRows"
+                :key="p.id"
+                :class="['llm-side-item', { on: imgSelId === p.id }]"
+                type="button"
+                @click="imgSelId = p.id"
+              >
+                <span class="side-dot" :class="{ on: p.configured }"></span>
+                <span class="side-name">{{ p.label || p.name }}</span>
+                <span class="side-count">{{ providerModels(p).length }}</span>
               </button>
-              <button v-if="imageInfo.source === 'db'" class="ghost" @click="followEnvImage">恢复 .env 默认</button>
+              <button
+                :class="['llm-side-item', { on: imgSelId === '__openai' }]"
+                type="button" @click="imgSelId = '__openai'"
+              >
+                <span class="side-dot"></span>
+                <span class="side-name">OpenAI 兼容生图</span>
+                <span class="side-tag">待配置</span>
+              </button>
+            </aside>
+
+            <!-- 已配置厂商：key/URL + 模型清单（点模型=设默认） -->
+            <div v-if="selImageRow" class="llm-detail">
+              <div class="detail-head">
+                <span class="dh-name">{{ selImageRow.label || selImageRow.name }}</span>
+                <span v-if="imageActiveRowId === selImageRow.id" class="using-badge">使用中</span>
+                <span class="dh-actions">
+                  <button class="small ghost" :disabled="!selImageRow.configured" @click="testProvider(selImageRow)">
+                    {{ testingId === selImageRow.id ? '测试中…' : '测试连接' }}
+                  </button>
+                </span>
+              </div>
+              <p class="pref-hint">
+                点模型名直接切换在用的生图模型；智谱 CogView 与 GLM 对话共用同一个 Key。
+              </p>
+              <div class="form-row">
+                <label>API Key</label>
+                <div class="key-row">
+                  <input
+                    :type="showImageKey ? 'text' : 'password'"
+                    v-model.trim="imageDraft.api_key"
+                    class="modal-input"
+                    :placeholder="selImageRow.configured ? '已配置（留空 = 保持不变）' : 'sk-…'"
+                  />
+                  <button class="small ghost" @click="showImageKey = !showImageKey">{{ showImageKey ? '隐藏' : '显示' }}</button>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button class="primary" :disabled="savingImage" @click="saveImageProvider">
+                  {{ savingImage ? '保存中…' : '保存厂商设置' }}
+                </button>
+              </div>
+
+              <div class="detail-sub">
+                <span class="ds-title">模型列表</span>
+                <button class="small ghost" type="button" @click="openAddModel(selImageRow)">+ 添加模型</button>
+              </div>
+              <div class="model-list">
+                <div
+                  v-for="(m, mi) in providerModels(selImageRow)" :key="m.model + mi"
+                  :class="['model-row', { active: imageActiveRowId === selImageRow.id && imageActiveModel(selImageRow) === m.model }]"
+                >
+                  <span class="mr-name">{{ m.name }}</span>
+                  <span class="mr-id">{{ m.model }}</span>
+                  <button
+                    v-if="!(imageActiveRowId === selImageRow.id && imageActiveModel(selImageRow) === m.model)"
+                    class="small ok" :disabled="!m.enabled"
+                    @click="pickImageModel(selImageRow, m)"
+                  >设为默认</button>
+                  <span v-else class="mono ok">在用</span>
+                  <button class="icon-btn" title="改这个模型" aria-label="编辑模型" @click="editModel(selImageRow, mi)">
+                    <AppIcon name="edit" />
+                  </button>
+                  <button class="icon-btn danger" title="删掉这个模型" aria-label="删除模型" @click="removeModel(selImageRow, mi)">
+                    <AppIcon name="trash" />
+                  </button>
+                </div>
+                <div v-if="!providerModels(selImageRow).length" class="pop-empty">
+                  这家还没有模型清单，加一个。
+                </div>
+              </div>
             </div>
+
+            <!-- 待配置：OpenAI 兼容生图（gpt-image-1） -->
+            <div v-else-if="imgSelId === '__openai'" class="llm-detail qc-panel">
+              <div class="detail-head"><span class="dh-name">OpenAI 兼容生图</span></div>
+              <p class="pref-hint">贴 API Key 保存即建厂商行，模型默认 gpt-image-1。</p>
+              <div class="form-row">
+                <label>Base URL</label>
+                <input v-model.trim="openaiImage.baseUrl" class="modal-input" placeholder="https://api.openai.com/v1" />
+              </div>
+              <div class="form-row">
+                <label>API Key</label>
+                <input :type="showImageKey ? 'text' : 'password'" v-model="openaiImage.apiKey" class="modal-input" placeholder="sk-…" />
+              </div>
+              <div class="form-actions">
+                <button class="primary" :disabled="!openaiImage.apiKey || savingImage" @click="createOpenaiImage">保存并启用</button>
+              </div>
+            </div>
+
+            <div v-else class="llm-detail"><div class="pop-empty">左边选一个厂商。</div></div>
           </div>
 
           <!-- 模型偏好 -->
@@ -370,11 +444,8 @@ const tabs = [
 ]
 
 // ---- 可选模型清单（value=custom 时用自定义输入框） ----
-const IMAGE_MODEL_OPTIONS = [
-  { value: 'cogview-3-flash', label: 'CogView-3-Flash（速度快，有免费额度）' },
-  { value: 'cogview-4-250304', label: 'CogView-4（质量更好，推荐出定妆图）' },
-  { value: 'cogview-4', label: 'CogView-4（最新版本号）' },
-]
+// 生图不再有静态下拉：厂商列表 + 模型清单同构对话模型（2026-11-13），
+// 旧 IMAGE_MODEL_OPTIONS 死常量已删。
 // H3 系列档位（官方定价页 2026-11-12）：本地调试默认 Lite，质量评审可切 H3。
 // 旧 v1 模型（Hailuo-02/T2V-01/I2V-01）已从 V2 接口下线，不再列。
 const VIDEO_MODEL_OPTIONS = [
@@ -832,63 +903,113 @@ const videoForm = reactive({ apiKey: '', model: 'MiniMax-H3-Lite', customModel: 
 const minimaxRow = computed(() => videoProviders.value.find(p => p.name === 'minimax'))
 const minimaxModelLabel = computed(() => minimaxRow.value?.config?.model || 'MiniMax-H3-Lite')
 
-// ---- 生图模型（与智谱 GLM 共用 key，用户只选模型名）----
+// ---- 生图模型：厂商列表 + 模型清单（2026-11-13 与对话模型同构，用户指正）----
 const imageInfo = ref({ available: false, provider: '', label: '', model: '', source: 'none' })
-const imageForm = reactive({ model: 'cogview-4-250304', customModel: '' })
+const imageProviders = ref([])
+const imagePref = ref(null)      // task_type=image_gen 的偏好（provider_id + model_name）
+const imgSelId = ref('')
 const savingImage = ref(false)
-const imageSourceLabel = computed(() =>
-  ({ db: '界面指定', env: '.env 配置', default: '未配置' }[imageInfo.value.source] || imageInfo.value.source))
+const showImageKey = ref(false)
+const imageDraft = reactive({ api_key: '' })
+const openaiImage = reactive({ baseUrl: '', apiKey: '' })
 
-async function loadImageInfo() {
+/** 厂商列 = kind=image 的行；「在用」判定 = 偏好指的那家，没偏好时后端
+    按优先级链自动选（cogview > openai），展示上以偏好为主、行清单为辅。 */
+const imageRows = computed(() => imageProviders.value)
+const selImageRow = computed(() => imageRows.value.find(p => p.id === imgSelId.value) || null)
+
+/** 某厂商行当前生效的模型名。判定与后端 registry 同口径：
+    偏好指定 > 后端 /status 报的实际在用厂商 > 厂商默认。 */
+function imageActiveModel(p) {
+  if (!p) return ''
+  if (imagePref.value?.provider_id === p.id && imagePref.value.model_name) {
+    return imagePref.value.model_name
+  }
+  if (!imagePref.value && imageInfo.value.provider === p.name) {
+    return imageInfo.value.model || p.config?.model || ''
+  }
+  return p.config?.model || ''
+}
+const imageActiveRowId = computed(() =>
+  imagePref.value?.provider_id
+  || imageRows.value.find(p => p.name === imageInfo.value.provider)?.id
+  || imageRows.value[0]?.id || '')
+
+async function loadImagePrefs() {
   try {
-    const d = await api('/status')
-    imageInfo.value = d.image || { available: false }
-    // 回填下拉：当前生效的模型在预设里就选中，否则进自定义
-    const current = imageInfo.value.model
-    if (current && !IMAGE_MODEL_OPTIONS.some((o) => o.value === current)) {
-      imageForm.model = 'custom'
-      imageForm.customModel = current
-    } else if (current) {
-      imageForm.model = current
-    }
-  } catch { /* 保持占位 */ }
+    const prefs = await api('/models/preferences')
+    imagePref.value = prefs.find(x => x.task_type === 'image_gen' && x.provider_id) || null
+  } catch { imagePref.value = null }
 }
 
-async function saveImageModel() {
-  const model = imageForm.model === 'custom' ? imageForm.customModel.trim() : imageForm.model
-  if (!model) { alert('请选择或填写模型名'); return }
+// 列表变化后维持选中：先落在「使用中」的厂商，再落第一行
+watch(imageRows, (rows) => {
+  if (!rows.length) { imgSelId.value = ''; return }
+  if (rows.some(p => p.id === imgSelId.value)) return
+  const prefRow = rows.find(p => p.id === imagePref.value?.provider_id)
+  imgSelId.value = (prefRow || rows[0]).id
+})
+
+/** 点模型名 = 设默认：写 image_gen 偏好（provider_id + model_name），热生效。 */
+async function pickImageModel(p, m) {
   savingImage.value = true
   try {
-    // 生图配置挂在 kind=image 的 cogview 行上（key 缺省复用 .env 的智谱 key）
-    let row = (await api('/providers?kind=image')).find((p) => p.name === 'cogview')
-    if (row) {
-      await api('/providers/' + row.id, 'PATCH', { config: { model } })
-    } else {
-      row = await api('/providers', 'POST', {
-        kind: 'image', name: 'cogview', label: '智谱 CogView',
-        api_key: '', config: { model }, enabled: true,
-      })
-    }
     await api('/models/preferences', 'PUT', {
-      task_type: 'image_gen', provider_id: row.id, model_name: model, is_default: true,
+      task_type: 'image_gen', provider_id: p.id, model_name: m.model, is_default: true,
     })
-    await loadImageInfo()
+    // 同厂商切模型也要把 config.model 对齐（偏好缺失时的兜底口径）
+    await api('/providers/' + p.id, 'PATCH', { config: { ...(p.config || {}), model: m.model } })
+    await Promise.all([loadImagePrefs(), loadProviders(), loadImageInfo()])
+    notify(`生图模型已切到 ${m.name || m.model}`, 'ok')
   } catch (e) {
-    alert('保存失败：' + e.message)
+    notify('切换失败：' + (e.message || e))
   } finally {
     savingImage.value = false
   }
 }
 
-async function followEnvImage() {
+async function saveImageProvider() {
+  const p = selImageRow.value
+  if (!p) return
+  savingImage.value = true
   try {
-    await api('/models/preferences', 'PUT', {
-      task_type: 'image_gen', provider_id: null, model_name: '', is_default: true,
-    })
-    await loadImageInfo()
+    const patch = {}
+    if (imageDraft.api_key) patch.api_key = imageDraft.api_key
+    if (Object.keys(patch).length) await api('/providers/' + p.id, 'PATCH', patch)
+    imageDraft.api_key = ''
+    await Promise.all([loadProviders(), loadImageInfo()])
+    notify('厂商设置已保存', 'ok')
   } catch (e) {
-    alert('恢复失败：' + e.message)
+    notify('保存失败：' + e.message)
+  } finally {
+    savingImage.value = false
   }
+}
+
+async function createOpenaiImage() {
+  if (!openaiImage.apiKey) { notify('API Key 必填'); return }
+  savingImage.value = true
+  try {
+    await api('/providers', 'POST', {
+      kind: 'image', name: 'openai', label: 'OpenAI 生图',
+      base_url: openaiImage.baseUrl, api_key: openaiImage.apiKey,
+      config: { model: 'gpt-image-1' }, enabled: true,
+    })
+    openaiImage.apiKey = ''
+    await Promise.all([loadProviders(), loadImageInfo()])
+    notify('OpenAI 生图已添加', 'ok')
+  } catch (e) {
+    notify('添加失败：' + (e.message || e))
+  } finally {
+    savingImage.value = false
+  }
+}
+
+async function loadImageInfo() {
+  try {
+    const d = await api('/status')
+    imageInfo.value = d.image || { available: false }
+  } catch { /* 保持占位 */ }
 }
 
 // ---- 模型偏好 ----
@@ -900,6 +1021,7 @@ async function loadProviders() {
   try {
     const all = await api('/providers')
     videoProviders.value = all.filter(p => p.kind === 'video')
+    imageProviders.value = all.filter(p => p.kind === 'image')
     llmProviders.value = all.filter(p => p.kind === 'llm').map(p => ({ ...p, testing: false, testResult: null }))
   } catch {}
   syncVideoForm()
@@ -955,6 +1077,7 @@ watch(() => props.open, (v) => {
     loadProviders()
     loadModelInfo()
     loadChatPref()
+    loadImagePrefs()
     loadImageInfo()
   }
 })
@@ -965,6 +1088,7 @@ onMounted(() => {
     loadProviders()
     loadModelInfo()
     loadChatPref()
+    loadImagePrefs()
     loadImageInfo()
   }
 })

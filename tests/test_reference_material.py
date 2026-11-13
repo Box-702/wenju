@@ -334,3 +334,40 @@ def test_reference_window_bounds(store, client, sample_text, monkeypatch, second
         },
     )
     assert resp.status_code == (200 if ok else 400), resp.text
+
+
+def test_relay_anchor_prefers_last_frame_image(monkeypatch):
+    """接力锚首选尾帧图（seedance 借鉴清单 #1，2026-11-13）：
+    公网成片直链 → reference_images 里出现 data:image/png，reference_videos 清空；
+    抽帧失败回退裁尾视频；两条都失败透传整条（可用性 > 省钱）。"""
+    import app.video.service as svc
+
+    def _fake_frame_ok(url):
+        return "data:image/png;base64,RkFJTUU="
+
+    def _fake_frame_fail(url):
+        return None
+
+    monkeypatch.setattr("app.media.inline.clip_last_frame_uri", _fake_frame_ok)
+    monkeypatch.setattr("app.media.inline.clip_tail_data_uri", lambda u: None)
+    p = svc._job_params({"reference_videos": ["https://cdn/x.mp4"]})
+    assert p.reference_images == ["data:image/png;base64,RkFJTUU="]
+    assert p.reference_videos == []
+
+    # 抽帧失败 → 回退裁尾视频
+    monkeypatch.setattr("app.media.inline.clip_last_frame_uri", _fake_frame_fail)
+    monkeypatch.setattr("app.media.inline.clip_tail_data_uri", lambda u: "data:video/mp4;base64,VkFJTUU=")
+    p2 = svc._job_params({"reference_videos": ["https://cdn/x.mp4"]})
+    assert p2.reference_videos == ["data:video/mp4;base64,VkFJTUU="]
+    assert p2.reference_images == []
+
+    # 双失败 → 透传整条
+    monkeypatch.setattr("app.media.inline.clip_tail_data_uri", lambda u: None)
+    p3 = svc._job_params({"reference_videos": ["https://cdn/x.mp4"]})
+    assert p3.reference_videos == ["https://cdn/x.mp4"]
+
+    # 尾帧图与定妆图合并去重、总数不越图上限 9
+    monkeypatch.setattr("app.media.inline.clip_last_frame_uri", _fake_frame_ok)
+    many = [f"https://cdn/{i}.mp4" for i in range(12)]
+    p4 = svc._job_params({"reference_videos": many})
+    assert len(p4.reference_images) <= 9

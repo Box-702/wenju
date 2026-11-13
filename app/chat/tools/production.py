@@ -206,8 +206,15 @@ def estimate_speech_seconds(prompt: str) -> float:
 
 
 def check_units_selfcontained(parsed: list[dict[str, Any]]) -> list[str]:
-    """确定性检查：每段必须能独立拍——悬空指代 / 台词超载当场报错，别花钱赌。"""
+    """确定性检查：每段必须能独立拍——悬空指代 / 台词超载 / 台词重播当场报错，别花钱赌。"""
     errors: list[str] = []
+    # 已完成台词账本（seedance 借鉴清单 #4：completed beats 禁止重播）。
+    # 同一条 {} 引用在后面的单元再出现 = 模型会把这句话**再念一遍**
+    # （果园 v3 段2「他刚听完质问『…』」就是这种写法，靠引用上段台词演反应
+    # ——独立采样听不到上段，只会重说）。反应镜要写身体反应，不引用台词。
+    # 注：normalize_units 补的全局锚句在台词引用前截断（_DIALOGUE_RE），
+    # 不含 {} 段，不会污染账本。
+    spoken: dict[str, int] = {}
     for i, u in enumerate(parsed, 1):
         prompt = str(u.get("prompt") or "")
         dur = float(u.get("duration_sec") or 0)
@@ -222,6 +229,18 @@ def check_units_selfcontained(parsed: list[dict[str, Any]]) -> list[str]:
             errors.append(
                 f"第 {i} 段台词约 {speech:.1f}s，超过本段生成时长 {dur:.0f}s（含 1s 余量）："
                 f"台词会被截断或挤掉表演——加长该段或精简台词")
+        for q in _QUOTED_RE.finditer(prompt):
+            text = next((g for g in q.groups() if g), "")
+            key = re.sub(r"[\s,，.。!！?？'\"'']+", "", text).lower()
+            if len(key) < 8:
+                continue  # 短感叹词重复是正常戏剧手法，不管
+            if key in spoken:
+                errors.append(
+                    f"第 {i} 段重播了第 {spoken[key]} 段已念的台词「{text[:40]}…」："
+                    f"独立采样听不到上段，这句会被再念一遍——反应镜请写身体反应"
+                    f"（眉头渐锁/喉结滚动），不要引用上段台词")
+            else:
+                spoken.setdefault(key, i)
     return errors
 
 

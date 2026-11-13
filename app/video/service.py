@@ -92,8 +92,13 @@ def _job_params(payload: dict[str, Any]) -> Any:
     还贵（实测 ¥8.3/镜里 ¥4.5 是输入视频）。衔接只需要前镜**结尾**，
     公网直链在这里裁尾 2.5s 内联；用户手挑的参考素材不动（那是创作输入，
     不是接力锚）。
+
+    接力锚首选尾帧**图**（2026-11-13 seedance 借鉴清单 #1）：reference_image
+    前 5 张免费、零输入秒计费，且静帧只锚身份/环境/光线，不夹带上一镜的
+    运镜信号（两条不同机位的接力视频会互相打架，果园 v2「中段偏移」嫌疑）；
+    抽帧失败回退裁尾视频（可用性 > 省钱）。
     """
-    from ..media.inline import clip_tail_data_uri, inline_media_urls
+    from ..media.inline import clip_last_frame_uri, clip_tail_data_uri, inline_media_urls
     from .base import VideoJobParams
 
     # 这些键有专门的归处：既不要重复塞进 extra，也不要当作未知字段透传给 provider。
@@ -103,12 +108,20 @@ def _job_params(payload: dict[str, Any]) -> Any:
         "reference_images", "reference_videos", "reference_audios", "content",
     }
     ref_videos: list[str] = []
+    relay_frames: list[str] = []
     for u in inline_media_urls(deps.store(), payload.get("reference_videos") or []):
         if u.startswith("http"):
-            # 接力成片直链：裁尾内联；裁失败回退整条（可用性 > 省钱）
-            ref_videos.append(clip_tail_data_uri(u) or u)
+            # 接力成片直链：优先抽尾帧图（免费档）；失败裁尾内联，再失败透传整条
+            frame = clip_last_frame_uri(u)
+            if frame:
+                relay_frames.append(frame)
+            else:
+                ref_videos.append(clip_tail_data_uri(u) or u)
         else:
             ref_videos.append(u)
+    ref_images = inline_media_urls(deps.store(), payload.get("reference_images") or [])
+    # 尾帧图排在定妆图之后：身份锚优先，空间衔接其次；总数不越服务商上限（图 ≤9）
+    ref_images = list(dict.fromkeys(ref_images + relay_frames))[:9]
     return VideoJobParams(
         duration_sec=int(payload.get("duration_sec") or 6),
         resolution=str(payload.get("resolution") or "1280x720"),
@@ -118,7 +131,7 @@ def _job_params(payload: dict[str, Any]) -> Any:
         negative_prompt=payload.get("negative_prompt"),
         image_url=payload.get("first_frame_image"),
         last_frame_image=payload.get("last_frame_image"),
-        reference_images=inline_media_urls(deps.store(), payload.get("reference_images") or []),
+        reference_images=ref_images,
         reference_videos=ref_videos,
         reference_audios=inline_media_urls(deps.store(), payload.get("reference_audios") or []),
         content=payload.get("content"),

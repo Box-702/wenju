@@ -137,6 +137,59 @@ def inline_media_urls(store: Any, urls: list[str]) -> list[str]:
 RELAY_TAIL_SEC = 2.5
 
 
+def clip_last_frame_uri(url: str, *, timeout: float = 90.0) -> str | None:
+    """下载公网成片 → ffmpeg 抽**最后一帧** → PNG data URI。失败返回 None。
+
+    接力锚的更优形态（2026-11-13 seedance 借鉴清单 #1 落地）：
+    - reference_image 每任务前 5 张免费，尾帧图 ≈ 0 成本；裁尾视频按输入秒计费；
+    - 视频是**运镜模仿**信号（厂商语义），两条不同机位的接力视频会互相打架
+      （果园 v2「中段偏移」嫌疑）；一张静帧只锚身份/环境/光线，不塞运动指令，
+      运镜交回提示词文字（[Shot N] 语法 + camera_path 句式）；
+    - 与 re-anchor 纪律同向：产物链只做空间衔接，不做身份传递。
+    """
+    if not url.startswith(("http://", "https://")):
+        return None
+    try:
+        import base64
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        import httpx
+
+        from ..video.assemble import find_ffmpeg
+
+        ffmpeg = find_ffmpeg()
+        if not ffmpeg:
+            return None
+        with httpx.Client(timeout=timeout, follow_redirects=True, trust_env=False) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            raw = resp.content
+        if len(raw) > MAX_INLINE_BYTES:
+            return None
+        with tempfile.TemporaryDirectory(prefix="relay_frame_") as tmp:
+            src = Path(tmp) / "in.mp4"
+            dst = Path(tmp) / "last.png"
+            src.write_bytes(raw)
+            # -sseof -0.25：末尾 0.25s 内取帧；-update 1 只留最后一张
+            r = subprocess.run(
+                [ffmpeg, "-y", "-loglevel", "error", "-sseof", "-0.25", "-i", str(src),
+                 "-update", "1", "-frames:v", "1", "-q:v", "2", str(dst)],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r.returncode != 0 or not dst.exists():
+                log.warning("尾帧抽取失败（回退裁尾视频）：%s", r.stderr[:160])
+                return None
+            data = dst.read_bytes()
+            if len(data) > MAX_INLINE_BYTES:
+                return None
+            return f"data:image/png;base64,{base64.b64encode(data).decode('ascii')}"
+    except Exception as e:  # noqa: BLE001
+        log.warning("尾帧抽取异常（回退裁尾视频）：%s", e)
+        return None
+
+
 def clip_tail_data_uri(url: str, *, tail_sec: float = RELAY_TAIL_SEC,
                        timeout: float = 90.0) -> str | None:
     """下载公网成片 → ffmpeg 裁出尾部 → data URI。失败返回 None（调用方回退整条）。

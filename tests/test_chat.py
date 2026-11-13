@@ -948,3 +948,29 @@ def test_estimate_speech_seconds_中英口径():
     assert 2.0 <= estimate_speech_seconds("{I have as much soul as you}") <= 3.5
     assert 2.5 <= estimate_speech_seconds("「我没有感情没有灵魂吗」") <= 4.5
     assert estimate_speech_seconds("没有台词的镜头") == 0
+
+
+def test_import_storyboard_台词重播闸门(store, llm):
+    """completed beats 禁止重播（借鉴清单 #4）：同一条台词引用在后续单元
+    再出现=独立采样会把这句再念一遍，当场拦。"""
+    import json as _json
+    tools, collector = _make_tools(store, llm)
+    units = _json.dumps([
+        {"prompt": "酒馆深夜，40岁掌柜擦杯子，对进门者说：{You again? What do you want now?}", "duration_sec": 8},
+        {"prompt": "At 00:08, cuts to 来客近景：他听到那句「You again? What do you want now?」，眉头皱起。", "duration_sec": 6},
+    ], ensure_ascii=False)
+    r = tools["import_storyboard"].invoke({"units": units, "title": "重播测试"})
+    assert "重播" in r and "未落库" in r
+    assert collector["project_id"] is None
+
+
+def test_check_units_锚句引用不计重播():
+    """normalize 前置的全局锚在台词引用前截断，不会把首段台词带进后段
+    造成误报——果园 v3 修正版（台词各段写全文、互不引用）必须放行。"""
+    from app.chat.tools.production import check_units_selfcontained
+    parsed = [
+        {"prompt": "果园午后，20岁西方少女过肩，哽咽说道：{Am I a machine without feelings?}", "duration_sec": 9},
+        {"prompt": "果园午后，20岁西方少女过肩，眼眶泛红。30岁绅士正面近景，眉头微蹙沉默倾听。", "duration_sec": 6},
+        {"prompt": "果园午后，20岁西方少女过肩。她说道：{I have as much soul as you, and full as much heart!}", "duration_sec": 8},
+    ]
+    assert check_units_selfcontained(parsed) == []

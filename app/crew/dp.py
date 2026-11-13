@@ -118,6 +118,19 @@ def _fmt_ts(sec: float) -> str:
     return f"{int(m):02d}:{s:06.3f}"
 
 
+_LIGHT_RE = re.compile(
+    r"([^，。,]*(?:光|逆光|侧光|顶光|灯光|烛光|日光|阳光|月光|"
+    r"light|lighting|backlit|rim)[^，。,]*)")
+
+
+def _light_phrase(env: str) -> str:
+    """从环境段里摘光线短句（lock line 用）：取第一个含光词的从句，没有就空。"""
+    if not env:
+        return ""
+    m = _LIGHT_RE.search(env)
+    return m.group(1).strip("，。, ") if m else ""
+
+
 def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
                         *, language: str) -> None:
     """把同 group 的机位折叠成一条组提示词（就地写 group_prompt 到组头镜头）。
@@ -149,6 +162,12 @@ def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
             if v:
                 seg.append(v)
         cursor = 0.0
+        # lock line（seedance 借鉴清单 #3，2026-11-13）：模型跨切镜不保留任何
+        # 提示词没重复的东西——组头的全局锚只管到第一个机位，后半组
+        # 「光线变暖/换脸」就是这么漂的。每个机位块尾逐字重述一次
+        # 身份+光线锚（代码拼，不让 LLM 自己记）；首块紧跟全局锚不重复。
+        lock = "，".join(x for x in (head_parts.get("cast", ""),
+                                     _light_phrase(head_parts.get("env", ""))) if x)
         for i, m in enumerate(members, start=1):
             p = parts.get(m.id, {})
             body = p.get("body", "") or (m.video_prompt or "")
@@ -158,6 +177,8 @@ def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
             else:
                 lead = (f"[Shot {i}] At {_fmt_ts(cursor)}, cuts to {body}" if zh
                         else f"[Shot {i}] At {_fmt_ts(cursor)}, cuts to {body}")
+                if lock:
+                    lead += f"（{lock}不变）" if zh else f" ({lock} unchanged)"
                 seg.append(lead)
             cursor += max(0.0, m.duration_sec)
         style = head_parts.get("style", "")

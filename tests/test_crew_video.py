@@ -1073,3 +1073,28 @@ def test_fold_单镜组不产组提示词():
              subject="甲", duration_sec=4, video_prompt="P")
     _fold_group_prompts([a], {a.id: {"body": "P"}}, language="zh")
     assert a.group_prompt is None
+
+
+def test_fold_group_prompts_lock_line_逐块重述():
+    """lock line（借鉴清单 #3）：模型跨切镜不保留没重复的东西——
+    组内每个后续机位块尾必须逐字重述身份+光线锚（代码拼）。"""
+    from app.crew.dp import _fold_group_prompts
+
+    a = Shot(id="shot_scene_001_010", scene_id="scene_001", order=0, subject="少女",
+             duration_sec=5, group_id="g1", group_index=0, video_prompt="x")
+    b = Shot(id="shot_scene_001_011", scene_id="scene_001", order=1, subject="绅士",
+             duration_sec=4, group_id="g1", group_index=1, video_prompt="y")
+    parts = {
+        a.id: {"env": "果园午后，黄金侧逆光勾勒轮廓", "cast": "20岁西方少女与30岁绅士",
+               "body": "她踱步质问", "style": "写实电影质感"},
+        b.id: {"env": "果园午后，黄金侧逆光勾勒轮廓", "cast": "20岁西方少女与30岁绅士",
+               "body": "绅士沉默倾听", "style": "写实电影质感"},
+    }
+    _fold_group_prompts([a, b], parts, language="zh")
+    gp = a.group_prompt
+    assert gp
+    # 全局锚只写一遍（去重纪律不变）
+    assert gp.count("20岁西方少女与30岁绅士") == 2   # 一次全局锚 + 一次 lock line
+    # Shot 2 块尾带 lock line（身份+光线逐字重述）
+    assert "cuts to 绅士沉默倾听" in gp
+    assert "20岁西方少女与30岁绅士，黄金侧逆光勾勒轮廓不变）" in gp

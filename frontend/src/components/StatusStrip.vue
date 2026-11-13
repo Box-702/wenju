@@ -56,8 +56,8 @@ const secs = computed(() => (props.elapsed / 1000).toFixed(1))
   position: relative;
   width: 7px; height: 7px;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 0 color-mix(in oklch, var(--accent) 55%, transparent);
+  background: #fff;
+  box-shadow: 0 0 0 0 rgba(255, 255, 255, .4);
   animation: ss-breathe 1.6s var(--ease) infinite;
   flex: none;
 }
@@ -87,8 +87,8 @@ const secs = computed(() => (props.elapsed / 1000).toFixed(1))
 }
 
 @keyframes ss-breathe {
-  0%, 100% { opacity: .55; box-shadow: 0 0 0 0 color-mix(in oklch, var(--accent) 40%, transparent); }
-  50% { opacity: 1; box-shadow: 0 0 0 5px color-mix(in oklch, var(--accent) 0%, transparent); }
+  0%, 100% { opacity: .55; box-shadow: 0 0 0 0 rgba(255, 255, 255, .3); }
+  50% { opacity: 1; box-shadow: 0 0 0 5px rgba(255, 255, 255, 0); }
 }
 @keyframes ss-sweep {
   0% { background-position: 130% 0; }

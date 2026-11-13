@@ -806,7 +806,7 @@ function onInput(e) {
   font-family: var(--mono); font-size: 10px; color: var(--dim);
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.mp-item .mi-check { color: var(--accent); flex: none; font-size: 12px; }
+.mp-item .mi-check { color: #fff; flex: none; font-size: 12px; }
 .mp-item .mi-src { flex: none; font-size: 10px; color: var(--dim); }
 
 /* 模型面板三行（对话/生图/视频）：行=维度+当前值，点击切展开区 */

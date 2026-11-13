@@ -332,7 +332,7 @@ function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + '...' : s }
 .shot-order { font-size: 11px; color: var(--text2, #666); }
 .shot-duration { font-size: 10px; color: var(--text2, #555); }
 .video-status { font-size: 12px; margin-left: auto; }
-.video-status.done { color: var(--green, #4ade80); }
+.video-status.done { color: var(--ok); }
 .video-status.generating { color: var(--gold, #e94560); }
 .video-status.ready { color: var(--cyan, #22d3ee); }
 .video-status.review { color: var(--warn); }

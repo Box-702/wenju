@@ -1139,18 +1139,18 @@ onMounted(() => {
   border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px;
   background: var(--panel); display: flex; flex-direction: column; gap: 7px;
 }
-.llm-card.active { border-color: color-mix(in oklch, var(--accent) 50%, var(--line)); background: var(--accent-soft); }
+.llm-card.active { border-color: var(--line-strong); background: rgba(255, 255, 255, .07); }
 .llm-card.add {
   align-items: center; justify-content: center; cursor: pointer;
   border-style: dashed; color: var(--muted); font-size: var(--fs-md); padding: 14px;
   transition: color 150ms var(--ease), border-color 150ms var(--ease), background 150ms var(--ease);
 }
-.llm-card.add:hover { color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }
+.llm-card.add:hover { color: var(--ink); border-color: var(--line-strong); background: rgba(255, 255, 255, .07); }
 .llm-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .llm-name { font-size: var(--fs-md); font-weight: 600; color: var(--ink); }
 .llm-meta { font-size: var(--fs-xs); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .using-badge {
-  align-self: flex-start; font-size: var(--fs-xs); color: var(--accent);
+  align-self: flex-start; font-size: var(--fs-xs); color: var(--ink);
 }
 .llm-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
@@ -1174,7 +1174,7 @@ onMounted(() => {
   width: 7px; height: 7px; border-radius: 50%; flex: none;
   background: var(--dim);
 }
-.side-dot.on { background: var(--ok); }
+.side-dot.on { background: #fff; }
 .side-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-count { font-size: 10px; color: var(--dim); flex: none; font-variant-numeric: tabular-nums; }
 .side-tag { font-size: 10px; color: var(--dim); flex: none; }
@@ -1217,8 +1217,8 @@ onMounted(() => {
   background: var(--dim);
   transition: transform 140ms var(--ease), background 140ms var(--ease);
 }
-.mr-toggle.on { background: var(--accent-soft); border-color: color-mix(in oklch, var(--accent) 45%, transparent); }
-.mr-toggle.on span { transform: translateX(14px); background: var(--accent); }
+.mr-toggle.on { background: rgba(255, 255, 255, .18); border-color: var(--line-strong); }
+.mr-toggle.on span { transform: translateX(14px); background: #fff; }
 
 /* 图标按钮：表格行里的小操作（编辑 / 删除） */
 .icon-btn {
@@ -1229,7 +1229,7 @@ onMounted(() => {
   transition: color 130ms var(--ease), background 130ms var(--ease), border-color 130ms var(--ease);
 }
 .icon-btn:hover { color: var(--ink); background: rgba(255, 255, 255, .07); border-color: var(--line); }
-.icon-btn.danger:hover { color: var(--bad); border-color: color-mix(in oklch, var(--bad) 40%, transparent); }
+.icon-btn.danger:hover { color: var(--ink); border-color: var(--line-strong); background: rgba(255, 255, 255, .09); }
 .icon-btn .app-ic { width: 13px; height: 13px; }
 
 /* 模型清单：厂商下列出的模型，可逐个启用 / 改 / 删 */
@@ -1257,11 +1257,11 @@ onMounted(() => {
 .key-row { display: flex; gap: 8px; }
 .key-row .modal-input { flex: 1; }
 .test-result { margin-top: 8px; padding: 8px 12px; border-radius: var(--radius-md); font-size: var(--fs-sm); }
-.test-result.ok { background: rgba(74, 222, 128, .1); color: var(--ok); }
-.test-result.err { background: color-mix(in oklch, var(--bad) 12%, transparent); color: var(--bad); }
+.test-result.ok { background: rgba(255, 255, 255, .08); color: var(--ink); }
+.test-result.err { background: rgba(255, 255, 255, .08); color: var(--ink); }
 
 .status-dot { width: 8px; height: 8px; border-radius: 50%; }
-.status-dot.on { background: var(--ok); }
+.status-dot.on { background: #fff; }
 .status-dot.off { background: var(--dim); }
 
 .sub-modal {
@@ -1281,7 +1281,7 @@ onMounted(() => {
   font-size: var(--fs-sm); color: var(--ink); cursor: pointer;
 }
 .disc-row:hover { background: rgba(255, 255, 255, .05); }
-.disc-row input[type='checkbox'] { accent-color: var(--accent); flex: none; }
+.disc-row input[type='checkbox'] { accent-color: #fff; flex: none; }
 .dr-model { font-family: var(--mono); font-size: 12px; }
 .dr-have { margin-left: auto; font-size: 10.5px; color: var(--dim); flex: none; }
 </style>

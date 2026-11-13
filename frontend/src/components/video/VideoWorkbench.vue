@@ -393,7 +393,6 @@ function formatVersionTime(value) {
 }
 .start-btn {
   background: var(--accent-grad); color: var(--on-accent); border-color: transparent;
-  box-shadow: 0 8px 24px rgba(34, 197, 94, .26);
   margin-left: auto; border: none;
   border-radius: var(--radius-md); padding: 8px 16px; font-size: 12.5px; font-weight: 650; cursor: pointer;
 }
@@ -407,7 +406,7 @@ function formatVersionTime(value) {
 .prompt-gate strong { display: block; color: var(--ink); font-size: 12px; }
 .prompt-gate span { color: var(--dim); font-size: 11px; }
 .prompt-count { display: flex; gap: 10px; flex: none; font-size: 11px; }
-.prompt-count .approved { color: var(--ok); }
+.prompt-count .approved { color: var(--ink); }
 
 .film {
   border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px;
@@ -445,9 +444,9 @@ function formatVersionTime(value) {
 }
 .version-row.current { background: color-mix(in oklch, var(--cyan) 7%, transparent); color: var(--ink); }
 .version-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.version-status.approved { color: var(--ok); }
+.version-status.approved { color: var(--ink); }
 .version-status.needs_review, .version-status.mixed { color: var(--warn); }
-.version-status.needs_revision { color: var(--bad); }
+.version-status.needs_revision { color: var(--muted); }
 .version-count, .version-time { white-space: nowrap; }
 
 .batch { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px; background: var(--panel2); }
@@ -466,8 +465,7 @@ function formatVersionTime(value) {
   border-radius: var(--radius-md); padding: 6px 14px; font-size: 12.5px; cursor: pointer;
 }
 .rv.ok {
-  background: var(--accent-grad); color: var(--on-accent); border-color: transparent;
-  box-shadow: 0 8px 24px rgba(34, 197, 94, .26); font-weight: 600; }
+  background: var(--accent-grad); color: var(--on-accent); border-color: transparent; font-weight: 600; }
 .rv.danger { color: var(--danger, #e5484d); }
 
 @media (max-width: 620px) {

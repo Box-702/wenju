@@ -115,18 +115,18 @@ const batchFailNote = computed(() => batch.value?.error || '批次中断（常�
 h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
 .flex1 { flex: 1; }
 .badge { font-size: 11.5px; color: var(--warn, #d6a419); }
-.ok { font-size: 11.5px; color: var(--ok); }
+.ok { font-size: 11.5px; color: var(--ink); }
 .muted { font-size: 11.5px; color: var(--muted); }
 .desc { margin: 8px 0 10px; font-size: 12.5px; line-height: 1.7; color: var(--muted); }
 .actions { display: flex; align-items: center; gap: 8px; }
 .film-row { margin-top: 2px; }
 .run { font-size: 12px; color: var(--muted); }
-.err { font-size: 11.5px; color: var(--bad, #f87171); }
+.err { font-size: 11.5px; color: var(--ink); }
 .btn {
   padding: 7px 14px; border-radius: var(--radius-md); font-size: 12.5px;
   border: 1px solid var(--line); cursor: pointer; background: transparent; color: var(--ink);
 }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); font-weight: 600; }
+.btn.primary { background: #fff; border-color: transparent; color: #0a0a0f; font-weight: 600; }
 .btn.ghost { color: var(--muted); }
 .btn.ghost.small { padding: 5px 10px; font-size: 12px; }
 .btn:disabled { opacity: .5; cursor: default; }

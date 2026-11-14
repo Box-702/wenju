@@ -97,6 +97,87 @@ def _budget_for(adaptation_type: str | None) -> float:
 # 确定性闸门用的单镜时长上限：短剧节奏基线（导演技能「不要写 8 秒以上」）。
 CAP_SHOT_SEC = 6.0
 
+# 静态机位占比上限：超过即「躺平」，与 DIR-11 的批评阈值同源。
+MAX_STATIC_RATIO = 0.75
+
+# 兜底指派池：五种动机各配一型（用户口径 2026-11-14：多数镜头只需记录
+# 「从哪拍谁」，正常切镜就够；运镜配给有动机的镜头，且相邻镜头不重型）。
+_MOTION_ASSIGNMENTS = (
+    ("dolly", "in", "向主体缓推，逼近内心的变化"),
+    ("dolly", "out", "缓慢拉远，揭示主体所处的完整处境"),
+    ("pan", "right", "轻摇跟随视线，把注意力递给画外"),
+    ("tilt", "up", "由道具上摇至面孔，让物件先说话"),
+    ("tracking", "left", "侧移跟随走位，保持人物在画面同一侧"),
+)
+
+
+def enforce_motion_ratio(
+    breakdowns: list[SceneBreakdown],
+) -> tuple[list[SceneBreakdown], list[str]]:
+    """确定性运镜闸门 v2（2026-11-14 认知修正）：**静止是基底，运镜是配给**。
+
+    v1 的问题（用户看片指出「运镜刻意且重复」）：只按占比补运动、只会交替
+    推/拉——把「镜头不动」治成了「每镜都在推」，模板句逐字重演三次。
+    视频模型没有「这台相机刚才已经推过了」的记忆，运镜词是套路召唤，
+    写越密越复读。所以 v2：
+      · 只给**有动机的镜**配运镜（function=emotion/pressure 或带台词转折）——
+        答不出「什么变了」的镜保持 static，这是选择不是躺平；
+      · 逐镜**换型**（推→拉→摇→摇上→移），且不与前一运动镜同型；
+      · 动机镜不够补到阈值就**接受更高静态占比**——宁可静止，不做无动机运动。
+    回喂批评管不住才走代码（D-50）；改的是 camera 字段，正文由 DP 兜底拼。
+    """
+    notes: list[str] = []
+    all_shots = [s for bd in breakdowns for s in bd.shots]
+    n_all = len(all_shots)
+    if n_all < 6:
+        return breakdowns, notes
+    statics = [s for s in all_shots
+               if (s.camera.type or "static") in ("static", "steady", "")]
+    if len(statics) / n_all <= MAX_STATIC_RATIO:
+        return breakdowns, notes
+    need = len(statics) - int(n_all * MAX_STATIC_RATIO)
+
+    def has_motive(s: Shot) -> bool:
+        return (str(s.function or "") in ("emotion", "pressure")
+                or bool((s.dialogue_ref or "").strip()))
+
+    # 按 order 走一遍：动机静态镜才配，型不与相邻运动镜重复。
+    ordered = sorted(all_shots, key=lambda s: s.order)
+    pool_idx = 0
+    prev_move_key: tuple[str, str] = ("", "")
+    converted = 0
+    for s in ordered:
+        moving = (s.camera.type or "static") not in ("static", "steady", "")
+        if moving:
+            prev_move_key = (s.camera.type, (s.camera.direction or "").strip())
+            continue
+        if converted >= need or not has_motive(s):
+            continue
+        # 选型：跳过与前一运动镜同型的候选
+        for _ in range(len(_MOTION_ASSIGNMENTS)):
+            cand = _MOTION_ASSIGNMENTS[pool_idx % len(_MOTION_ASSIGNMENTS)]
+            pool_idx += 1
+            if (cand[0], cand[1]) != prev_move_key:
+                break
+        mtype, mdir, path = cand
+        s.camera.type = mtype
+        s.camera.direction = mdir
+        s.camera.path = path
+        s.camera.speed = "slow"
+        prev_move_key = (mtype, mdir)
+        converted += 1
+    if converted:
+        notes.append(
+            f"闸门：固定机位占比 {len(statics)}/{n_all} 超标，"
+            f"{converted} 个有动机镜头已配运镜（逐镜换型）"
+        )
+    elif len(statics) / n_all > MAX_STATIC_RATIO:
+        notes.append(
+            f"闸门：固定机位占比 {len(statics)}/{n_all} 超标，但无动机镜"
+            "不补运动（静止是基底）——若观感仍像 PPT，是导演该重找转折点"
+        )
+    return breakdowns, notes
+
 
 def enforce_duration_budget(
     breakdowns: list[SceneBreakdown], budget_sec: float,
@@ -361,6 +442,40 @@ def _normalize_groups(breakdowns: list[SceneBreakdown]) -> None:
                 s.group_index = 0
 
 
+def auto_group_scene(breakdowns: list[SceneBreakdown]) -> tuple[int, int]:
+    """确定性成组兜底（2026-11-13 默认值翻转）：同一场内相邻的孤立单镜，
+    只要塞得进一次生成的预算（≤15s、≤4 员），就自动打包成组。
+
+    为什么不能只靠 SKILL 教：实测 deepseek 拿到「连续戏默认成组」的新规则
+    后仍几乎不标 group（一场只标过一组）——和运镜、台词同一个病：教了不做。
+    同场相邻镜头本来就是同一时空，成组只会更好不会更坏：组内锚只写一遍、
+    不漂移、声音跨切镜；唯一代价是组太大时单次生成的动作复杂度，人数/秒数
+    上限已经卡死。跨场绝不合并（地点/时间必然跳变）。
+    返回 (新成组的格数, 组数)。
+    """
+    grouped = 0
+    n_groups = 0
+    for bd in breakdowns:
+        shots = sorted(bd.shots, key=lambda s: s.order)
+        run: list[Shot] = []
+        for s in shots + [None]:  # 哨兵收尾
+            eligible = (s is not None and not s.group_id
+                        and sum(x.duration_sec for x in run) + s.duration_sec <= GROUP_MAX_SEC
+                        and len(run) < GROUP_MAX_MEMBERS)
+            if eligible:
+                run.append(s)
+                continue
+            if len(run) >= 2:
+                gid = f"g_auto_{bd.scene_id}_{run[0].order:03d}"
+                for si, x in enumerate(run):
+                    x.group_id = gid
+                    x.group_index = si
+                grouped += len(run)
+                n_groups += 1
+            run = [s] if s is not None and not s.group_id else []
+    return grouped, n_groups
+
+
 
 class DirectorAgent(CrewAgent):
     """导演 Agent：将剧本拆解为镜头方案。"""
@@ -442,6 +557,8 @@ class DirectorAgent(CrewAgent):
                 # 闸门按「预算」而不是「上限」收——超预算的秒数就是超预算的钱。
                 budget = _budget_for(adaptation_type)
                 gated, notes = enforce_duration_budget(breakdowns, budget)
+                gated, motion_notes = enforce_motion_ratio(gated)
+                notes.extend(motion_notes)
                 summary = (
                     f"导演完成 {len(gated)} 个场景的镜头拆解，"
                     f"共 {sum(len(b.shots) for b in gated)} 个镜头"
@@ -453,6 +570,9 @@ class DirectorAgent(CrewAgent):
         # 迭代用完仍不合格：批评可以不理，预算不能不理——钱是硬约束。
         budget = _budget_for(adaptation_type)
         gated, notes = enforce_duration_budget(last, budget)
+        # 运镜是导演语言不是可选项：批评回喂不理的，代码兜底（5.44 同款纪律）。
+        gated, motion_notes = enforce_motion_ratio(gated)
+        notes.extend(motion_notes)
         total = sum(len(b.shots) for b in gated) if gated else 0
         summary = f"导演完成拆解（共 {total} 镜）"
         if notes:
@@ -886,6 +1006,8 @@ class DirectorAgent(CrewAgent):
             breakdowns.append(breakdown)
 
         _normalize_groups(breakdowns)
+        # 导演不标组时由代码兜底成组（同场相邻孤立单镜，≤15s/≤4 员）。
+        auto_group_scene(breakdowns)
         return breakdowns
 
 

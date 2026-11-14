@@ -10,13 +10,24 @@
 #   production.py   生产域：一键跑「小说 → 提示词」整条流水线
 #   crew.py         剧组域：拆解 / 风格指南 / 定妆图 / 视频提示词（后台任务）
 #   video.py        出片域：批准 / 提交 / 重跑 / 素材 / 合成 / 查进度
+#   blockout.py     白模域：施工单起草调整 / 后台渲染 / 查结果（D-54）
 #   memory_tools.py 轻件域：记忆（remember/recall）与技能加载（load_skill）
 #
 # 工具都是闭包工厂：`build(ctx)` 返回一组绑定上下文的 @tool。
 # 跨域共享的小件（项目上下文、状态标签、文本截断）收在 context.py。
 # =====================================================================
 
-from . import asset, crew, memory_tools, production, screenplay, script_reader, source, video
+from . import (
+    asset,
+    blockout,
+    crew,
+    memory_tools,
+    production,
+    screenplay,
+    script_reader,
+    source,
+    video,
+)
 from .context import Collector, ToolContext, short
 
 
@@ -41,6 +52,7 @@ def build_chat_tools(
         *source.build_source_tools(ctx),
         *script_reader.build(ctx),
         *asset.build_asset_tools(ctx),
+        *blockout.build_blockout_tools(ctx),
         *production.build(ctx),
         *crew.build(ctx),
         *video.build(ctx),

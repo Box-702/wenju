@@ -117,6 +117,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     "· 改提示词 → edit_shot_prompt（改后该镜回到待审）；列资产库与 id → list_assets\n"
     "· 出片（生成视频 / 提交视频）→ submit_videos；重 roll → rerun_video；取消在途 → cancel_video_job\n"
     "· 合成成片（拼成片 / 出完整视频）→ finalize_film\n"
+    "· 白模（做 / 改 / 渲染白模）→ load_skill 'blockout' 再用 blockout_* 工具（D-54）\n"
     "· 记忆：系统提示里的「用户记忆」要主动遵循；说「记住… / 以后都…」→ remember；说「忘掉」→ forget\n"
     "· 长篇小说（原文超过约 1.4 万字）→ 先加载 novel-serial 技能，不要直接 generate_script\n"
     "\n"

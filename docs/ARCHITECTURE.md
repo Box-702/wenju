@@ -11,7 +11,7 @@
 资产与版本全部落库。
 
 ```
-用户 ←→ 对话 Agent（手写工具循环，27 个工具）
+用户 ←→ 对话 Agent（手写工具循环，31 个工具）
           ├── 改编工作流（LangGraph 7 节点 + interrupt 人审）→ 剧本版本
           ├── 剧组三函数（导演 → 美术 → 摄影）→ 分镜 / 视觉锚 / 视频提示词
           ├── 出片（Provider 抽象 → 队列 → 巡检 → 拼接 → 配音字幕）
@@ -39,7 +39,7 @@
 | 想改 | 去哪 |
 |---|---|
 | 写作 / 分镜规则 | `app/skills/*/SKILL.md`（不用动代码，改完跑 `python -m evals.run`） |
-| 对话行为与工具 | `app/chat/loop.py`（内核）+ `app/chat/tools/*`（27 个工具按域拆） |
+| 对话行为与工具 | `app/chat/loop.py`（内核）+ `app/chat/tools/*`（31 个工具按域拆） |
 | 改编流程 | `app/agent/graph.py` + `nodes.py` |
 | 模型厂商 | `app/llm/providers.py` 加一条 `ProviderSpec` |
 | 出片供应商 | `app/video/providers/` + `registry.py` |
@@ -66,8 +66,8 @@ app/
 ├── agent/      改编智能体   —— LangGraph 状态图（固定流程 + interrupt 人机协同）+ 后台任务运行器
 ├── chat/       对话编排层   —— 手写工具循环（loop.py）+ 工具实现按域拆分（chat/tools/）
 ├── crew/       剧组 Agent   —— 导演 / 美术指导 / 摄影指导
-├── media/      参考资产层   —— 资产键解析（assets：id 是主键、名字是别名）/ 定妆图 → 质检 → 注册 → 回填 / 配音 / 字幕
-└── video/      视频生成层   —— Provider 抽象 + 队列 + 巡检 + 连续性 + 拼接 + 成片合成
+├── media/      参考资产层   —— 资产键解析（assets：id 是主键、名字是别名）/ 定妆图 → 质检 → 注册 → 回填 / 配音 / 字幕 / 白模施工单（D-54）
+└── video/      视频生成层   —— Provider 抽象 + 队列 + 巡检 + 连续性 + 拼接 + 成片合成 + 用量摘要（D-53）
 
 N2D/                          小说→成片直跑工作流（体检/批处理用，与产品共用同一套 app/* 函数）
 ├── novel2video.py            十步流水线 + --resume 断点续跑 + --shot-limit 分批；产物落 ~/.wenju/runs/
@@ -76,19 +76,19 @@ N2D/                          小说→成片直跑工作流（体检/批处理�
 └── probe_seedance.py         Seedance 适配器校准探针（真 key 打最小任务对字段）
 ```
 
-**体量分布**（约 2.1 万行 Python，越靠上越重业务）：
+**体量分布**（实测约 2.7 万行 Python，越靠上越重业务）：
 
 | 包 / 模块 | 行数 | 说明 |
 |---|---|---|
 | `pipeline/` | 2870 | 内容生产线：导入、两阶段生成、patch、评审、题材画像 |
 | `api/` | 2646 | 9 个域模块（+ common/schemas/deps），83 条路由 |
-| `video/` | 2518 | Provider 适配 + 队列 + 巡检 + 拼接 + 合成 |
+| `video/` | 4112 | Provider 适配 + 队列 + 巡检 + 拼接 + 合成 + 用量摘要 |
 | `crew/` | 2262 | 三个剧组角色的编排（提示词正文已外置到 `skills/`） |
-| `chat/` | 2528 | 内核 332 行 + 编排 826 行 + 27 个工具实现 |
-| `media/` | 1846 | 参考资产 / 配音 / 字幕 / 资产实体层 |
+| `chat/` | 2528 | 内核 332 行 + 编排 826 行 + 31 个工具实现 |
+| `media/` | 3075 | 参考资产 / 配音 / 字幕 / 白模施工 / 资产实体层 |
 | `agent/` | 1678 | 7 节点图 + 后台任务运行器 |
 | `llm/` | 1302 | 门面 + 厂商表 + 视觉/文生图/TTS 客户端 |
-| `skills/` | 284 | 只有加载器；**长指令在 9 个 SKILL.md 里**（不计入 Python 行数） |
+| `skills/` | 284 | 只有加载器；**长指令在 10 个 SKILL.md 里**（不计入 Python 行数） |
 | `store.py` | 1795 | 16 张表的持久化层（含出片意图 claim 表 `video_job_claims`，见 D-38） |
 | `domain.py` | 614 | Pydantic 领域模型（含 id 格式约束） |
 
@@ -244,7 +244,7 @@ OpenAI 兼容服务都支持它——**MiniMax 实测报 `2013 unknown response_
 
 先给结论，因为这块最容易想歪：
 
-> **只有一个 LLM Agent（对话编排层），调度 27 个工具。剧组三个「角色」是函数，不是进程。**
+> **只有一个 LLM Agent（对话编排层），调度 31 个工具。剧组三个「角色」是函数，不是进程。**
 > **「按需加载」只发生在主 Agent 那一层；剧组三个角色的技能是每次全量拼进系统提示的。**
 
 为什么不做进程级多 Agent（每个角色独立上下文、独立工具集、互相通信）：它们各自只做
@@ -256,7 +256,7 @@ OpenAI 兼容服务都支持它——**MiniMax 实测报 `2013 unknown response_
 
 | Agent | 角色 | 职责 |
 |---|---|---|
-| **ChatConductor** | 前厅 / 调度 | 绑定 27 个工具理解用户意图，把请求路由到确定性流水线或后台剧组任务 |
+| **ChatConductor** | 前厅 / 调度 | 绑定 31 个工具理解用户意图，把请求路由到确定性流水线或后台剧组任务 |
 
 **内核是手写的显式循环**（`app/chat/loop.py`，2026-11-05 替换掉 LangGraph 的 StateGraph + ToolNode）：
 
@@ -278,7 +278,7 @@ for step in range(max_steps):        # 上限 8 轮，防止无限工具调用
 系统提示分两层：**触发器留在提示词**（决定该调哪个工具，每轮都要用），**执行细则进技能**
 （`audience: main` 的五个 SKILL.md，由 `load_skill` 工具按需拉）。见 [`DECISIONS.md` D-14](DECISIONS.md)。
 
-27 个工具的实现按域拆在 `app/chat/tools/`（conductor 只留编排，`build_chat_tools` 是装配壳）：
+31 个工具的实现按域拆在 `app/chat/tools/`（conductor 只留编排，`build_chat_tools` 是装配壳）：
 `screenplay.py`（项目与改编）/ `source.py`（读原文）/ `script_reader.py`（读作品）/
 `production.py`（一键流水线）/ `crew.py`（剧组）/ `asset.py`（资产与音色）/
 `video.py`（出片与素材）/ `memory_tools.py`（记忆与技能），
@@ -455,6 +455,8 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
   continuity.resolve_continuity() 已实现「reference_group / chain_from → reference_videos」
   （上一镜成片的公开直链作为下一镜的参考素材，无需额外图床）——
   单镜和批量投递都会再次校验 Prompt 是否已批准
+  usage.job_usage() 提交时落「生成秒数 / 参考视频条数与总时长 / 参考图张数」
+  三类用量（D-53：界面零费用，逐笔对账走厂商控制台）
 
 ⑨ 拼接成片          app/video/assemble.py（FFmpeg concat / filter_complex）
 

@@ -72,3 +72,9 @@ def finalize_manager():
     from .video.finalize import get_finalize_manager
 
     return get_finalize_manager()
+
+
+def blockout_manager():
+    from .media.blockout import get_blockout_manager
+
+    return get_blockout_manager()

@@ -751,7 +751,9 @@ def test_system_prompt_keeps_hard_rules():
 
 def test_system_prompt_stays_within_budget():
     """目录只放 name+description，正文靠 load_skill 拉——所以技能变多，提示词也只长几行。"""
-    assert len(system_prompt()) < 2400, f"系统提示 {len(system_prompt())} 字，超出预算"
+    # 预算随主技能目录增长（D-54 起第 10 个 main 技能）；仍守住渐进披露：
+    # 目录一行摘要，细则靠 load_skill 现取，不把正文灌进系统提示。
+    assert len(system_prompt()) < 2600, f"系统提示 {len(system_prompt())} 字，超出预算"
 
 
 def test_every_trigger_points_at_a_real_tool(store, llm):

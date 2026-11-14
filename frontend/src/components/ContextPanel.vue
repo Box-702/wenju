@@ -174,9 +174,19 @@ function openPreview(item) {
 
 /** 消耗/产出概览（C7）：镜头视图顶部一行，纯创作者语言，无数据就整块不显示。 */
 const overview = computed(() => store.overview)
-const costLabel = computed(() => {
-  const c = overview.value?.cost_estimate_usd
-  return c ? `≈ $${c.toFixed(2)}` : ''
+// 用量标签（D-53）：界面不显示费用——只显示「生成多少秒 / 参考视频多长 / 参考图几张」。
+const usageLabel = computed(() => {
+  const o = overview.value
+  if (!o) return ''
+  const parts = []
+  if (o.video_seconds_planned) parts.push(`生成 ${o.video_seconds_planned.toFixed(0)} 秒`)
+  if (o.ref_video_count) {
+    parts.push(o.ref_video_seconds
+      ? `参考视频 ${o.ref_video_seconds.toFixed(0)} 秒`
+      : `参考视频 ${o.ref_video_count} 条`)
+  }
+  if (o.ref_image_count) parts.push(`参考图 ${o.ref_image_count} 张`)
+  return parts.join(' · ')
 })
 
 async function refresh() {
@@ -279,8 +289,8 @@ watch(() => store.assetRefreshSeq, refresh)
 
     <!-- 镜头：分镜 + 已生成的视频 -->
     <div v-else-if="store.sideView === 'shots'" class="cp-body">
-      <!-- 消耗/产出概览（C7）：一行说清走到哪、大概花了多少。
-           数字全来自后端 overview（只聚合已落库的，预估标「≈」）；
+      <!-- 消耗/产出概览（C7）：一行说清走到哪、用了多少资源（D-53：不显示费用）。
+           数字全来自后端 overview（只聚合已落库的）；
            还没有镜头方案时不显示（「0 镜 · 成片 0」不是信息是噪音）。 -->
       <div v-if="overview && (overview.shots || overview.finalized)" class="cp-overview">
         <span>{{ overview.shots }} 镜</span>
@@ -292,7 +302,7 @@ watch(() => store.assetRefreshSeq, refresh)
           <span class="ov-sep">·</span>
           <span class="ov-warn">失败 {{ overview.shots_failed }}</span>
         </template>
-        <span v-if="costLabel" class="ov-cost">{{ costLabel }}</span>
+        <span v-if="usageLabel" class="ov-usage">{{ usageLabel }}</span>
         <span v-if="overview.finalized" class="ov-final">
           成片 {{ overview.finalized.duration_sec.toFixed(0) }} 秒{{ overview.finalized.dubbed ? ' · 已配音' : '' }}{{ overview.finalized.subtitled ? ' · 有字幕' : '' }}
         </span>
@@ -460,7 +470,7 @@ watch(() => store.assetRefreshSeq, refresh)
 }
 .ov-sep { color: var(--dim); }
 .ov-warn { color: var(--gold); }
-.ov-cost { margin-left: auto; color: var(--dim); }
+.ov-usage { margin-left: auto; color: var(--dim); }
 .ov-final { flex-basis: 100%; color: var(--dim); font-size: 11px; }
 
 .cp-subtitle-row {

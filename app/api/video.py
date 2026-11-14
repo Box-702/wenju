@@ -724,6 +724,15 @@ from ..video.service import (  # noqa: E402,F401
 from ..video import service as _video_service  # noqa: E402
 
 
+def _job_usage(params: dict[str, Any]) -> dict[str, Any]:
+    """任务用量摘要（D-53）：界面不显示费用——只显示「生成多少秒 / 参考」。
+    新任务用提交时落库的 usage；老任务没有就退回只计数（不编时长）。"""
+    usage = params.get("usage")
+    if isinstance(usage, dict) and usage:
+        return usage
+    return _video_service.usage.fallback_usage(params)
+
+
 def _job_dict(j: Any) -> dict[str, Any]:
     return {
         "id": j.id,
@@ -734,7 +743,7 @@ def _job_dict(j: Any) -> dict[str, Any]:
         "status": j.status,
         "video_url": j.video_url,
         "error_message": j.error_message,
-        "cost_estimate": j.cost_estimate,
+        "usage": _job_usage(dict(j.params or {})),
         "params": j.params or {},
         "created_at": j.created_at.isoformat(),
         "finished_at": j.finished_at.isoformat() if j.finished_at else None,
@@ -764,7 +773,7 @@ def create_video_job(project_id: str, payload: VideoJobCreate) -> dict[str, Any]
         "status": "submitted" if created else job.status,
         "provider": job.provider,
         "model": job.model,
-        "cost_estimate": job.cost_estimate,
+        "usage": _job_usage(dict(job.params or {})),
         "reused": not created,
     }
 

@@ -749,3 +749,23 @@ def test_auto_references_记录接力锚产物出身(store, llm, settings, monke
     svc._auto_references("proj_x", "shot_001_001", "vver_new", params3)
     assert "https://cdn.example.com/manual.mp4" in params3["reference_videos"]
     assert params3.get("relay_providers") == {"https://x/CLIP.mp4": "seedance"}
+
+
+# ---------- 用量摘要取代费用估算（D-53） ----------
+
+
+def test_job_serialization_用用量取代费用(client, sample_text, monkeypatch):
+    """D-53：任务序列化与提交响应里不再有费用估算，只有用量摘要。"""
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
+    project = _project(client, sample_text)
+    version_id = _version(client, project["id"], [_shot("shot_a")])
+
+    r = _submit(client, project["id"], version_id, "shot_a")
+    assert r.status_code == 200, r.text
+    assert "cost_estimate" not in r.json()
+    assert r.json()["usage"]["gen_sec"] >= 1
+
+    jobs = client.get(f"/api/projects/{project['id']}/video/jobs").json()
+    assert jobs and all("cost_estimate" not in j for j in jobs)
+    assert jobs[0]["usage"]["gen_sec"] >= 1
+    assert jobs[0]["usage"]["ref_video_count"] == 0

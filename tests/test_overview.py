@@ -3,7 +3,8 @@
 #
 # 只聚合已落库的数据，不新增采集点。这组测试锁住的是**口径**——
 # 数字算错比没有数字更糟：
-#   - 预估费用只算真提交出去的任务（没拿到 external_task_id = 没花钱）；
+#   - 用量（秒数/参考）只算真提交出去的任务（没拿到 external_task_id = 没出门）；
+#   - 费用估算不进界面（D-53：预估与实付脱节只会伤信任）；
 #   - 镜头完成/失败按「每镜最新一次」判（重 roll 后旧失败不该还挂着）；
 #   - 定妆图按素材去重（多角色共用一张不该算两个）；
 #   - 全部是创作者语言，响应里不出现 token 字样。
@@ -76,23 +77,30 @@ def test_overview_counts_and_no_token_words(client, store, sample_text):
     assert "token" not in str(body).lower()
 
 
-def test_overview_cost_only_counts_submitted(client, store, sample_text):
-    """预估费用只累加真提交出去的（有 external_task_id）任务。"""
+def test_overview_usage_only_counts_submitted(client, store, sample_text):
+    """用量聚合（D-53）只累加真提交出去的（有 external_task_id）任务；
+    费用估算不再出现在概览响应里。"""
     pid, _ = _project_with_two_shots(client, store, sample_text)
-    # 一条已提交（计费）、一条只落库没出门（不该计费）
+    # 一条已提交（计用量）、一条只落库没出门（不计）
     store.create_video_job(
         project_id=pid, shot_id="shot_1", provider="minimax", model="default",
-        prompt="p", params={}, cost_estimate=0.5,
+        prompt="p", params={"usage": {"gen_sec": 6.0, "ref_video_count": 1,
+                                       "ref_video_sec": 4.5, "ref_image_count": 2}},
     )
     submitted = store.create_video_job(
         project_id=pid, shot_id="shot_2", provider="minimax", model="default",
-        prompt="p", params={}, cost_estimate=0.9,
+        prompt="p", params={"usage": {"gen_sec": 8.0, "ref_video_count": 2,
+                                       "ref_video_sec": 5.0, "ref_image_count": 1}},
     )
     store.update_video_job(submitted.id, external_task_id="ext-123")
 
     body = client.get(f"/api/projects/{pid}/overview").json()
-    assert body["cost_estimate_usd"] == pytest.approx(0.9)  # 只有出门那条算钱
+    assert body["video_seconds_planned"] == pytest.approx(8.0)  # 只有出门那条算用量
+    assert body["ref_video_seconds"] == pytest.approx(5.0)
+    assert body["ref_video_count"] == 2
+    assert body["ref_image_count"] == 1
     assert body["video_submissions"] == 1
+    assert "cost_estimate_usd" not in body  # 费用不进界面（D-53）
 
 
 def test_overview_uses_latest_job_per_shot(client, store, sample_text):

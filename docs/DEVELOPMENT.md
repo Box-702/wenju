@@ -2205,6 +2205,70 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   resolve_continuity 的 order 解析照旧不变。
 - **涉及文件**：`app/video/continuity.py`；测试 `tests/test_crew_video.py`。
 
+### 5.57 界面费用估算下线：资源用量取代（D-53，2026-11-14）
+
+- **症状**（用户指示）：「价格计算这边不用算，给用户使用的时候只显示
+  预期要生成多少秒的视频、多长的参考视频和多少张参考图」。此前的数字
+  全是粗估——导入回执 `est = n_units * 1.2` 是拍脑袋值，提交时按秒的
+  简化估算两次实测脱节（T-03/T-05：预估 3.6 vs 实付 27.7）。
+- **根因**：费用是提交后才知道的结果，提交前的任何预估要么漏算输入秒
+  要么拍脑袋——估不准的数字比没有数字更伤信任。
+- **解法**：见 D-53。三处用户面（任务序列化 `_job_dict`/提交响应、作品
+  概览 `project_overview`、导入回执）换成 `usage` 摘要；时长来源三级：
+  本机素材 ffprobe 实测 > 接力锚溯源（产生它的任务的计划时长）> 只计数
+  不编数。submit 停算费用（DB cost_estimate 列保留给历史数据）。
+- **涉及文件**：`app/video/usage.py`（新）、`app/video/service.py`、
+  `app/api/video.py`、`app/api/common.py`、`app/chat/tools/production.py`、
+  `frontend/src/components/ContextPanel.vue`、`frontend/src/stores/app.js`；
+  测试 `tests/test_video_usage.py`（新）、`tests/test_overview.py`、
+  `tests/test_video_idempotency.py`。
+
+### 5.58 Blender 白模导出首测：两个洞（标记未绑相机 + 5.2 视频输出 API 变更）（2026-11-14）
+
+- **症状**（用户点出「blender 那边完全还没实测过」）：①《13号巷》白模
+  （cyberpunk_alley_15s_blockout.blend）的 4 个时间轴标记（S1-S4 切镜点）
+  **没有绑定相机**，活动相机停在 CAM_TOP——直接渲染动画只会得到一条
+  静止俯瞰 15 秒的片子，四个镜头根本不切；② 按 4.x 旧写法
+  `image_settings.file_format = 'FFMPEG'` 在 Blender 5.2 直接 TypeError
+  ——5.x 新增 `media_type` 分流（IMAGE/MULTI_LAYER_IMAGE/VIDEO），不先
+  `media_type='VIDEO'`，file_format 的**动态枚举**里就没有视频容器；
+  报错信息还会把枚举截断到前 15 项，看起来像「FFMPEG 不存在」，
+  极具误导性（静态 bl_rna 枚举里明明有）。
+- **根因**：白模当时只搭了场景与标记位，切镜绑定与导出链路从未跑通
+  （正是「完全没实测」）；文件在 a14c119「砍旁支」时被删出仓库，本地已无。
+- **解法**：从 git 949347f 恢复白模到 `~/.wenju/workspace/blender/`
+  （D-44：用户数据不回项目树）；脚本绑定标记→相机（S1→CAM_S1…S4→
+  CAM_S4）并落盘；渲染走 `media_type='VIDEO'` → `file_format='FFMPEG'`
+  → H264/MPEG4。
+- **验证**：EEVEE 1080p/24fps 渲染 1-360 帧得 **15.0s mp4**（1.17MB）；
+  抽帧哈希四镜 4/4 唯一（切镜成功）；同场内帧有差异（场景带动态元素，
+  非静止）；目视两帧确认真实白模内容（S1 巷道全景 / S4 门边灯光溢出）。
+- **涉及文件**：`~/.wenju/workspace/blender/cyberpunk_alley_15s_blockout.blend`
+  （已含绑定修正落盘）、渲染/验证脚本与产物在 `~/.wenju/runs/blender_test/`。
+- **后续（同日）**：用户定调《13号巷》原文为无效文章，白模线整体弃用——
+  workspace/13号巷（原稿，唯一副本）、恢复的 blend、渲染产物全部删除；
+  blend 原件仍在 git 历史 949347f。本条作为导出链路实测记录保留。
+
+### 5.59 白模施工单功能落地（D-54，2026-11-14）
+
+- **需求**（用户定案）：施工单流程「可以，但要支持用户调整」；产品形态=
+  不做 3D 视口、只看最终导出的白模视频、调整全走对话。
+- **解法**：`app/media/blockout.py`（parse_sheet 严格校验 fail-closed /
+  build_script 确定性生成 / discover_blender / BlockoutManager 仿
+  FinalizeManager）+ 对话工具三件（blockout_sheet_save / blockout_build /
+  blockout_check）+ `app/skills/blockout/SKILL.md`（主技能目录第 10 个，
+  含「相关工具」节）+ conductor 路由行。构建脚本内置 5.58 的两个实测坑
+  （media_type 先于 FFMPEG、标记绑相机）。渲染零花费 → 不走 D-43 闸门。
+- **分层修正**：时长探测**没有**从 media 反向 import video.finalize
+  （media→video 是禁用方向）——媒体层自给 `_duration_sec`
+  （imageio-ffmpeg 直探）。
+- **预算修正**：第 10 个主技能的目录行顶破系统提示预算（实测 2597 > 2400）
+  ——预算放宽到 2600，渐进披露纪律不变（目录一行摘要，细则靠 load_skill）。
+- **涉及文件**：`app/media/blockout.py`、`app/chat/tools/blockout.py`、
+  `app/chat/tools/__init__.py`、`app/chat/conductor.py`、`app/deps.py`、
+  `app/skills/blockout/SKILL.md`；`tests/test_blockout.py`（14 条全离线）、
+  `tests/test_skills.py`、`tests/test_chat.py`。
+
 ---
 
 ## 六、排查手册（症状 → 先查什么）
@@ -2407,3 +2471,37 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **遗留**：① 全量 ruff 551 条预存债务（E501 为主）未清，另开专项；
   ② D-52 的模型级分支（2.0/2.5/未知 fail-closed）等 Seedance 2.5 进支持
   矩阵再做；③ LNG-04 场景地点建模根因未动；④ 导入预估改表价（T-03 遗留）。
+
+
+### T-07 用量口径切换（D-53）+ Blender 白模导出首测（2026-11-14，完成，零花费）
+
+- **假设**：① 用户面费用展示可以整体换成资源用量，且不破坏幂等/闸门链路；
+  ② Blender 白模导出链路能用确定性脚本跑通并机器验证。
+- **过程**：① 摸出三处费用展示面（任务序列化/作品概览/导入回执）→
+  `usage.py` 模块 + 序列化替换 → 回归测试；② Blender 侧从 git 历史恢复
+  白模 → 无头摸底（发现标记未绑相机）→ 5.2 API 探针（发现 media_type
+  门槛）→ 渲染 → 时长/抽帧哈希验证。
+- **发现的问题**：白模切镜标记从未绑定相机（首测即抓）；5.2 视频输出
+  API 变更且报错截断枚举、误导排查方向；旧导入回执的 ¥ 估算是拍脑袋值。
+- **修改**：见 5.57/5.58。
+- **效果**：界面零费用、只报报得准的数字；白模四切 15s mp4 实测交付
+  （`~/.wenju/runs/blender_test/alley13_white_model_4cut.mp4`）。
+- **遗留**：① SettingsModal 的档位价格标签保留（静态目录信息，不是计算）；
+  ② 13号巷白模线同日弃用（用户定调原文无效，文件已删，blend 原件在 git 949347f）——白模→参考素材链路等将来有有效白模需求时再接资产库；
+  ③ 全量 ruff 债务未清（T-06 遗留延续）。
+
+
+### T-08 白模施工单功能 + 真机 E2E（2026-11-14，完成，零花费）
+
+- **假设**：施工单 → 确定性脚本 → headless Blender 的链路可机器验证；
+  对话工具层不破坏既有 conductor/技能机制。
+- **过程**：单测 14 条（解析 fail-closed / 脚本两坑内容断言 / discover 降级 /
+  工具层 / 管理器打桩）→ 全量回归 → 真机 E2E：3 对象 / 2 镜头 / 5s 最小
+  施工单 → 960x540 渲染 → 时长探测 + 跨镜抽帧哈希验证 → 产物清理。
+- **发现的问题**：① 分层违规险些发生（media 反向 import video.finalize，
+  分层规则当轮抓住改媒体层自给）；② 系统提示预算被目录行顶破（见 5.59）；
+  ③ E2E 两次踩脚本自身的坑（裸 python 无依赖、漏 import tempfile）——
+  「跑过」和「验证过」是两回事，尾行断言必须在。
+- **效果**：白模能力进产品对话；工具 27→31，主技能 9→10；测试 582→596。
+- **遗留**：① 白模 mp4 → 参考素材挂接走现有 UI 挑选器（对话侧挂接未做）；
+  ② E2E 产物在 `~/.wenju/runs/blockout_e2e/`（验证完即删）；③ ruff 全量债务未清。

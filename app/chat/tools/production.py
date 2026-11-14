@@ -423,12 +423,12 @@ def build(ctx: ToolContext) -> list:
         )
         n_units = len(parsed)
         total = sum(u["duration_sec"] for u in parsed)
-        est = n_units * 1.2
         return (
-            f"已导入《{p.title}》：{n_units} 段生成单元（{len(shot_dicts)} 个机位，"
-            f"共约 {total:.0f} 秒），提示词逐字保留你的原文（id={version.id}）。"
+            f"已导入《{p.title}》：{n_units} 段生成单元（{len(shot_dicts)} 个机位），"
+            f"提示词逐字保留你的原文（id={version.id}）。"
             f"作品 id={p.id}。下一步：发起批准（approve_video_prompts），"
-            f"用户确认后才会提交出片——按当前档位预估约 ¥{est:.1f}。"
+            f"用户确认后才会提交出片——预计生成约 {total:.0f} 秒视频"
+            f"（接力参考与参考图在提交时按镜头计划自动挂上）。"
         )
 
     return [start_production, import_storyboard]

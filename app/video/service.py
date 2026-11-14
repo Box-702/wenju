@@ -385,7 +385,6 @@ def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, boo
     这里曾经写死 `params.get("duration_sec") or 6`，导演设计的 8–10 秒镜头
     一律被压成 6 秒送进模型——动作被硬塞进更短的时间，只能糊成一团。
     """
-    from . import get_registry
     from .rhythm import suggest_duration
 
     store = deps.store()
@@ -436,8 +435,6 @@ def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, boo
     fmt = getattr(project, "adaptation_type", None)
     duration = int(round(explicit or director_sec or suggest_duration(pacing, fmt)))
 
-    provider = get_registry().get_provider(payload.provider)
-
     stored_params = dict(payload.params)
     # 落库固定下来：重试、批量重投都要用同一个时长，不能再各自回落到默认值。
     stored_params["duration_sec"] = duration
@@ -456,26 +453,20 @@ def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, boo
     manual_reference_videos = list(payload.params.get("reference_videos") or [])
     _auto_references(project_id, payload.shot_id, payload.version_id, stored_params)
 
-    # 费用估算放在锚回填**之后**：MiniMax 按输入秒数同价计费（2026-11-12 账单
-    # 复盘），参考图/接力视频是回填进来的，回填前估算必然低估。
-    if provider is not None:
-        try:
-            from .base import VideoJobParams as _VJP
+    # 用量摘要（D-53）：界面不再展示费用估算——预估与实付脱节只会伤信任
+    # （导入回执「预估 ¥3.6」vs 实付 ¥27.7 的教训）。落库三类创作者数量：
+    # 生成秒数 / 参考视频条数与总时长 / 参考图张数。放在锚回填**之后**：
+    # 接力锚是回填进来的，回填前算的用量必然少报。
+    try:
+        from .usage import job_usage, relay_durations
 
-            _probe = _VJP(
-                duration_sec=duration,
-                reference_images=stored_params.get("reference_images") or [],
-                reference_videos=stored_params.get("reference_videos") or [],
-            )
-            cost = (provider.estimate_cost_real(
-                        _probe, duration,
-                        str(stored_params.get("resolution") or ""))
-                    if hasattr(provider, "estimate_cost_real")
-                    else provider.estimate_cost(float(duration)))
-        except Exception:  # noqa: BLE001
-            cost = provider.estimate_cost(float(duration))
-    else:
-        cost = None
+        stored_params["usage"] = job_usage(
+            stored_params,
+            store=store,
+            url_durations=relay_durations(store.list_video_jobs(project_id)),
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("用量摘要生成失败（不阻断提交）：%s", e)
 
     # 意图占位（claim）：建任务之前先占——崩溃轮、并发轮、重试轮都有唯一出口。
     # claim 表只覆盖从本函数进来的轮；成片质检的自动重 roll 直接建任务不占 claim，
@@ -513,7 +504,8 @@ def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, boo
             prompt=payload.prompt,
             params=stored_params,
             version_id=payload.version_id,
-            cost_estimate=cost,
+            # 费用估算已随 D-53 退出产品链路（usage 取代）；DB 列保留给历史数据。
+            cost_estimate=None,
         )
     except Exception:
         store.release_video_claim(key)  # 建档失败：占位要还回去，别挡下一次尝试

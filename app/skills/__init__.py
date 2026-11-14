@@ -13,13 +13,13 @@ from __future__ import annotations
 
 from .loader import (
     SKILLS_DIR,
-    parse_skill_text,
     Skill,
     SkillMeta,
     SkillNotFound,
     clear_cache,
     list_skills,
     load_skill,
+    parse_skill_text,
     render,
     render_skill,
     skill_file,

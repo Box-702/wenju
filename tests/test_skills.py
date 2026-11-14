@@ -158,6 +158,7 @@ def test_audience_splits_crew_and_main():
         "production-delivery",
         "script-review",
         "asset-generation",
+        "blockout",
     }
     assert not (crew & main)
 

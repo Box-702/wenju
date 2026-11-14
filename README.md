@@ -55,9 +55,9 @@
 
 ### 工具集
 
-**对话 Conductor 工具（28 个）**：剧本侧 `create_project`（超长原文主动提示）/ `map_novel` / `propose_arcs` / `generate_script` / `run_adaptation` / `read_script`（读作品的台本 / 目录 / 镜头 / 视觉资产）/ `ask`；原文侧 `read_source` / `search_source`；剧组 `breakdown_scenes` / `generate_style_guide` / `generate_video_prompts` / `generate_reference_assets` / `clone_voice`；出片 `approve_video_prompts` / `submit_videos` / `rerun_video` / `finalize_film`；生产 `start_production` / `import_storyboard`（成品分镜直出，D-47）；查询只有一个 `get_status`（五合一，别再拆）；记忆 `remember` / `recall`；技能 `load_skill`。从导入小说到出片的全流程都能在对话里完成；每轮的工具轨迹压缩后进入历史上下文，多轮不丢事实。
+**对话 Conductor 工具（31 个）**：剧本侧 `create_project`（超长原文主动提示）/ `map_novel` / `propose_arcs` / `generate_script` / `run_adaptation` / `read_script`（读作品的台本 / 目录 / 镜头 / 视觉资产）/ `ask`；原文侧 `read_source` / `search_source`；剧组 `breakdown_scenes` / `generate_style_guide` / `generate_video_prompts` / `generate_reference_assets` / `clone_voice`；出片 `approve_video_prompts` / `submit_videos` / `rerun_video` / `finalize_film`；生产 `start_production` / `import_storyboard`（成品分镜直出，D-47）；查询只有一个 `get_status`（五合一，别再拆）；记忆 `remember` / `recall`；技能 `load_skill`；白模 `blockout_sheet_save` / `blockout_build` / `blockout_check`（施工单对话调整，D-54）。从导入小说到出片的全流程都能在对话里完成；每轮的工具轨迹压缩后进入历史上下文，多轮不丢事实。
 
-**主 Agent 按需加载技能**：系统提示只放「触发 → 动作」的路由表 + 四个技能的目录，真正怎么做（步骤顺序、硬门槛、失败处理）在 `app/skills/{novel-serial,crew-pipeline,production-delivery,script-review}/SKILL.md` 里，进入该领域时由 `load_skill` 按需拉取。实测（每例连跑 3 次）：长篇直接要初稿 3/3 会先加载细则并拒绝整本生成，改编 3/3、出片 3/3 在动手前加载，「拆好了吗」3/3 不多花一次往返。改流程只动 `.md`，不碰代码。
+**主 Agent 按需加载技能**：系统提示只放「触发 → 动作」的路由表 + 六个技能的目录，真正怎么做（步骤顺序、硬门槛、失败处理）在 `app/skills/{novel-serial,crew-pipeline,production-delivery,script-review}/SKILL.md` 里，进入该领域时由 `load_skill` 按需拉取。实测（每例连跑 3 次）：长篇直接要初稿 3/3 会先加载细则并拒绝整本生成，改编 3/3、出片 3/3 在动手前加载，「拆好了吗」3/3 不多花一次往返。改流程只动 `.md`，不碰代码。
 
 **长篇小说改编**：单次剧本生成的原文容量约 1.2 万字，超长文本不再静默砍头——`create_project` 会如实提示规模；先 `map_novel`（后台 map-reduce 逐章摘要+出场人物，存 `projects.novel_map_json`）建章节地图，再 `propose_arcs` 提 2-3 个候选故事弧（清单带每章字数，单弧约束在 1.2 万字生成容量内，大弧自动拆上下部）；用户选定后 `generate_script(from_chapter, to_chapter)` 按章生成，「继续改编下一段」直接按容量从进度续接；连载推进时自动携带已改编章节的「前情提要」保持人物与情节衔接（进度锚 `projects.adapted_until`，项目 API 已暴露地图与进度）。**可靠性护栏**（deepseek 实测驱动）：模型摘要/剧本输出不守格式时结构化容错解析而非整体回退；回复声称了「已生成/已建成」但本轮没有真实工具返回时，系统自动更正并带纠错指令重跑一次，杜绝凭对话历史编造版本号。
 
@@ -296,7 +296,7 @@ Wenju/
 │   ├── runner.py             #   引擎
 │   └── fixtures/             #   录制的真实产出（离线回归用）
 │
-└── tests/                    # 测试套件（575 tests，44 个测试文件）
+└── tests/                    # 测试套件（582 tests，45 个测试文件）
 ```
 
 ## 环境变量

@@ -20,6 +20,7 @@ from fastapi import HTTPException
 from ..domain import Script
 from ..pipeline.export import script_to_screenplay
 from ..pipeline.patch import validate_script
+from ..video import usage as _video_usage
 from ..workspace import current_workspace
 from . import deps
 
@@ -90,12 +91,13 @@ def project_overview(project: Any) -> dict[str, Any]:
     """作品的「消耗 / 产出」概览（C7 最小版，对标 mediago-drama 的用量统计）。
 
     只聚合**已经落库**的数据，不新增任何采集点——
-    镜头/成片数来自 video_version + video_jobs，预估费用是提交时按秒数
-    算好落库的 cost_estimate（只对**真正提交到服务商**的任务求和：没有
-    external_task_id 的任务压根没出门，不该算进"花了多少"）。
-    数字全部是创作者语言（场/镜/成片/定妆图），**不出现 token**——
-    D-24：界面禁工程黑话；BYOK 用户真要逐笔对账，厂商控制台比这里的
-    预估准，所以这里只回答「这部作品走到哪、大概花了多少」。
+    镜头/成片数来自 video_version + video_jobs；用量是提交时落库的
+    params["usage"]（生成秒数 / 参考视频条数与总时长 / 参考图张数，D-53），
+    只对**真正提交到服务商**的任务求和：没有 external_task_id 的任务
+    压根没出门，不该算进「用了多少」。
+    数字全部是创作者语言（场/镜/成片/秒数/张数），**不出现 token、不出现
+    费用估算**——D-24 禁工程黑话；预估与实付脱节只会伤信任（T-03/T-05），
+    界面只回答「这部作品走到哪、用了多少资源」，逐笔费用对账走厂商控制台。
     """
     st = deps.store()
     pid = project.id
@@ -120,11 +122,19 @@ def project_overview(project: Any) -> dict[str, Any]:
     shots_done = sum(1 for s in shots if getattr(latest_job.get(s["id"]), "status", "") == "succeeded")
     shots_failed = sum(1 for s in shots if getattr(latest_job.get(s["id"]), "status", "") in ("failed", "timeout"))
 
-    # 花费统计所有真正出过门的任务（拿到过 external_task_id = 服务商收了单）：
-    # 重 roll 的每一版都各自花了钱，不能只按镜头最新版算——那样会把
-    # 历史消耗低估。没出门的任务（还没投递成功）不计。
+    # 用量统计所有真正出过门的任务（拿到过 external_task_id = 服务商收了单）：
+    # 重 roll 的每一版都各自消耗，不能只按镜头最新版算——那样会把历史用量
+    # 低估。没出门的任务（还没投递成功）不计。
     submitted = [j for j in all_jobs if j.external_task_id]
-    cost_total = sum(float(j.cost_estimate or 0) for j in submitted if j.cost_estimate)
+    usage = {"gen_sec": 0.0, "ref_video_sec": 0.0, "ref_video_count": 0, "ref_image_count": 0}
+    for j in submitted:
+        u = (j.params or {}).get("usage")
+        if not isinstance(u, dict) or not u:
+            u = _video_usage.fallback_usage(dict(j.params or {}))
+        usage["gen_sec"] += float(u.get("gen_sec") or 0)
+        usage["ref_video_sec"] += float(u.get("ref_video_sec") or 0)
+        usage["ref_video_count"] += int(u.get("ref_video_count") or 0)
+        usage["ref_image_count"] += int(u.get("ref_image_count") or 0)
 
     # 视觉资产登记数（按实体去重：一个角色一张定妆图算一个）
     style = st.get_video_style(pid) or {}
@@ -156,7 +166,10 @@ def project_overview(project: Any) -> dict[str, Any]:
         "reference_images": len(set(ref_images)),
         "voices": len(set(voices)),
         "video_submissions": len(submitted),
-        "cost_estimate_usd": round(cost_total, 4),
+        "video_seconds_planned": round(usage["gen_sec"], 1) or None,
+        "ref_video_count": usage["ref_video_count"] or None,
+        "ref_video_seconds": round(usage["ref_video_sec"], 1) or None,
+        "ref_image_count": usage["ref_image_count"] or None,
         "finalized": finalized or None,
     }
 

@@ -52,12 +52,26 @@ def _emit(rec: dict[str, Any], msg: str) -> None:
     del rec["messages"][:-40]  # 只保留最近的进度，避免长片刷屏
 
 
-def _latest_succeeded_url(jobs: list, shot_id: str) -> str | None:
-    """该镜头最近一次成功任务的成片 URL（版本快照可能没回填 video_url）。"""
-    urls = [
-        (j.created_at, j.video_url) for j in jobs
+def _latest_succeeded_url(jobs: list, shot_id: str, version_id: str | None = None) -> str | None:
+    """该镜头最近一次成功任务的成片 URL（版本快照可能没回填 video_url）。
+
+    按 version_id 隔离（版本隔离收口）：只取「本版本的成功任务」；本版本一条
+    都没有时回退到「无版本归属」的历史任务（单镜手提交/对账回写常不带
+    version_id，无法证明是别代，与 _auto_references 同一口径放行）。
+    **明确属于其他版本的任务绝不混入**——旧版本合成拼进新版本成片，
+    内容与镜头方案对不上，且用户从成片里看不出来。
+    """
+    candidates = [
+        j for j in jobs
         if j.shot_id == shot_id and j.status == "succeeded" and j.video_url
     ]
+    if version_id:
+        same = [j for j in candidates if j.version_id == version_id]
+        if same:
+            candidates = same
+        else:
+            candidates = [j for j in candidates if not j.version_id]
+    urls = [(j.created_at, j.video_url) for j in candidates]
     return max(urls)[1] if urls else None
 
 
@@ -178,7 +192,7 @@ def finalize_film(
             unit = unit_by_head.get(sid)
             if unit is None:
                 continue  # 组员：由组头代表下载
-            url = _latest_succeeded_url(jobs, sid)
+            url = _latest_succeeded_url(jobs, sid, vid)
             if not url:
                 warnings.append(f"镜头 {sid} 还没有成片，已跳过")
                 emit(f"镜头 {sid} 没有成片，跳过")
@@ -244,7 +258,7 @@ def finalize_film(
         if audio_mode == "dub" and script is not None:
             tts = _resolve_tts(store)
             if tts is None or not tts.available:
-                emit("未配置 TTS（可用 MINIMAX_API_KEY），跳过配音")
+                emit("未配置 TTS（可在设置页配置语音合成），跳过配音")
             else:
                 try:
                     dubbed_path = tmp / "dubbed.mp4"

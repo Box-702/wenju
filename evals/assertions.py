@@ -193,7 +193,7 @@ def assert_director(
         ordered_shots = sorted(all_shots, key=lambda x: x.order)
         movers = [s for s in ordered_shots
                   if (s.camera.type or "static") not in ("static", "steady", "")]
-        for a, b in zip(movers, movers[1:]):
+        for a, b in zip(movers, movers[1:], strict=False):
             key_a = (a.camera.type, (a.camera.direction or "").strip())
             key_b = (b.camera.type, (b.camera.direction or "").strip())
             if key_a == key_b:

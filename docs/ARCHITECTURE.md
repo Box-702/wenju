@@ -459,7 +459,8 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
 ⑨ 拼接成片          app/video/assemble.py（FFmpeg concat / filter_complex）
 
 ⑩ 成片合成          app/video/finalize.py（最后一公里，后台线程）
-  收集版本内成功镜头（成片 URL 取各镜最近一次成功 video_job，不信任快照回填）
+  收集版本内成功镜头（成片 URL 按版本隔离取：本版本最近一次成功 video_job
+  优先，无归属历史任务兜底，明确别代的绝不混入；不信任快照回填）
   → 下载 → 逐镜实测时长校准（provider 产出常与计划时长有偏差）
   → 拼装 → 配音（可选，TTS 实测时间轴）→ ASS 字幕烧录（可选）
   → 成片 + SRT 注册为项目素材（source="finalize"），前端经 /api/assets/file/{id} 播放

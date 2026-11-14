@@ -177,8 +177,8 @@ def bootstrap_env() -> Settings:
     「配置存在但代码看不见」：有一批参数不走 `Settings`，而是直接读
     `os.environ`——
 
-      - `app/keys.py`：`MINIMAX_API_KEY` / `MINIMAX_API_KEY_FALLBACKS` /
-        `KEY_COOLDOWN_SEC`（多把 key 轮换与冷却）；
+      - `app/keys.py`：`MINIMAX_API_KEY_FALLBACKS` /
+        `KEY_COOLDOWN_SEC`（备用 key 安全网与冷却；主 key 只认 DB，D-48）；
       - `app/video/qa.py`：`FFMPEG_PATH` 兜底；
       - LangChain：`LANGCHAIN_*`（由 `apply_langsmith_env` 写入）。
 

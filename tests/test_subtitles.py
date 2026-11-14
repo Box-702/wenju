@@ -230,7 +230,7 @@ def _finalize_env(monkeypatch, tmp_path, n_shots: int = 2):
     ]
     jobs = [
         SimpleNamespace(shot_id=s["id"], status="succeeded", video_url=f"http://v/{s['id']}.mp4",
-                        created_at=1)
+                        created_at=1, version_id="vv1")
         for s in shot_dicts
     ]
     store = _FakeStore(shot_dicts, jobs)
@@ -366,9 +366,9 @@ def test_finalize_film_group_clip_expands_to_members(monkeypatch, tmp_path):
     # 组任务只挂组头；组员没有独立任务（不该各自找）
     jobs = [
         SimpleNamespace(shot_id="shot_scene_001_000", status="succeeded",
-                        video_url="http://v/g1.mp4", created_at=1),
+                        video_url="http://v/g1.mp4", created_at=1, version_id="vv1"),
         SimpleNamespace(shot_id="shot_scene_001_002", status="succeeded",
-                        video_url="http://v/s2.mp4", created_at=1),
+                        video_url="http://v/s2.mp4", created_at=1, version_id="vv1"),
     ]
     store = _FakeStore(shot_dicts, jobs)
 
@@ -440,7 +440,7 @@ def test_finalize_silent_strips_audio(monkeypatch, tmp_path):
             # 假剥轨：直接产文件让流程走完
             out_i = cmd.index("-an")
             dest = cmd[out_i + 1]
-            Path(dest).write_bytes(b"silent")
+            __import__("pathlib").Path(dest).write_bytes(b"silent")
             class R: returncode = 0
             return R()
         return real_run(cmd, *a, **kw)

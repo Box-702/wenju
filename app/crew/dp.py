@@ -162,11 +162,13 @@ def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
     # 2.5 认时间戳（官方文档）；只有 2.0 走镜头N 方言。模型名拿不到时
     # 按 2.0 处理——DB 现行 seedance 配置就是 2.0 标准档。
     seedance_20 = prov == "seedance"
-    by_gid: dict[str, list[Shot]] = {}
+    # 组键按 (scene_id, group_id) 认：与归一化/生成单元折叠同口径——
+    # 两个场景复用同名组键时绝不拼进同一条组提示词。
+    by_gid: dict[tuple[str, str], list[Shot]] = {}
     for s in shots:
         if s.group_id:
-            by_gid.setdefault(s.group_id, []).append(s)
-    for gid, members in by_gid.items():
+            by_gid.setdefault((s.scene_id, s.group_id), []).append(s)
+    for _key, members in by_gid.items():
         members.sort(key=lambda x: x.group_index)
         if len(members) < 2:
             continue
@@ -182,8 +184,9 @@ def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
         # 提示词没重复的东西——组头的全局锚只管到第一个机位，后半组
         # 「光线变暖/换脸」就是这么漂的。每个机位块尾逐字重述一次
         # 身份+光线锚（代码拼，不让 LLM 自己记）；首块紧跟全局锚不重复。
-        lock = "，".join(x for x in (head_parts.get("cast", ""),
-                                     _light_phrase(head_parts.get("env", ""))) if x)
+        # 锚按**成员自己的** parts 取（2026-11-14 收紧）：DP 的人物锚按镜过滤
+        # （只给本镜主体注锚），组头的人物锚盖不住主体不同的机位——交替
+        # 对白的 B 镜以前拿到的是 A 的人物锚，脸就漂给 A 了。
         for i, m in enumerate(members, start=1):
             p = parts.get(m.id, {})
             body = p.get("body", "") or (m.video_prompt or "")
@@ -195,8 +198,13 @@ def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
                         if zh else f"[Shot 1] 0-{int(round(m.duration_sec))}s: {body}")
             else:
                 lead = f"[Shot {i}] At {_fmt_ts(cursor)}, cuts to {body}"
-            if i > 1 and lock:
-                lead += f"（{lock}不变）" if zh else f" ({lock} unchanged)"
+            if i > 1:
+                lock = "，".join(x for x in (
+                    p.get("cast") or head_parts.get("cast", ""),
+                    _light_phrase(p.get("env", "") or head_parts.get("env", "")),
+                ) if x)
+                if lock:
+                    lead += f"（{lock}不变）" if zh else f" ({lock} unchanged)"
             seg.append(lead)
             cursor += max(0.0, m.duration_sec)
         style = head_parts.get("style", "")

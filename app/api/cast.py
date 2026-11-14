@@ -293,7 +293,7 @@ async def clone_voice(
 
     client = build_tts_client(resolve_tts(get_settings(), store))
     if client is None or not client.available:
-        raise HTTPException(503, "没有配置语音合成（需要 MINIMAX_API_KEY），无法克隆音色")
+        raise HTTPException(503, "没有配置语音合成（在设置页配置后可用），无法克隆音色")
 
     preview_text = ""
     version = store.latest_version(project)
@@ -370,7 +370,7 @@ def preview_voice(project_id: str, payload: VoicePreview) -> Response:
 
     client = build_tts_client(resolve_tts(get_settings(), deps.store()))
     if client is None or not client.available:
-        raise HTTPException(503, "未配置 TTS（需要 MINIMAX_API_KEY），无法试听")
+        raise HTTPException(503, "未配置 TTS（在设置页配置后可用），无法试听")
 
     text = (payload.text or "").strip()[:80] or SAMPLE_TEXT
     try:

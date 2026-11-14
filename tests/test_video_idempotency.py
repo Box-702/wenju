@@ -556,3 +556,196 @@ def test_auto_relay_only_uses_same_version_clips(store, llm, settings, monkeypat
     params2: dict = {}
     svc._auto_references("proj_x", "shot_001_001", "vver_new", params2)
     assert params2.get("reference_videos") == ["https://x/NEW.mp4"]
+
+
+# ---------- 批量跳过判据 = 完整生成意图（2026-11-14 P1 收口） ----------
+
+
+def _finish_batch(store, batch_manager, project_id: str, shot_id: str) -> None:
+    """把当前批次的在途任务标记成功并触发推进（批次挂完成回调，不推进
+    就一直 running，下一个批次会被 409 挡住）。"""
+    batch = batch_manager.latest_for_project(project_id)
+    assert batch is not None and batch.job_id
+    job = store.get_video_job(batch.job_id)
+    store.update_video_job(job.id, status="succeeded", video_url=f"http://v/{job.id}.mp4")
+    batch_manager.on_job_finished(project_id, shot_id, store.get_video_job(job.id))
+
+
+def test_batch_skip_requires_full_intent_match(client, sample_text, monkeypatch):
+    """批量跳过判据必须是完整意图指纹（单镜与批量同一把尺）：
+    同 prompt 但 provider/model/分辨率不同 → 必须重新生成。旧 MiniMax 成片
+    不能把新 Seedance / 新分辨率批次整批挡掉。"""
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
+    import app.deps as app_deps
+
+    project = _project(client, sample_text)
+    _version(client, project["id"], [_shot("shot_a")])
+    store = api_mod.deps.store()
+    bm = app_deps.batch_manager()
+    body = {"mode": "auto", "provider": "minimax", "model": "default"}
+
+    # 第一轮：minimax 出片成功
+    r1 = client.post(f"/api/projects/{project['id']}/video/generate-batch", json=body)
+    assert r1.status_code == 200, r1.text
+    _finish_batch(store, bm, project["id"], "shot_a")
+    assert len([j for j in store.list_video_jobs(project["id"])]) == 1
+
+    # 同意图重开批次 → 全部跳过（没有可投的单元）
+    r2 = client.post(f"/api/projects/{project['id']}/video/generate-batch", json=body)
+    assert r2.status_code == 400, r2.text
+
+    # 换 provider（同 prompt）→ 必须重新生成
+    r3 = client.post(f"/api/projects/{project['id']}/video/generate-batch",
+                     json={"mode": "auto", "provider": "seedance", "model": "default"})
+    assert r3.status_code == 200, r3.text
+    seed_jobs = [j for j in store.list_video_jobs(project["id"]) if j.provider == "seedance"]
+    assert len(seed_jobs) == 1, "换厂商必须新建任务，不能复用旧 MiniMax 成片"
+    _finish_batch(store, bm, project["id"], "shot_a")
+
+    # 换模型（同 prompt 同厂商）→ 必须重新生成
+    r4 = client.post(f"/api/projects/{project['id']}/video/generate-batch",
+                     json={"mode": "auto", "provider": "seedance",
+                           "model": "doubao-seedance-2-0-250828"})
+    assert r4.status_code == 200, r4.text
+    model_jobs = [j for j in store.list_video_jobs(project["id"])
+                  if j.model == "doubao-seedance-2-0-250828"]
+    assert len(model_jobs) == 1, "换模型必须新建任务"
+    _finish_batch(store, bm, project["id"], "shot_a")
+
+    # 换分辨率（同 prompt 同厂商同模型）→ 必须重新生成
+    r5 = client.post(f"/api/projects/{project['id']}/video/generate-batch",
+                     json={"mode": "auto", "provider": "seedance",
+                           "model": "doubao-seedance-2-0-250828", "resolution": "2K"})
+    assert r5.status_code == 200, r5.text
+    res_jobs = [j for j in store.list_video_jobs(project["id"])
+                if (j.params or {}).get("resolution") == "2K"]
+    assert len(res_jobs) == 1, "换分辨率必须新建任务"
+
+
+def test_batch_skip_still_applies_for_identical_intent(client, sample_text, monkeypatch):
+    """反护栏：意图完全相同（同 prompt/provider/model/分辨率）的续跑
+    仍然跳过——意图指纹收紧不能把幂等本身删掉。"""
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
+    import app.deps as app_deps
+
+    project = _project(client, sample_text)
+    _version(client, project["id"], [_shot("shot_a")])
+    store = api_mod.deps.store()
+    bm = app_deps.batch_manager()
+    body = {"mode": "auto", "provider": "minimax", "model": "default"}
+
+    r1 = client.post(f"/api/projects/{project['id']}/video/generate-batch", json=body)
+    assert r1.status_code == 200, r1.text
+    _finish_batch(store, bm, project["id"], "shot_a")
+
+    r2 = client.post(f"/api/projects/{project['id']}/video/generate-batch", json=body)
+    assert r2.status_code == 400, r2.text
+    assert len(store.list_video_jobs(project["id"])) == 1, "同意图重开批次不得重复提交"
+
+
+def test_generation_units_跨场景重复组键不合并():
+    """组键只在场景内唯一：两个场景复用同一个 group_id 时绝不能并成一个
+    生成单元（旧写法全局按 group_id 分桶，跨场重复键会把两段不相邻的戏
+    拼成一次生成）。"""
+    from app.video.service import _generation_units
+
+    shots = [
+        {"id": "shot_a_0", "scene_id": "scene_001", "order": 0, "duration_sec": 4,
+         "video_prompt": "PA", "group_id": "g1", "group_index": 0,
+         "group_prompt": "GA", "prompt_status": "approved"},
+        {"id": "shot_a_1", "scene_id": "scene_001", "order": 1, "duration_sec": 4,
+         "video_prompt": "PA2", "group_id": "g1", "group_index": 1},
+        {"id": "shot_b_0", "scene_id": "scene_002", "order": 2, "duration_sec": 5,
+         "video_prompt": "PB", "group_id": "g1", "group_index": 0,
+         "group_prompt": "GB", "prompt_status": "approved"},
+        {"id": "shot_b_1", "scene_id": "scene_002", "order": 3, "duration_sec": 5,
+         "video_prompt": "PB2", "group_id": "g1", "group_index": 1},
+    ]
+    units = _generation_units(shots)
+    assert len(units) == 2, f"跨场同组键被合并成 {len(units)} 个单元"
+    assert units[0]["prompt"] == "GA" and units[1]["prompt"] == "GB"
+    assert units[0]["member_ids"] == ["shot_a_0", "shot_a_1"]
+    assert units[1]["member_ids"] == ["shot_b_0", "shot_b_1"]
+
+
+# ---------- 接力信任判据（2026-11-14 P1 收口） ----------
+
+
+def test_信任判据_官方域名按hostname精确认定():
+    from app.video.service import _is_trusted_relay
+
+    # 方舟官方域与子域：信任（原样透传保出处）
+    assert _is_trusted_relay("https://ark.cn-beijing.volces.com/api/v3/x.mp4") is True
+    assert _is_trusted_relay("https://vod.volces.com/a.mp4") is True
+    # 相似域/任意公网 URL：不信任（走内联老路）——子串匹配的洞已堵
+    assert _is_trusted_relay("https://evil-volces.com/a.mp4") is False
+    assert _is_trusted_relay("https://volces.com.evil.io/a.mp4") is False
+    assert _is_trusted_relay("https://cdn.example.com/a.mp4") is False
+
+
+def test_信任判据_产物provenance优先于provider名():
+    from app.video.service import _is_trusted_relay
+
+    url = "https://cdn.example.com/a.mp4"
+    # URL 的出身记录在 provenance 里：seedance 产物 → 信任
+    assert _is_trusted_relay(url, "minimax", {url: "seedance"}) is True
+    # 非 seedance 产物 → 不信任，哪怕本次提交恰好也是 seedance
+    # （旧口径「provider=seedance 时任意 http URL 都信任」已被 provenance 取代）
+    assert _is_trusted_relay(url, "seedance", {url: "minimax"}) is False
+    assert _is_trusted_relay(url, "seedance", {url: ""}) is False
+
+
+def test_信任判据_无provenance的老任务沿用旧口径():
+    from app.video.service import _is_trusted_relay
+
+    url = "https://cdn.example.com/a.mp4"
+    # 老任务落库时还没有 relay_providers 字段：provenance 缺席时按旧口径兜底
+    assert _is_trusted_relay(url, "seedance", None) is True
+    assert _is_trusted_relay(url, "minimax", None) is False
+    # provenance 存在但查无此 URL：同样回落旧口径（不把新提交的口子堵死）
+    assert _is_trusted_relay(url, "seedance", {}) is True
+
+
+def test_auto_references_记录接力锚产物出身(store, llm, settings, monkeypatch):
+    """relay_providers 把「哪条 URL 由哪家任务生成」随任务落库——
+    _job_params 据此判定信任传递，不再拿「本次提交的 provider 名」猜。"""
+    import types
+
+    import app.deps as app_deps
+    import app.video.service as svc
+
+    class _Ver:
+        def __init__(self, vid, shots):
+            self.id, self.shots, self.created_at = vid, shots, "2026-01-01"
+
+    class _Job:
+        def __init__(self, shot_id, url, version_id, provider):
+            self.shot_id, self.video_url = shot_id, url
+            self.status, self.version_id, self.provider = "succeeded", version_id, provider
+
+    shots = [
+        {"id": "shot_001_000", "order": 0, "duration_sec": 5},
+        {"id": "shot_001_001", "order": 1, "duration_sec": 5, "chain_from": 0},
+    ]
+    fake = types.SimpleNamespace(
+        list_video_versions=lambda pid: [_Ver("vver_new", shots)],
+        get_video_version=lambda vid: _Ver("vver_new", shots),
+        list_video_jobs=lambda pid: [
+            _Job("shot_001_000", "https://x/CLIP.mp4", "vver_new", "seedance")],
+        get_video_style=lambda pid: {},
+        get_project=lambda pid: None,
+        latest_version=lambda p: None,
+    )
+    monkeypatch.setattr(app_deps, "store", lambda: fake)
+    monkeypatch.setattr(svc.deps, "store", lambda: fake)
+
+    params: dict = {}
+    svc._auto_references("proj_x", "shot_001_001", "vver_new", params)
+    assert params.get("relay_providers") == {"https://x/CLIP.mp4": "seedance"}
+
+    # 无出身的 URL（用户直填的公网参考）不进映射 → 拿不到信任传递，
+    # 只享受普通的裁尾内联处理
+    params3: dict = {"reference_videos": ["https://cdn.example.com/manual.mp4"]}
+    svc._auto_references("proj_x", "shot_001_001", "vver_new", params3)
+    assert "https://cdn.example.com/manual.mp4" in params3["reference_videos"]
+    assert params3.get("relay_providers") == {"https://x/CLIP.mp4": "seedance"}

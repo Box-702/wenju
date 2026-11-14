@@ -171,7 +171,7 @@ def normalize_units(parsed: list[dict[str, Any]]) -> list[dict[str, Any]]:
             needs_anchor = True
         # 组内切镜时刻折算：把全局时间戳改成本段相对值（钳到 [0, 本段时长]）
         if _TS_ANY_RE.search(stripped):
-            def _rel(m: re.Match) -> str:
+            def _rel(m: re.Match, start: float = start, dur: float = dur) -> str:
                 # 外部分镜的时间戳是全局时间线的：平移 cost = 本段起点，
                 # 落在 [0, 本段时长] 内的改写成本段相对时刻；越界的整段
                 # 不存在这次采样里，删掉写法只留切镜描述。

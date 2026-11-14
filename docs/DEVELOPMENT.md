@@ -2107,6 +2107,104 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   无新文件」，而不是「代码里搜不到旧路径」。
 - **涉及文件**：`N2D/regen_prompts.py`、`N2D/orchard_relay.py`、`data/_README.txt`。
 
+### 5.50 成片合成不认版本：旧版重合成会拼进别代的镜头（2026-11-14）
+
+- **症状**（只读审查发现）：`finalize._latest_succeeded_url` 按
+  shot_id + created_at 取「最近成功任务」，不看 version_id——对旧版本
+  点「合成成片」，拼进来的是新版本刚出的片子，内容与镜头方案对不上，
+  用户从成片里看不出来。
+- **根因**：镜头清单按版本快照取，成片 URL 却全局取最近——「计划有版本、
+  成片无版本」的半套隔离。
+- **解法**：finalize 传入目标 version_id；过滤三级：本版本优先 → 无归属
+  历史任务兜底（手提交/对账回写不带 version_id，无法证明是别代，与
+  _auto_references 同口径）→ **明确归属别代的绝不混入**。
+- **涉及文件**：`app/video/finalize.py`；`tests/test_finalize_version.py`（新）。
+
+### 5.51 批量幂等只比 prompt：换厂商/换分辨率重跑整批被旧成片挡掉（2026-11-14）
+
+- **症状**：`generate_batch` 的跳过判据只比 shot_id + prompt——同词的旧
+  MiniMax 成片会把新 Seedance / 新分辨率批次**整批跳过**，用户拿到的
+  「新批次」全是旧镜头（只比 prompt 是 5.43/5.44 收口时的已知简化，
+  审查确认它挡住了换厂商这条主路径）。
+- **根因**：单镜幂等比完整意图（`_same_intent`），批量跳过另写了一套
+  只比词的——两把尺。
+- **解法**：抽 `_same_generation_intent`（prompt/provider/model/
+  _INTENT_PARAM_KEYS/手挑参考）单镜批量共用；批量侧新增 `_unit_intent`
+  按 submit 的**落库口径**反推「这次要投什么」——时长含节奏兜底、参考图
+  含定妆图注册表回填。口径不对称的代价立现：注册表回填过的任务会被永远
+  判成「意图不同」而白烧。
+- **涉及文件**：`app/video/service.py`；`tests/test_video_idempotency.py`
+  （换 provider/model/分辨率必须重生成 + 同意图续跑仍跳过，双向锁）。
+
+### 5.52 D-48 的漏网：视频/配音 key 仍读退役的 MINIMAX_API_KEY 主键（2026-11-14）
+
+- **症状**：`keys.minimax_keys()` 仍把 `MINIMAX_API_KEY` / `MINIMAX_API_KEYS`
+  拼进候选——DB key 失效（欠费/换号）时静默回落 .env 里的旧主 key：
+  用户换了 key 却还在烧旧账号，BYOK 口径被绕开。
+- **根因**：D-48 收口清了文本/生图链，视频与 TTS 的 key 环走
+  `minimax_keys()` 这条老路，漏了。
+- **解法**：主 key 只认显式传入（DB 注入，唯一权威）；env 仅保留批准的
+  `MINIMAX_API_KEY_FALLBACKS` 故障转移安全网。顺带清掉用户可见文案里的
+  env 黑话（cast.py 两处、finalize.py 一处改「设置页」口径）。
+- **涉及文件**：`app/keys.py`、`app/video/providers/minimax.py`（注释）、
+  `app/config.py`（bootstrap 文档）、`app/api/cast.py`、`app/video/finalize.py`、
+  `.env.example`（退役 MINIMAX_API_KEYS 说明）；测试 `test_keys.py`/
+  `test_bootstrap.py` 改锁新口径。
+
+### 5.53 接力信任判据：子串匹配 + provider 名当真（2026-11-14）
+
+- **症状**：`_is_trusted_relay` 用 `"volces.com" in url` 子串匹配——
+  `evil-volces.com` 也通过；且 provider=seedance 时**任意** http URL
+  都被当自家产物透传。
+- **根因**：两个判据都不是「这条 URL 是谁生的」的直接证据：域名靠子串猜、
+  出处靠本次提交的 provider 名猜。
+- **解法**：① URL hostname 精确/后缀匹配官方域（volces.com 及子域）；
+  ② `_auto_references` 把「哪条 URL 由哪家任务生成」落进
+  `params["relay_providers"]`，_job_params 按 hostname > provenance >
+  provider 名三级判定——无出手的 URL 拿不到信任传递，走普通裁尾内联；
+  ③ 老任务（无 provenance 字段）沿用旧口径兜底。
+- **涉及文件**：`app/video/service.py`；`tests/test_video_idempotency.py`
+  （官方域/相似域/任意 URL/provenance 出身/老任务兜底）。
+
+### 5.54 组键只按 group_id 认：跨场景重复键并成一次生成（2026-11-14）
+
+- **症状**（审查发现）：归一化、单元折叠、DP 折叠、校验器四处都**全局**
+  按 group_id 分桶——两个场景复用同名组键（全局 order 又恰好连续）会被
+  并成一次生成：时长爆表、成员互污染。
+- **根因**：组键的作用域从来是「场内」，实现按全局字符串认。
+- **解法**：四处统一按 **(scene_id, group_id)** 认；同时把 GROUP_MIN_SEC
+  从「校验器报告」提前到「归一化就地执行」——不足最小体量的组整组拆回
+  单镜（旧行为只报告不修，模型拿不到批评就没人管，短组照样混出片）。
+- **涉及文件**：`app/crew/director.py`（归一化 + 校验器）、
+  `app/video/service.py`（_generation_units/_unit_of/submit 成员匹配/
+  _batch_submit）、`app/crew/dp.py`（折叠）；测试 `test_director_guard.py`/
+  `test_video_idempotency.py`。
+
+### 5.55 自动成组只认「同场相邻」：接力/换锚/换主体/硬切被吞进组（2026-11-14）
+
+- **症状**：`auto_group_scene` 只看同场、相邻、时长、人数——chain_from
+  接力镜、reference_group 换锚镜、主体 A/B 交替对白、硬切断点都可能被
+  拼进同一次生成。
+- **根因**：兜底成组的资格判据只有预算维度（≤15s/≤4 员），没有语义维度。
+- **解法**：硬边界（已属模型组 / 带 chain_from）必须独立；软边界
+  （cut_reason 硬切/转场/闪回、reference_group 变化、subject 变化）不并入
+  当前段但可开新段；run 达不到 GROUP_MIN_SEC 不成组。配套修 DP 折叠：
+  lock line 按**成员自己的**人物锚（DP 人物锚按镜过滤，组头的锚盖不住
+  主体不同的机位——交替对白的 B 镜以前拿的是 A 的锚，脸漂给 A）。
+- **涉及文件**：`app/crew/director.py`、`app/crew/dp.py`；
+  测试 `tests/test_crew_video.py`（四类边界 + 短组 + 逐成员锚）。
+
+### 5.56 组接力断链：chain_from 指向组员永远查不到成片（2026-11-14）
+
+- **症状**：组任务挂在组头 shot_id 上建档，chain_from 指向上一组**成员**
+  时 `completed_urls[成员id]` 查无——接力锚为空，跨组连续性整段断掉。
+- **根因**：「成片归属」与「生成单元」没对齐：成员的成片在组头那条任务里，
+  查找却按成员 id 直查。
+- **解法**：`resolve_submission_references` 建「组员 → 组头成片」回落映射
+  （按 (scene_id, group_id) 认组，组头=group_index 最小者）；
+  resolve_continuity 的 order 解析照旧不变。
+- **涉及文件**：`app/video/continuity.py`；测试 `tests/test_crew_video.py`。
+
 ---
 
 ## 六、排查手册（症状 → 先查什么）
@@ -2285,3 +2383,27 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **遗留**：① 用户看片判定标准档运镜/台词兑现度；② 导入预估改表价；
   ③ 尾帧图 data URI 路径对手动上传素材仍可能触发审核——素材库通道留给
   「用户上传真人素材」功能时一起做。
+
+
+### T-06 只读审查修复闭环：P1×4 + P2×3（2026-11-14，完成，零花费）
+
+- **假设**：只读审查列出的 7 个洞（成片版本隔离、批量幂等口径、视频 key
+  权威、接力信任判据、组键作用域、自动成组边界、组接力映射）都能确定性
+  堵上，且全程不触碰 D-52（厂商方言分支保持原样——审查也确认 2.5 未进
+  支持矩阵，模型级分支是未来事项不是现役故障）。
+- **过程**：逐项修复 + 19 条回归测试，全程离线（无任何视频/图片/付费
+  LLM 调用）。
+- **验证**：全量 575 passed（基线 556）；ruff 致命子集（E9/F63/F7/F82/B）
+  8→0，全量 557→551——预存债务只减不增（基线 diff 逐条核对）。
+- **发现的问题**：① 批量跳过判据要与 submit 落库口径**逐键对齐**（注册表
+  回填、节奏兜底时长，不对称=幂等误判白烧钱）；② 测试桩缺
+  version_id/provider 字段暴露隐式契约——过滤逻辑上线即碎，桩先行升级；
+  ③ 本轮自己也在 `_flush` 闭包里引入过一个 B023（循环变量绑定），ruff
+  当场抓住——致命子集检查不是仪式。
+- **修改**：见 5.50–5.56；顺带清掉致命子集全部 8 处预存违规。
+- **效果**：换厂商/换模型/换分辨率重跑不再被旧成片挡；旧版本合成不再混入
+  新镜头；DB key 失效不再静默回落退役 env 主键；evil-volces.com 类相似域
+  被 hostname 判定拦下；跨场重号组键 / 短组 / 语义边界 / 组接力断链堵死。
+- **遗留**：① 全量 ruff 551 条预存债务（E501 为主）未清，另开专项；
+  ② D-52 的模型级分支（2.0/2.5/未知 fail-closed）等 Seedance 2.5 进支持
+  矩阵再做；③ LNG-04 场景地点建模根因未动；④ 导入预估改表价（T-03 遗留）。

@@ -464,3 +464,46 @@ def test_extract_title_书名行与章节噪声():
     assert t and "，" not in t and len(t) <= 12
     # 空文本
     assert extract_title("") == "未命名作品"
+
+
+# =====================================================================
+# 跨场景组键隔离 + 最小体量（2026-11-14 P2 收口）
+# =====================================================================
+
+
+def test_组归一化_跨场景重复组键不合并():
+    """组键只在场景内唯一：两个场景复用同名 group_id 时绝不并成一组
+    （组=一次生成，跨场合并等于把两段不相邻的戏塞进同一次调用）。"""
+    from app.crew.director import _normalize_groups
+
+    def _grouped(order: int, scene_id: str) -> Shot:
+        s = _shot(order, dur=4, scene_id=scene_id)
+        s.group_id = "g1"
+        return s
+
+    a, b = _grouped(0, "scene_001"), _grouped(1, "scene_001")
+    c, d = _grouped(0, "scene_002"), _grouped(1, "scene_002")
+    _normalize_groups([_bd("scene_001", [a, b]), _bd("scene_002", [c, d])])
+    # 各场各自成组，成员互不串场；键名可以撞（下游按 场景+组键 认）
+    assert [s.group_id for s in (a, b)] == ["g1", "g1"]
+    assert [s.group_id for s in (c, d)] == ["g1", "g1"]
+    assert [s.group_index for s in (a, b)] == [0, 1]
+    assert [s.group_index for s in (c, d)] == [0, 1]
+
+
+def test_组归一化_不足最小体量拆回单镜():
+    """组总时长 < GROUP_MIN_SEC → 整组拆回单镜。旧行为只在校验器里报告，
+    模型拿不到批评就没人管，短组照样混出片（归一化阶段就地执行）。"""
+    from app.crew.director import GROUP_MIN_SEC, _normalize_groups
+
+    def _tagged(order: int, dur: float, gid: str) -> Shot:
+        s = _shot(order, dur=dur)
+        s.group_id = gid
+        return s
+
+    a, b = _tagged(0, 1.5, "g1"), _tagged(1, 1.5, "g1")
+    c, d = _tagged(2, 2.0, "g2"), _tagged(3, 2.0, "g2")
+    _normalize_groups([_bd("scene_001", [a, b, c, d])])
+    assert a.group_id == "" and b.group_id == ""          # 3s < 4s 最小体量 → 拆
+    assert c.group_id == "g2" and d.group_id == "g2"      # 4s == 最小体量 → 保留
+    assert GROUP_MIN_SEC == 4.0

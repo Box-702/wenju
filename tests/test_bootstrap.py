@@ -84,10 +84,16 @@ def test_bootstrap_is_idempotent(clean_env):
 
 
 def test_bootstrap_does_not_override_existing_env(clean_env, monkeypatch):
-    """已显式设置的变量优先级更高（测试用 monkeypatch 注入的不能被 .env 盖掉）。"""
-    monkeypatch.setenv("MINIMAX_API_KEY", "explicit-key")
+    """已显式设置的变量优先级更高（测试用 monkeypatch 注入的不能被 .env 盖掉）。
+
+    D-48 收口：MINIMAX_API_KEY 已退役——env 里的主 key 不再进候选
+    （主 key 只认 DB），FALLBACKS 安全网仍是直读 environ 的合法入口。
+    """
+    monkeypatch.setenv("MINIMAX_API_KEY", "retired-primary")
+    monkeypatch.setenv("MINIMAX_API_KEY_FALLBACKS", "explicit-fb")
     bootstrap_env()
-    assert "explicit-key" in minimax_keys()
+    assert "retired-primary" not in minimax_keys()
+    assert "explicit-fb" in minimax_keys()
 
 
 def test_settings_still_reads_env_file_independently(clean_env):

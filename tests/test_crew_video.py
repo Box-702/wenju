@@ -1267,3 +1267,97 @@ def test_fold_group_prompts_lock_line_逐块重述():
     # Shot 2 块尾带 lock line（身份+光线逐字重述）
     assert "cuts to 绅士沉默倾听" in gp
     assert "20岁西方少女与30岁绅士，黄金侧逆光勾勒轮廓不变）" in gp
+
+
+# =====================================================================
+# 自动成组语义边界 + 组接力成员映射（2026-11-14 P2 收口）
+# =====================================================================
+
+
+def test_auto_group_语义边界不成组():
+    """自动成组的语义边界：「同场相邻」不能吞掉镜头语言——chain_from 接力 /
+    reference_group 变化 / 主体切换（交替对白）/ 硬切断点都不跨。"""
+    from app.crew.director import auto_group_scene
+
+    def _mk(i, *, dur=4.0, subject="", rg="", chain=None, cut=""):
+        return Shot(id=f"shot_scene_001_{i:03d}", scene_id="scene_001", order=i,
+                    duration_sec=dur, subject=subject, reference_group=rg,
+                    chain_from=chain, cut_reason=cut,
+                    camera=CameraMovement(type="static"))
+
+    # chain_from：接力镜必须独立成单镜（组内机位无法各自带接力锚）
+    bd = SceneBreakdown(scene_id="scene_001", shots=[
+        _mk(0), _mk(1, chain=0), _mk(2)])
+    auto_group_scene([bd])
+    assert all(s.group_id == "" for s in bd.shots)
+
+    # reference_group 变化：环境锚不同（硬切到新地点）不跨锚打包
+    bd2 = SceneBreakdown(scene_id="scene_001", shots=[
+        _mk(0, rg="room"), _mk(1, rg="street")])
+    auto_group_scene([bd2])
+    assert all(s.group_id == "" for s in bd2.shots)
+
+    # 主体 A/B 交替对白：各自成单镜（不跨主体拼一次生成）
+    bd3 = SceneBreakdown(scene_id="scene_001", shots=[
+        _mk(0, subject="齐夏"), _mk(1, subject="人羊"),
+        _mk(2, subject="齐夏"), _mk(3, subject="人羊")])
+    auto_group_scene([bd3])
+    assert all(s.group_id == "" for s in bd3.shots)
+
+    # 硬切断点：边界镜开新段——不并入前段，但与后段（同段）可成组
+    bd4 = SceneBreakdown(scene_id="scene_001", shots=[
+        _mk(0), _mk(1, cut="硬切到新地点"), _mk(2)])
+    auto_group_scene([bd4])
+    assert bd4.shots[0].group_id == ""
+    assert bd4.shots[1].group_id == bd4.shots[2].group_id != ""
+
+
+def test_auto_group_不足最小体量不成组():
+    """两条 1.5s 的相邻单镜（3s < GROUP_MIN_SEC）不成组：短组音画对位
+    没有收益还放大漂移，保持单镜。"""
+    from app.crew.director import auto_group_scene
+
+    def _mk(i, dur=1.5):
+        return Shot(id=f"shot_scene_001_{i:03d}", scene_id="scene_001", order=i,
+                    duration_sec=dur, camera=CameraMovement(type="static"))
+
+    bd = SceneBreakdown(scene_id="scene_001", shots=[_mk(0), _mk(1)])
+    assert auto_group_scene([bd]) == (0, 0)
+    assert all(s.group_id == "" for s in bd.shots)
+
+
+def test_fold_group_prompts_成员锚按镜取():
+    """组内每个机位的 lock line 必须带**本镜**的人物锚（DP 的人物锚按镜
+    过滤）：交替对白的 B 镜以前拿到的是组头 A 的锚，脸就漂给 A 了。"""
+    from app.crew.dp import _fold_group_prompts
+
+    a = Shot(id="shot_scene_001_000", scene_id="scene_001", order=0, subject="齐夏",
+             duration_sec=4, group_id="g1", group_index=0, video_prompt="x")
+    b = Shot(id="shot_scene_001_001", scene_id="scene_001", order=1, subject="人羊",
+             duration_sec=4, group_id="g1", group_index=1, video_prompt="y")
+    parts = {
+        a.id: {"env": "密室，钨丝灯", "cast": "齐夏：黑色短发", "body": "齐夏开口", "style": ""},
+        b.id: {"env": "密室，钨丝灯", "cast": "人羊：山羊头面具", "body": "人羊沉默", "style": ""},
+    }
+    _fold_group_prompts([a, b], parts, language="zh")
+    gp = a.group_prompt
+    assert gp
+    assert "齐夏：黑色短发" in gp                        # 全局锚（组头）
+    assert "（人羊：山羊头面具不变）" in gp               # 成员自己的锚进 lock line
+
+
+def test_resolve_submission_references_组接力成员回落组头成片():
+    """组任务只挂在组头：chain_from 指向上一组成员时，接力锚回落到组头的
+    成片（一条组视频覆盖全组）——旧写法成员永远查不到 URL，链整段断掉。"""
+    plan = [
+        {"id": "shot_a_0", "scene_id": "scene_001", "order": 0,
+         "group_id": "g1", "group_index": 0},
+        {"id": "shot_a_1", "scene_id": "scene_001", "order": 1,
+         "group_id": "g1", "group_index": 1},
+        {"id": "shot_b_0", "scene_id": "scene_001", "order": 2, "chain_from": 1},
+    ]
+    refs = resolve_submission_references(
+        shot_id="shot_b_0", shot_plan=plan,
+        completed_urls={"shot_a_0": "https://x/group.mp4"},
+    )
+    assert refs["reference_videos"] == ["https://x/group.mp4"]

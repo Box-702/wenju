@@ -281,14 +281,15 @@ def minimax_keys(primary: str = "") -> list[str]:
     """MiniMax 的候选 key 列表，顺序即优先级。
 
     来源（依次拼接、去重）：
-      1. 调用方显式传入的 key（视频 Provider 由数据库/设置注入的那把）；
-      2. ``MINIMAX_API_KEY``——.env 里的主 key；
-      3. ``MINIMAX_API_KEYS``——逗号分隔的备用 key 列表；
-      4. ``MINIMAX_API_KEY_FALLBACKS``——同上，语义更直白的老写法。
+      1. 调用方显式传入的 key（视频/配音 Provider 由数据库注入的那把，
+         D-48 的唯一权威）；
+      2. ``MINIMAX_API_KEY_FALLBACKS``——唯一保留的 env 故障转移安全网。
+
+    ``MINIMAX_API_KEY`` / ``MINIMAX_API_KEYS`` 已随 D-48 退役，不再读取：
+    主 key 只认 DB——DB key 失效时若还静默回落到退役的 .env 主 key，
+    等于绕开 BYOK 口径（用户换了 key 却仍在烧旧账号，账目全乱）。
     """
     return merge_keys(
         primary,
-        os.environ.get("MINIMAX_API_KEY", ""),
-        os.environ.get("MINIMAX_API_KEYS", ""),
         os.environ.get("MINIMAX_API_KEY_FALLBACKS", ""),
     )

@@ -88,6 +88,24 @@ def resolve_submission_references(
     返回 {"reference_images": [...], "reference_videos": [...]}。
     """
     # ---- 成片接力：把已完成的 video_url 覆盖进镜头计划再解析 ----
+    # 组任务只挂在组头（组头 shot_id 建档）：成员镜头查不到自己的成片时，
+    # 回落到组头那条——一条组视频覆盖全组。没有这层映射，chain_from 指向
+    # 上一组成员时永远查不到 URL，接力链在组化方案上整段断掉（2026-11-14）。
+    group_head_url: dict[str, str] = {}
+    by_group: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for raw in shot_plan or []:
+        if isinstance(raw, dict) and raw.get("group_id"):
+            by_group.setdefault(
+                (str(raw.get("scene_id") or ""), str(raw["group_id"])), []
+            ).append(raw)
+    for members in by_group.values():
+        head = min(members, key=lambda m: (int(m.get("group_index") or 0),
+                                           int(m.get("order") or 0)))
+        head_url = completed_urls.get(str(head.get("id") or head.get("shot_id") or ""))
+        if head_url:
+            for m in members:
+                group_head_url[str(m.get("id") or m.get("shot_id") or "")] = head_url
+
     plan: list[dict[str, Any]] = []
     for raw in shot_plan or []:
         if not isinstance(raw, dict):
@@ -98,7 +116,7 @@ def resolve_submission_references(
             "id": sid,
             "reference_group": raw.get("reference_group") or "",
             "chain_from": raw.get("chain_from"),
-            "video_url": completed_urls.get(sid),
+            "video_url": completed_urls.get(sid) or group_head_url.get(sid),
         })
 
     videos: list[str] = []

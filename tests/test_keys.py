@@ -163,17 +163,20 @@ def test_ring_for_键变了就重建():
     assert c.ordered() == ["k1", "k2"]
 
 
-def test_minimax_keys_合并显式与备用(monkeypatch):
-    monkeypatch.setenv("MINIMAX_API_KEY", "env-primary")
+def test_minimax_keys_主key只认显式传入_env仅FALLBACKS(monkeypatch):
+    """D-48 收口：主 key 只来自 DB（显式传入）。MINIMAX_API_KEY / MINIMAX_API_KEYS
+    已退役——即使 env 里残留也不再参与，否则 DB key 失效时会偷偷用回退役的
+    .env 主 key，用户换了 key 却还在烧旧账号（BYOK 口径被绕开）。"""
+    monkeypatch.setenv("MINIMAX_API_KEY", "retired-primary")
+    monkeypatch.setenv("MINIMAX_API_KEYS", "retired-extra")
     monkeypatch.setenv("MINIMAX_API_KEY_FALLBACKS", "env-fb1,env-fb2")
-    monkeypatch.setenv("MINIMAX_API_KEYS", "env-primary,env-extra")
-    assert minimax_keys("explicit") == [
-        "explicit",
-        "env-primary",
-        "env-extra",
-        "env-fb1",
-        "env-fb2",
-    ]
+    # 退役 env 不进候选：只有显式 key + 批准的 FALLBACKS 安全网
+    assert minimax_keys("explicit") == ["explicit", "env-fb1", "env-fb2"]
+    # 连显式 key 都没配（DB 空）时也只剩安全网，退役主 key 绝不顶上
+    assert minimax_keys("") == ["env-fb1", "env-fb2"]
+    # 完全没配 → 空列表（上层报「没有配置 API Key」而不是用错账号）
+    monkeypatch.delenv("MINIMAX_API_KEY_FALLBACKS")
+    assert minimax_keys("") == []
 
 
 # ---------------- 视频 Provider 的轮换（打桩 httpx） ----------------

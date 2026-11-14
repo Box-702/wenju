@@ -80,16 +80,37 @@ class BatchCreateRequest(BaseModel):
 
 # ---------- Provider 解析与任务投递 ----------
 
+#: 方舟（Seedance 系）成片直链的官方域。信任传递只认这些域——判定用解析出的
+#: hostname 做精确/后缀匹配，**不做子串匹配**（子串匹配会把 evil-volces.com
+#: 这类相似域放进来）。
+_ARK_TRUSTED_HOST = "volces.com"
+_ARK_TRUSTED_SUFFIX = ".volces.com"
 
-def _is_trusted_relay(url: str, provider_name: str = "") -> bool:
+
+def _is_trusted_relay(url: str, provider_name: str = "",
+                      provenance: dict[str, str] | None = None) -> bool:
     """这条接力直链是否是「服务商自家产物、原样回喂可走信任传递」的。
 
     目前只有方舟（Seedance 系）有此机制且实测有效（30 天内本账号模型产物
-    免审）。URL 域名判定为主（接力链的上一镜成片天然是该服务商的域），
-    provider 名为辅——两条都不满足一律走内联老路，MiniMax 行为逐字节不变。
+    免审）。判据按可靠度排序：
+      1. URL 解析出的 hostname 是方舟官方域（volces.com 或其子域）；
+      2. 产物 provenance：接力锚来自上一镜成片，哪条 URL 由哪家任务生成
+         记录在 relay_providers 里（见 _auto_references）——seedance 产物
+         的直链原样回喂才谈得上信任传递；
+      3. 兜底：老任务落库时还没有 provenance 字段，沿用旧口径按本次提交的
+         provider 名判断。
+    都不满足一律走内联老路，MiniMax 行为逐字节不变。
     """
-    if "volces.com" in url:
+    from urllib.parse import urlparse
+
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        host = ""
+    if host == _ARK_TRUSTED_HOST or host.endswith(_ARK_TRUSTED_SUFFIX):
         return True
+    if provenance is not None and url in provenance:
+        return (provenance[url] or "").strip().lower() == "seedance"
     return (provider_name or "").strip().lower() == "seedance"
 
 
@@ -115,8 +136,9 @@ def _job_params(payload: dict[str, Any], provider_name: str = "") -> Any:
     （探针 cgt-20261114000257 实锤），但本地抽帧/裁尾再转 base64 后出处信息
     全丢，与随手上传的真人素材无异——必拦。此前「接力含脸概率被拦」的
     结论（5.45）实为本函数把 Ark 直链转成了 data URI：抽帧成功=被拒、
-    抽帧失败回退透传=通过，「概率」是假象。判据用 URL 域而不是 provider 名
-    更稳（接力 URL 来自上一镜成片，本就是该服务商的域），provider 名作双保险。
+    抽帧失败回退透传=通过，「概率」是假象。信任判据三选一（收紧后）：
+    URL hostname 精确命中方舟官方域 > 产物 provenance（relay_providers
+    记录该 URL 由哪家任务生成）> 老任务兜底按 provider 名；都不满足走内联。
     """
     from ..media.inline import clip_last_frame_uri, clip_tail_data_uri, inline_media_urls
     from .base import VideoJobParams
@@ -126,12 +148,14 @@ def _job_params(payload: dict[str, Any], provider_name: str = "") -> Any:
         "duration_sec", "resolution", "ratio", "aspect_ratio", "fps", "seed", "negative_prompt",
         "first_frame_image", "last_frame_image",
         "reference_images", "reference_videos", "reference_audios", "content",
+        "relay_providers",
     }
     ref_videos: list[str] = []
     relay_frames: list[str] = []
+    relay_prov = payload.get("relay_providers") or {}
     for u in inline_media_urls(deps.store(), payload.get("reference_videos") or []):
         if u.startswith("http"):
-            if _is_trusted_relay(u, provider_name):
+            if _is_trusted_relay(u, provider_name, relay_prov):
                 # 服务商自家成片直链：透传保出处（审核信任 + 免重复流量）
                 ref_videos.append(u)
                 continue
@@ -233,27 +257,33 @@ def _video_intent(
     }
 
 
-def _same_intent(job: Any, payload: VideoJobCreate, effective_params: dict[str, Any],
-                 manual_reference_videos: list[str]) -> bool:
-    """在途任务与新请求是不是「同一件事」（claim 之前的前置比对）。
-
-    claim 表只覆盖**从 submit_video_job 进来**的轮；成片质检的自动重 roll
-    （app/video/qa.py）直接 create_video_job、不占 claim。没有这层比对的话：
-    质检刚重 roll 出一个在途任务，用户又说「出片」——claim 查不到、任务又不是
-    自己提交的，就会第三次建档、同一个镜头两条任务并行烧钱。
-    """
-    if job.prompt != payload.prompt:
-        return False
-    if job.provider != payload.provider or job.model != payload.model:
-        return False
-    stored = dict(job.params or {})
+def _intent_params_equal(stored: dict[str, Any], effective: dict[str, Any]) -> bool:
+    """_INTENT_PARAM_KEYS 上「存下的 vs 这次要投的」等值比对（空值归一）。"""
 
     def _norm(value: Any) -> Any:
         return value if value else None
 
-    for key in _INTENT_PARAM_KEYS:
-        if _norm(stored.get(key)) != _norm(effective_params.get(key)):
-            return False
+    return all(_norm(stored.get(key)) == _norm(effective.get(key))
+               for key in _INTENT_PARAM_KEYS)
+
+
+def _same_generation_intent(
+    job: Any, *, prompt: str, provider: str, model: str,
+    effective_params: dict[str, Any], manual_reference_videos: list[str],
+) -> bool:
+    """「这条历史任务」与「这次要投的」是不是同一件事——单镜与批量共用一把尺。
+
+    比对口径：prompt、provider、model、_INTENT_PARAM_KEYS（时长/分辨率/画幅/
+    首尾帧/参考图/参考音频/content）+ 用户手挑的参考视频。自动接力锚不参与
+    （随出片进度变化，见 _INTENT_PARAM_KEYS 注释）。
+    """
+    if (job.prompt or "").strip() != (prompt or "").strip():
+        return False
+    if (job.provider or "") != (provider or "") or (job.model or "") != (model or ""):
+        return False
+    stored = dict(job.params or {})
+    if not _intent_params_equal(stored, effective_params):
+        return False
     # 参考视频：存下来的是「手挑 + 自动接力锚」合并结果，接力锚随出片进度变化不比，
     # 只按长度截出手挑那段比对。
     if manual_reference_videos:
@@ -263,25 +293,45 @@ def _same_intent(job: Any, payload: VideoJobCreate, effective_params: dict[str, 
     return True
 
 
+def _same_intent(job: Any, payload: VideoJobCreate, effective_params: dict[str, Any],
+                 manual_reference_videos: list[str]) -> bool:
+    """在途任务与新请求是不是「同一件事」（claim 之前的前置比对）。
+
+    claim 表只覆盖**从 submit_video_job 进来**的轮；成片质检的自动重 roll
+    （app/video/qa.py）直接 create_video_job、不占 claim。没有这层比对的话：
+    质检刚重 roll 出一个在途任务，用户又说「出片」——claim 查不到、任务又不是
+    自己提交的，就会第三次建档、同一个镜头两条任务并行烧钱。
+    """
+    return _same_generation_intent(
+        job, prompt=payload.prompt, provider=payload.provider, model=payload.model,
+        effective_params=effective_params,
+        manual_reference_videos=manual_reference_videos,
+    )
+
+
 # ---------- 提交（单镜 / 镜头组，S2 PLAN-shot-group） ----------
 
 
 def _generation_units(shots: list[Any]) -> list[dict[str, Any]]:
     """把镜头列表折叠成生成单元：单镜自成单元；同 group_id 的机位合成一个单元。
 
+    组键是 **(scene_id, group_id)**，不是裸 group_id：两个场景复用同一个
+    group_id 时绝不能并成一个单元（旧写法全局按 group_id 分桶，跨场重复键
+    会把两段不相邻的戏拼成一次生成、时长爆表、成员互相污染）。
+
     单元 = 一次视频生成。组单元的 prompt 取组头 group_prompt（DP 折叠产物，
     缺则回落组头 video_prompt），时长 = 组内各机位之和；job 的 shot_id 用
     组头 id，成员 id 列表进 params（finalize/配音按成员展开，S2b）。
     旧数据（无 group 字段）逐字节等价于「每镜一单元」——兼容是设计出来的。
     """
-    by_gid: dict[str, list[dict[str, Any]]] = {}
+    by_gid: dict[tuple[str, str], list[dict[str, Any]]] = {}
     units: list[dict[str, Any]] = []
     for s in shots:
         if not isinstance(s, dict) or not s.get("id"):
             continue
         gid = str(s.get("group_id") or "")
         if gid:
-            by_gid.setdefault(gid, []).append(s)
+            by_gid.setdefault((str(s.get("scene_id") or ""), gid), []).append(s)
         else:
             units.append(_unit_of([s]))
     for members in by_gid.values():
@@ -299,6 +349,7 @@ def _unit_of(members: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "shot_id": str(head.get("id")),
         "group_id": str(head.get("group_id") or "") if len(members) > 1 else "",
+        "scene_id": str(head.get("scene_id") or ""),
         "member_ids": [str(m.get("id")) for m in members],
         "prompt": prompt,
         "duration_sec": sum(max(0.0, float(m.get("duration_sec") or 0)) for m in members),
@@ -360,8 +411,11 @@ def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, boo
     # 提交单元可以是组：payload.shot_id 是组头，等值校验对 group_prompt，
     # 时长对组内各机位之和。单镜（无 group_id）走原路径，逐字节不变。
     gid = str(shot.get("group_id") or "")
+    # 组成员必须同场：group_id 只在场景内唯一（两个场景复用同名组键时，
+    # 跨场合并会把不相邻的戏拼成一次生成）。
     members = [s for s in (version.shots or [])
-               if isinstance(s, dict) and str(s.get("group_id") or "") == gid] \
+               if isinstance(s, dict) and str(s.get("group_id") or "") == gid
+               and str(s.get("scene_id") or "") == str(shot.get("scene_id") or "")] \
         if gid else [shot]
     approved_prompt = (str(shot.get("group_prompt") or "") if gid and len(members) > 1
                        else str(shot.get("video_prompt") or ""))
@@ -520,14 +574,19 @@ def _auto_references(project_id: str, shot_id: str | None, version_id: str | Non
     if not any(s.get("id") == shot_id for s in version.shots if isinstance(s, dict)):
         return
 
-    completed_urls = {
-        j.shot_id: j.video_url
-        for j in store.list_video_jobs(project_id)
+    jobs = [
+        j for j in store.list_video_jobs(project_id)
         if j.status == "succeeded" and j.video_url and j.shot_id
         # 只拦「两个版本都有明确归属且不同代」的成片（果园 v4 排查发现的重号
         # 污染洞）；单镜手提交的任务常不带 version_id，无法证明是别代，放行。
         and not (version_id and j.version_id and j.version_id != version_id)
-    }
+    ]
+    completed_urls = {j.shot_id: j.video_url for j in jobs}
+    # 产物 provenance：每条成片 URL 由哪家任务生成。接力锚的信任传递判定
+    # （_is_trusted_relay）据此认 URL 的出身，而不是拿「本次提交的 provider 名」猜。
+    url_provider: dict[str, str] = {}
+    for j in jobs:
+        url_provider.setdefault(str(j.video_url), str(getattr(j, "provider", "") or ""))
     registry = dict((store.get_video_style(project_id) or {}).get("reference_images") or {})
 
     script = None
@@ -569,6 +628,13 @@ def _auto_references(project_id: str, shot_id: str | None, version_id: str | Non
     for key in ("reference_images",):
         if refs.get(key) and not stored_params.get(key):
             stored_params[key] = refs[key]
+    # relay_providers 只记接力锚的出身（本机回放地址的手挑素材不在其中）；
+    # 没有出身的 URL 进不了映射，_job_params 侧就拿不到信任传递——
+    # 任意公网 URL + provider=seedance 不再被无条件放行。
+    stored_params["relay_providers"] = {
+        u: url_provider[u] for u in stored_params.get("reference_videos") or []
+        if u in url_provider
+    }
 
 
 # ---------- 取消 / 重试 ----------
@@ -606,6 +672,53 @@ def retry_video_job(job_id: str) -> dict[str, Any]:
 
 
 # ---------- 批量生成（自动 / 审批模式） ----------
+
+
+def _unit_intent(
+    unit: dict[str, Any], version_shots: list[Any], *, project_id: str,
+    resolution: str | None, aspect_ratio: str | None, fallback_duration: float,
+    script: Any, registry: dict[str, str],
+) -> tuple[dict[str, Any], list[str]]:
+    """批量口径下该单元「这次要投」的意图参数与手挑参考视频。
+
+    必须与 submit_video_job 的落库口径逐键对齐：落库时发生了什么回填，
+    比对侧就要算出同样的值——口径不对称，幂等要么漏挡要么把没变的任务
+    误判成新意图白烧钱。参考视频只算手挑那段（自动接力锚不进指纹，
+    见 _INTENT_PARAM_KEYS 注释）。
+    """
+    head = next((s for s in version_shots if isinstance(s, dict)
+                 and str(s.get("id") or "") == unit["shot_id"]), {})
+    if unit["group_id"]:
+        members = [s for s in version_shots if isinstance(s, dict)
+                   and str(s.get("group_id") or "") == unit["group_id"]
+                   and str(s.get("scene_id") or "") == unit.get("scene_id", "")]
+    else:
+        members = [head]
+    # 参考图：显式并集优先；并集为空时 submit 侧会回填定妆图注册表，
+    # 比对侧算同一份，否则注册表回填过的任务永远被判「意图不同」。
+    raw_images = list(dict.fromkeys(
+        u for m in members for u in (m.get("reference_images") or []) if u))
+    if raw_images:
+        intent_images: list[str] | None = raw_images
+    else:
+        from .continuity import resolve_submission_references
+
+        intent_images = resolve_submission_references(
+            shot_id=unit["shot_id"], shot_plan=version_shots,
+            completed_urls={}, image_registry=registry, script=script,
+        ).get("reference_images") or None
+    params = {
+        "duration_sec": int(round(unit["duration_sec"] or fallback_duration)),
+        "resolution": resolution or default_resolution(),
+        "aspect_ratio": aspect_ratio or "",
+        "first_frame_image": head.get("first_frame_image") or None,
+        "last_frame_image": head.get("last_frame_image") or None,
+        "reference_images": intent_images,
+        "reference_audios": head.get("reference_audios") or None,
+        "content": None,
+    }
+    manual = _manual_reference_videos(project_id, head) if head else []
+    return params, manual
 
 
 def _pick_video_provider() -> tuple[str, str]:
@@ -655,11 +768,13 @@ def _batch_submit(
                 },
                 # 镜头级参考图随镜头计划透传；
                 # 参考视频由 _auto_references 统一合并（用户挑的参考素材 + 自动接力）。
-                # 组单元：成员参考图并集去重（各机位可能点不同角色）。
+                # 组单元：成员参考图并集去重（各机位可能点不同角色）；
+                # 成员按 (scene_id, group_id) 认——组键只在场景内唯一。
                 reference_images=list(dict.fromkeys(
                     u for m in ([shot] if not unit["group_id"] else
                                 [s for s in shots if isinstance(s, dict)
-                                 and str(s.get("group_id") or "") == unit["group_id"]])
+                                 and str(s.get("group_id") or "") == unit["group_id"]
+                                 and str(s.get("scene_id") or "") == unit.get("scene_id", "")])
                     for u in (m.get("reference_images") or []) if u
                 )),
             ))
@@ -674,7 +789,8 @@ def _batch_submit(
 def generate_batch(project_id: str, payload: BatchCreateRequest) -> dict[str, Any]:
     """按最新视频版本的镜头计划批量生成。串行推进，前镜成片自动作为后镜接力参考。"""
     store = deps.store()
-    if store.get_project(project_id) is None:
+    project = store.get_project(project_id)
+    if project is None:
         raise HTTPException(404, "项目不存在")
     if payload.version_id:
         version = store.get_video_version(payload.version_id)
@@ -693,30 +809,59 @@ def generate_batch(project_id: str, payload: BatchCreateRequest) -> dict[str, An
     # 提交名单按**生成单元**折叠（S2）：同组成员只投组头一次——逐镜提交
     # 会把一段戏生成 N 遍（N 倍计费），这是镜头组架构必须堵的洞。
     # 已出片单元的跳过规则（2026-11-14 收口，果园v3 5.43 + 孔乙己 5.44 +
-    # 用户看片「重复完成相同场景任务」三轮踩坑的共同正解）：**同 prompt
-    # 的成片存在就跳过，跨版本生效**——
-    #   · 续跑/重开批次：词没变，重投=纯浪费（旧版按 version_id 过滤，
+    # 用户看片「重复完成相同场景任务」三轮踩坑的共同正解）：**同意图成片
+    # 存在就跳过，跨版本生效**——
+    #   · 续跑/重开批次：意图没变，重投=纯浪费（旧版按 version_id 过滤，
     #     续跑开新批准版本后旧成片全放行，正是双烧的洞）；
-    #   · 改词重出：新 prompt 对不上旧成片，照常提交（创作意图变了）；
-    #   · 手工提交/对账回写的无 version_id 任务：同样按 prompt 认。
+    #   · 改词/换厂商/换模型/换分辨率重出：意图对不上旧成片，照常提交——
+    #     只比 prompt 是老病根，换 Seedance 重跑时旧 MiniMax 成片会把整批
+    #     挡掉，用户拿到全是不属于本批的旧镜头；
+    #   · 手工提交/对账回写的无 version_id 任务：意图相同同样认。
     # 想对已成功镜头原词重出，走单镜重试入口，不靠重开批次。
-    prompt_by_unit = {u["shot_id"]: u["prompt"] for u in _generation_units(version.shots)}
-    done_here = {
-        j.shot_id for j in store.list_video_jobs(project_id)
-        if j.status == "succeeded" and j.video_url
-        and j.shot_id in prompt_by_unit
-        and (j.prompt or "").strip() == prompt_by_unit[j.shot_id].strip()
-    }
+    units_all = _generation_units(version.shots)
+    unit_by_id = {u["shot_id"]: u for u in units_all}
+    provider = payload.provider or _pick_video_provider()[0]
+    model = payload.model or "default"
+    from .rhythm import suggest_duration
+
+    fallback_dur = suggest_duration(getattr(version, "pacing", None),
+                                    getattr(project, "adaptation_type", None))
+    registry = dict((store.get_video_style(project_id) or {}).get("reference_images") or {})
+    script = None
+    try:
+        sv = store.latest_version(project)
+        script = sv.script if sv is not None else None
+    except Exception as e:  # noqa: BLE001
+        log.warning("批次跳过判据：剧本解析失败（%s），参考图按显式并集比对", str(e)[:80])
+    intent_cache: dict[str, tuple[dict[str, Any], list[str]]] = {}
+
+    def _intent_of(shot_id: str) -> tuple[dict[str, Any], list[str]]:
+        if shot_id not in intent_cache:
+            intent_cache[shot_id] = _unit_intent(
+                unit_by_id[shot_id], version.shots, project_id=project_id,
+                resolution=payload.resolution, aspect_ratio=payload.aspect_ratio,
+                fallback_duration=fallback_dur, script=script, registry=registry,
+            )
+        return intent_cache[shot_id]
+
+    done_here: set[str] = set()
+    for j in store.list_video_jobs(project_id):
+        unit = unit_by_id.get(j.shot_id)
+        if j.status != "succeeded" or not j.video_url or unit is None:
+            continue
+        intent_params, manual = _intent_of(j.shot_id)
+        if _same_generation_intent(
+            j, prompt=unit["prompt"], provider=provider, model=model,
+            effective_params=intent_params, manual_reference_videos=manual,
+        ):
+            done_here.add(j.shot_id)
     units = [
-        u for u in _generation_units(version.shots)
+        u for u in units_all
         if u["prompt"] and _unit_approved(version.shots, u) and u["shot_id"] not in done_here
     ]
     shot_ids = [u["shot_id"] for u in units]
     if not shot_ids:
         raise HTTPException(400, "还没有批准任何视频 Prompt，请先逐镜编辑并批准")
-
-    provider = payload.provider or _pick_video_provider()[0]
-    model = payload.model or "default"
 
     # 同一项目同时只能有一个批次在推进：两个批次会重复提交同一批镜头（重复计费），
     # 还会互相抢完成回调。要重出片先 abort 掉正在跑的那个。

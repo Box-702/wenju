@@ -391,13 +391,22 @@ GROUP_MAX_SEC = 15.0
 GROUP_MIN_SEC = 4.0
 GROUP_MAX_MEMBERS = 4
 
+# 硬切/转场断点：cut_reason 里出现这些词说明这是镜头语言的段落边界。
+# cut_reason 描述的是「为什么切到本镜」——边界镜可以开新组（它之后的
+# 同段镜头跟它是一段），但绝不并入前面那段。
+_HARD_CUT_RE = re.compile(r"硬切|转场|闪回|插叙|hard\s*cut|flashback|match\s*cut", re.IGNORECASE)
+
 
 def _normalize_groups(breakdowns: list[SceneBreakdown]) -> None:
     """归一化导演给的 group_id：非法的组**降级为单镜**（拆键），而不是打回。
 
     规则（就地修改）：
+      · 组键按 **(scene_id, group_id)** 认——两个场景复用同名组键时绝不
+        合并（组=一次生成，跨场合并等于把两段不相邻的戏塞进同一次调用）；
       · 同组镜头必须在全局 order 上连续——被隔开的拆成两组；
-      · 组总时长必须落在 [GROUP_MIN_SEC, GROUP_MAX_SEC]——超了从尾部拆新组；
+      · 组总时长必须落在 [GROUP_MIN_SEC, GROUP_MAX_SEC]——超了从尾部拆
+        新组，不足最小体量整组拆回单镜（旧行为只在校验器里报告：模型
+        拿不到批评就没人管，短组照样混出片）；
       · 组成员 ≤ GROUP_MAX_MEMBERS；
       · group_index 按组内顺序重排 0..n-1；
       · 单成员组清空 group_id（等价单镜，下游按单镜走）。
@@ -405,13 +414,13 @@ def _normalize_groups(breakdowns: list[SceneBreakdown]) -> None:
     锦上添花，不值得烧一整轮导演调用来修格式。"""
     flat: list[Shot] = sorted((s for bd in breakdowns for s in bd.shots),
                               key=lambda s: s.order)
-    # 按 group_id 分桶（保序）
-    buckets: dict[str, list[Shot]] = {}
+    # 按 (场景, group_id) 分桶（保序）：组键只在场景内唯一
+    buckets: dict[tuple[str, str], list[Shot]] = {}
     for s in flat:
         if s.group_id:
-            buckets.setdefault(s.group_id, []).append(s)
+            buckets.setdefault((s.scene_id, s.group_id), []).append(s)
 
-    for gid, members in list(buckets.items()):
+    for (_scene_id, gid), members in list(buckets.items()):
         if len(members) < 2:
             for s in members:
                 s.group_id = ""
@@ -419,7 +428,7 @@ def _normalize_groups(breakdowns: list[SceneBreakdown]) -> None:
             continue
         # 连续性检查 + 时长/人数上限：切成若干合法子组
         parts: list[list[Shot]] = [[members[0]]]
-        for prev, cur in zip(members, members[1:]):
+        for prev, cur in zip(members, members[1:], strict=False):
             same_run = cur.order == prev.order + 1
             fits = (sum(x.duration_sec for x in parts[-1]) + cur.duration_sec <= GROUP_MAX_SEC
                     and len(parts[-1]) < GROUP_MAX_MEMBERS)
@@ -428,8 +437,13 @@ def _normalize_groups(breakdowns: list[SceneBreakdown]) -> None:
             else:
                 parts.append([cur])
         for pi, part in enumerate(parts):
-            sub_gid = gid if pi == 0 and len(part) > 1 else (
-                f"{gid}-{pi}" if len(part) > 1 else "")
+            total = sum(x.duration_sec for x in part)
+            if len(part) < 2 or total < GROUP_MIN_SEC:
+                sub_gid = ""  # 单成员 / 达不到一次生成的最小体量 → 拆回单镜
+            elif pi == 0:
+                sub_gid = gid
+            else:
+                sub_gid = f"{gid}-{pi}"
             for si, s in enumerate(part):
                 s.group_id = sub_gid
                 s.group_index = si if sub_gid else 0
@@ -444,35 +458,76 @@ def _normalize_groups(breakdowns: list[SceneBreakdown]) -> None:
 
 def auto_group_scene(breakdowns: list[SceneBreakdown]) -> tuple[int, int]:
     """确定性成组兜底（2026-11-13 默认值翻转）：同一场内相邻的孤立单镜，
-    只要塞得进一次生成的预算（≤15s、≤4 员），就自动打包成组。
+    只要塞得进一次生成的预算（[4,15]s、≤4 员），就自动打包成组。
 
     为什么不能只靠 SKILL 教：实测 deepseek 拿到「连续戏默认成组」的新规则
     后仍几乎不标 group（一场只标过一组）——和运镜、台词同一个病：教了不做。
     同场相邻镜头本来就是同一时空，成组只会更好不会更坏：组内锚只写一遍、
     不漂移、声音跨切镜；唯一代价是组太大时单次生成的动作复杂度，人数/秒数
     上限已经卡死。跨场绝不合并（地点/时间必然跳变）。
+
+    语义边界（2026-11-14 收紧，防止「同场相邻」吞掉不该拼的）——
+      · chain_from 显式接力：组内机位无法各自带接力锚，必须独立成单镜；
+      · reference_group 变化：环境锚不同（硬切到新地点），不跨锚打包；
+      · subject 变化：主体切换/交替对白各自成单镜（DP 折叠的人物锚按镜
+        走，但自动成组保守起见不跨主体）；
+      · cut_reason 是硬切/转场/闪回类断点：边界镜开新段，不并入前段。
     返回 (新成组的格数, 组数)。
     """
     grouped = 0
     n_groups = 0
     for bd in breakdowns:
-        shots = sorted(bd.shots, key=lambda s: s.order)
-        run: list[Shot] = []
-        for s in shots + [None]:  # 哨兵收尾
-            eligible = (s is not None and not s.group_id
-                        and sum(x.duration_sec for x in run) + s.duration_sec <= GROUP_MAX_SEC
-                        and len(run) < GROUP_MAX_MEMBERS)
-            if eligible:
-                run.append(s)
-                continue
-            if len(run) >= 2:
-                gid = f"g_auto_{bd.scene_id}_{run[0].order:03d}"
-                for si, x in enumerate(run):
-                    x.group_id = gid
-                    x.group_index = si
-                grouped += len(run)
-                n_groups += 1
-            run = [s] if s is not None and not s.group_id else []
+        got, groups = _auto_group_one_scene(bd)
+        grouped += got
+        n_groups += groups
+    return grouped, n_groups
+
+
+def _auto_group_one_scene(bd: SceneBreakdown) -> tuple[int, int]:
+    """单场内的自动成组（auto_group_scene 的逐场实现，见其函数头注释）。"""
+    grouped = 0
+    n_groups = 0
+    shots = sorted(bd.shots, key=lambda s: s.order)
+    run: list[Shot] = []
+
+    def _flush() -> None:
+        # 达不到一次生成的最小体量就不成组（保持单镜，不硬凑短组）
+        nonlocal grouped, n_groups, run
+        if len(run) >= 2 and sum(x.duration_sec for x in run) >= GROUP_MIN_SEC:
+            gid = f"g_auto_{bd.scene_id}_{run[0].order:03d}"
+            for si, x in enumerate(run):
+                x.group_id = gid
+                x.group_index = si
+            grouped += len(run)
+            n_groups += 1
+        run = []
+
+    for s in shots + [None]:  # 哨兵收尾
+        if s is None:
+            _flush()
+            continue
+        # 硬边界：已属模型给的组 / 显式接力锚——本镜必须独立，不开新 run
+        if s.group_id or s.chain_from is not None:
+            _flush()
+            continue
+        # 软边界：不并入当前 run，但可以自己开新段（它之后的同段镜头跟它）
+        soft_break = (
+            bool(_HARD_CUT_RE.search(str(s.cut_reason or "")))
+            or (run and s.reference_group != run[0].reference_group)
+            or (run and str(s.subject or "").strip()
+                != str(run[0].subject or "").strip())
+        )
+        if soft_break:
+            _flush()
+            run = [s]
+            continue
+        fits = (sum(x.duration_sec for x in run) + s.duration_sec <= GROUP_MAX_SEC
+                and len(run) < GROUP_MAX_MEMBERS)
+        if fits:
+            run.append(s)
+            continue
+        _flush()
+        run = [s]
     return grouped, n_groups
 
 
@@ -707,16 +762,18 @@ class DirectorAgent(CrewAgent):
                     "每场的第一镜优先用 wide 或 medium 建立空间，再进近景。"
                 )
         # 0c) 镜头组自洽（normalize 已保证，这里是第二只眼：防外部数据绕过归一化）
-        by_gid: dict[str, list[Shot]] = {}
+        # 组键按 (scene_id, group_id) 认，与归一化/生成单元折叠同口径。
+        by_gid: dict[tuple[str, str], list[Shot]] = {}
         for s in all_shots:
             if s.group_id:
-                by_gid.setdefault(s.group_id, []).append(s)
-        for gid, members in by_gid.items():
+                by_gid.setdefault((s.scene_id, s.group_id), []).append(s)
+        for (_scene_id, gid), members in by_gid.items():
             members.sort(key=lambda x: x.order)
             g_total = sum(x.duration_sec for x in members)
             if len(members) < 2:
                 issues.append(f"镜头组 {gid} 只有一个成员（应拆回单镜）")
-            elif any(b.order != a.order + 1 for a, b in zip(members, members[1:])):
+            elif any(b.order != a.order + 1
+                     for a, b in zip(members, members[1:], strict=False)):
                 issues.append(f"镜头组 {gid} 的成员 order 不连续（组=一次生成，必须相邻）")
             elif not (GROUP_MIN_SEC <= g_total <= GROUP_MAX_SEC):
                 issues.append(

@@ -135,7 +135,7 @@ class MiniMaxProvider(VideoProvider):
     # ---- key 轮换 ----
 
     def _ring(self):
-        """候选 key 环：本实例的 key 优先，其后是 .env 里的备用 key。"""
+        """候选 key 环：DB 注入的本实例 key 优先，其后是 FALLBACKS 备用安全网。"""
         return ring_for("minimax", minimax_keys(self.api_key))
 
     @classmethod

@@ -51,14 +51,19 @@ _NEGATION_RE = re.compile(
 )
 
 # ---------------------------------------------------------------------
-# 台词引用：说话动词后的引用几乎一定是台词——语音交给后期配音，
-# 引用进 prompt 只会得到含混的假说话。招牌/字幕类引用（「写着」）不受影响。
+# 台词引用：引号直挂说话动词且**没有冒号**的旧写法（`说道「…」`）会渲染成
+# 含混假说话，剥除；官方音画句式（`角色说话：「…」`，冒号挂引号）保留——
+# native 音画同生模式下它是成片台词人声的唯一来源（2026-11-13 判据放宽）。
+# 招牌/字幕类引用（「写着」）不带冒号也不带动词，不受影响。
 # ---------------------------------------------------------------------
 _SPEECH_VERBS = ("说", "问", "答", "喊", "叫", "念", "读", "道", "开口", "报告", "低声", "大声", "嘀咕", "嘟囔")
 _QUOTE_SPAN = re.compile(r"[「『“\"]([^」』”\"]*)[」』”\"]")
 
 #: 子句切分：中文顿号也算——「A、B、A」这种重复前面常挂着顿号。
 _CLAUSE_SPLIT_RE = re.compile(r"[，。；;、\n]")
+
+# 组提示词的跨切镜重述块：「（身份+光线锚不变）」——设计性重复，复读检测豁免。
+_LOCK_BLOCK_RE = re.compile(r"（[^（）]*(?:不变)[^（）]*）|\([^()]*(?:unchanged)[^()]*\)")
 
 # ---------------------------------------------------------------------
 # 三细节词库（细节律：环境压力 / 身体微动作 / 声音锚点·视觉母题）。
@@ -237,6 +242,17 @@ def find_negations(text: str) -> list[str]:
     return [m.group(0) for m in _NEGATION_RE.finditer(clean)]
 
 
+def strip_lock_blocks(text: str) -> str:
+    """剥掉组提示词里的跨切镜重述块「（…不变）」（lock line，借鉴清单 #3）。
+
+    这些块是**设计性重复**——模型跨切镜不保留提示词没写全的东西，每个机位
+    块尾逐字重述身份+光线锚是防漂移的保险。复读检测（find_repeated_clause）
+    不剥就会把每个多机位组全量误报 DPT-15（2026-11-14 审阅实测：锚句出现
+    3 次=全局锚 1 次+lock 重述 2 次，全是正当的）。
+    """
+    return _LOCK_BLOCK_RE.sub(" ", text or "")
+
+
 def find_repeated_clause(text: str, *, min_len: int = 8) -> str:
     """找出同一段提示词里被写了两遍的子句（返回重复的那一句，没有则空串）。
 
@@ -261,11 +277,17 @@ def find_repeated_clause(text: str, *, min_len: int = 8) -> str:
 
 
 def _is_official_dialogue(head: str) -> bool:
-    """官方音画同出句式：`角色说话：「台词」`（MiniMax/可灵/Seedance 文档确认，
-    2026-11-12 提示词规则修订）。带这个标记的引用是**特性**——锚表演节奏，
-    成片仍以下阶段 TTS 为准；不带标记的「说道：『…』」才是模型会渲染成
-    含混假语音的旧写法，照旧剥除。"""
-    return "角色说话" in head or "说话：" in head or "说话:" in head
+    """官方音画同出句式：引号前挂冒号的台词（MiniMax/可灵/Seedance 文档确认，
+    2026-11-12 提示词规则修订；2026-11-13 放宽判据）。
+
+    原判据字面认「说话：」，但 DP 写出的台词句式五花八门——「哽咽说：「…」」
+    「念：「…」」「低声问：「…」」。逐字判据使它们全部按旧写法被剥掉，
+    native 音画同生模式下成片就没有台词人声（2026-11-13 孔乙己实测：
+    字幕 5 句、音轨只有环境声级响度）。放宽为**引号前是冒号即官方台词句式**，
+    保留给模型音画同生；引号直接跟在说话动词后、没有冒号的（`说道「…」`）
+    仍是会渲染成含混假语音的旧写法，照旧剥除。招牌/字幕类引用（「写着」）
+    不带冒号也不带动词，两种模式下都不受影响。"""
+    return head.rstrip().endswith(("：", ":"))
 
 
 def find_spoken_quotes(text: str) -> list[str]:
@@ -283,9 +305,10 @@ def find_spoken_quotes(text: str) -> list[str]:
 
 
 def strip_spoken_quotes(text: str) -> str:
-    """把「跟在说话动词后面的引用台词」从提示词里剥掉（语音交给后期配音）。
+    """把「旧写法引用台词（说话动词后直接挂引号、无冒号）」从提示词里剥掉。
 
-    官方 `角色说话：「…」` 句式保留（见 _is_official_dialogue）。"""
+    官方 `角色说话：「…」` 句式保留（见 _is_official_dialogue）——native 模式
+    它就是成片台词声音；dub 模式的 TTS 归属另按 dialogue_ref 走，不受此影响。"""
     if not text:
         return text
     out: list[str] = []
@@ -466,7 +489,7 @@ def audit_video_prompt(shot: dict[str, Any], *, style_context: str = "") -> list
         issues.append(f"含否定式描述（{uniq[:24]}）：模型会把被否定的动作画出来，请改写成它应该怎样")
     quotes = find_spoken_quotes(prompt)
     if quotes:
-        issues.append(f"含引用台词（「{quotes[0][:12]}」）：会渲染成含混的假说话，语音应交给后期配音")
+        issues.append(f"含引用台词（「{quotes[0][:12]}」）：旧写法会渲染成含混假说话，官方句式需在引号前加冒号：角色说话：「…」")
 
     # 一镜多运镜：只看**本镜自己的**运镜——剥掉全片风格段，且要求动词带镜头语境。
     own_text = strip_style_block(prompt, style_context)
@@ -481,7 +504,8 @@ def audit_video_prompt(shot: dict[str, Any], *, style_context: str = "") -> list
         )
 
     # 同一句写两遍：多半是兜底逻辑重复追加，模型会当成两个连续动作。
-    dup = find_repeated_clause(own_text)
+    # 先剥 lock 重述块——组提示词的跨切镜锚重述是设计性的，不是病（5.48）。
+    dup = find_repeated_clause(strip_lock_blocks(own_text))
     if dup:
         issues.append(
             f"同一句写了两遍（「{dup[:18]}」）：视频模型会当成两个连续动作或两次运镜，删掉一处"

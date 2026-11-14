@@ -12,7 +12,7 @@ when_to_use: 摄影指导写镜头提示词时（由 DPAgent 按目标模型方�
 
 {% if has_anchors %}**已提供统一的美术风格指南（环境/人物锚已固定）**：
 - 环境描述与人物造型由美术指导统一下发，本步骤不要改写它们；
-- 你只需为每个镜头产出 `characters`（本镜出场人物名）与 `prompt_body`（本镜画面调度 + 运镜，写法见下面十一条）。
+- 你只需为每个镜头产出 `characters`（本镜出场人物名）与 `prompt_body`（本镜画面调度 + 运镜，写法见下面十三条）。
 {% else %}**未提供美术风格指南**：请额外为每个场景产出 `environment`（固定环境描述）与 `characters`（人物名 -> 固定外貌描述），供本场所有镜头复用。
 {% endif %}
 **What each shot's prompt_body must contain** (this text is the only
@@ -108,13 +108,14 @@ thing the video model sees — anything you leave out, it will invent):
    her head").
 9. **Dialogue enters the prompt via the official syntax; voice layers separately.**
    (2026-11-12, corrected per official vendor docs — MiniMax/Kling/Seedance all support
-   audio-visual generation.) Write quoted lines as `角色说话：「台词」` /
+   audio-visual generation; 2026-11-13, aligned with the native audio-visual default.)
+   Write quoted lines as `角色说话：「台词」` /
    `Character says: "line"` plus the acting beat (who addresses whom, pace and emotion,
    body orientation, hands). Add one sound clause: ambient beds and action sounds only,
-   `no background music`. Model-generated speech is unreliable — final voice still comes
-   from post TTS dubbing, so keep lines short (one breath) and split long exchanges by
-   speaker. Inside a shot group (multi-camera one generation), each segment carries at
-   most one speaker.
+   `no background music`. In the default audio-visual mode this line IS the final voice,
+   so keep lines short (one breath) and split long exchanges by speaker. Inside a shot
+   group (multi-camera one generation), each segment carries at
+   most one speaker. Under post-TTS dubbing the line only anchors the acting beat.
 10. **End on the final frame.** Close every prompt_body with the shot's final_frame
    (the visible state of the last frame) — the video model treats the last frame as
    the emotional destination and drives toward it. Write the visible state itself;

@@ -39,9 +39,11 @@ log = logging.getLogger(__name__)
 
 
 # 原生支持中文提示词的模型（其余按英文处理）。
-# 产品只走 MiniMax，它原生吃中文；保留这个判断是为了让 language_for 的
-# 语义完整（有 provider 名不等于能用中文），不是为多厂商留口子。
-_ZH_PROVIDERS = {"minimax"}
+# MiniMax 原生吃中文；Seedance（火山方舟豆包系）同为国内模型吃中文方言，
+# 且官方音画台词句式 `角色说话：「…」` 是中文写法——判英文等于一边教
+# 「台词写进提示词」一边把正文换成英文。
+# （切镜语法不分厂商：统一时间戳方言，见 D-51。）
+_ZH_PROVIDERS = {"minimax", "seedance"}
 
 # 视觉风格兜底（未提供风格指南时使用）。
 _DEFAULT_STYLE = "写实电影质感，色调统一，轻微胶片颗粒，画面稳定。"
@@ -108,7 +110,7 @@ def language_for(provider: str, script_language: str) -> str:
 
 
 # 中/英两套提示词都外置成技能文件（app/skills/video-prompt-*/SKILL.md）。
-# 正文里的十一条写作规则改动频率不低，放 .md 里改完即生效，不必动代码。
+# 正文里的十三条写作规则改动频率不低，放 .md 里改完即生效，不必动代码。
 _SKILL_BY_LANGUAGE = {"zh": "video-prompt-zh", "en": "video-prompt-en"}
 
 
@@ -121,6 +123,11 @@ def _fmt_ts(sec: float) -> str:
 _LIGHT_RE = re.compile(
     r"([^，。,]*(?:光|逆光|侧光|顶光|灯光|烛光|日光|阳光|月光|"
     r"light|lighting|backlit|rim)[^，。,]*)")
+
+# 官方音画台词句式（台词兜底的「已写过」判据）：冒号挂引号才算——
+# 招牌引用（写下「…」）没有冒号前缀，不算台词（2026-11-14 002_015 实测：
+# 旧判据「任意引号」让粉板文字顶掉了掌柜认领的台词，画面变哑剧）。
+_OFFICIAL_DLG_RE = re.compile(r"[:：]\s*(?:[「『“\"]|\{)")
 
 
 def _light_phrase(env: str) -> str:
@@ -135,12 +142,16 @@ def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
                         *, language: str) -> None:
     """把同 group 的机位折叠成一条组提示词（就地写 group_prompt 到组头镜头）。
 
-    语法按 MiniMax H3 官方增强提示词的格式（D-46 三源调研）：
+    切镜语法**全厂商统一为时间戳方言**（2026-11-14 A/B 实验定案，D-51）：
       [全局锚：环境+人物+风格，只写一遍]
       [Shot 1] 0-4s 中景，机位…动作…
       [Shot 2] At 00:04.000, cuts to 特写…动作…
-    时间戳由组内 duration_sec 累加**代码算**——模型对精确时间支持不稳
-    （Seedance 官方明说），所以绝不让 LLM 自己数秒。
+    实验证据：同一 3 机位组在 Seedance 2.0 上双方言各投一次——时间戳版画面
+    无文字渲染、三机位照常执行（切点 3.54/8.88 vs 预算 4/10），「镜头N（秒）」
+    版并没有更准（3.75/9.71）；MiniMax 原生此语法、2.5 官方支持——一条语法
+    三厂商，分支删掉。曾按 5.37 文档给 2.0 分支「镜头N」语法，实测收益为零。
+    时间戳由组内 duration_sec 累加**代码算**——模型对精确时间支持不稳，
+    所以绝不让 LLM 自己数秒。
     全局锚去重：同组成员的环境/人物/风格段是逐字复用的同一份（锚纪律），
     取组头那份即可；body 各机位保留。
     单镜组（group_id 空或只剩 1 员）不写 group_prompt——下游照旧用 video_prompt。
@@ -172,14 +183,13 @@ def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
             p = parts.get(m.id, {})
             body = p.get("body", "") or (m.video_prompt or "")
             if i == 1:
-                seg.append(f"[Shot 1] 0-{int(round(m.duration_sec))}s，{body}"
-                           if zh else f"[Shot 1] 0-{int(round(m.duration_sec))}s: {body}")
+                lead = (f"[Shot 1] 0-{int(round(m.duration_sec))}s，{body}"
+                        if zh else f"[Shot 1] 0-{int(round(m.duration_sec))}s: {body}")
             else:
-                lead = (f"[Shot {i}] At {_fmt_ts(cursor)}, cuts to {body}" if zh
-                        else f"[Shot {i}] At {_fmt_ts(cursor)}, cuts to {body}")
-                if lock:
-                    lead += f"（{lock}不变）" if zh else f" ({lock} unchanged)"
-                seg.append(lead)
+                lead = f"[Shot {i}] At {_fmt_ts(cursor)}, cuts to {body}"
+            if i > 1 and lock:
+                lead += f"（{lock}不变）" if zh else f" ({lock} unchanged)"
+            seg.append(lead)
             cursor += max(0.0, m.duration_sec)
         style = head_parts.get("style", "")
         if style:
@@ -490,10 +500,10 @@ class DPAgent(CrewAgent):
         else:
             parts.append("请按 JSON 输出：每场一份 environment 与 characters，每个镜头一段 prompt_body。")
         parts.append(
-            "写 prompt_body 时按上面十一条规则：动作与运镜并重（一种主要运动、不越轴、结尾不改景别）、"
+            "写 prompt_body 时按上面十三条规则：动作与运镜并重（一种主要运动、不越轴、结尾不改景别）、"
             "保留呼吸感、光影写方向与相对关系、空间写人物编号与距离、背景人物各有各的事、"
             "只写看得见的东西、接触动作物理过程只给主事件（节拍≤两步、他人不再碰同一道具）、"
-            "全篇正向描述无否定句、台词不进提示词（对白只写姿态与口型动机）、"
+            "全篇正向描述无否定句、台词用官方音画句式写进提示词（`角色说话：「台词」`配姿态）、"
             "以 final_frame 的可见状态收尾、情绪翻译成身体线索并禁用占位词。"
         )
         return "\n".join(parts)
@@ -590,7 +600,9 @@ class DPAgent(CrewAgent):
         for shot in shots:
             meta = shot_meta.get(shot.id) or {}
             body = str(meta.get("prompt_body") or meta.get("video_prompt") or "")
-            # 台词兜底：模型偶尔仍把台词写进 body，机械剥掉（语音交给后期配音）。
+            # 台词兜底：旧写法（引号直挂说话动词、无冒号）会渲染成含混假语音，
+            # 机械剥掉；官方音画句式（`角色说话：「…」`）保留——native 音画同生
+            # 模式下它就是成片台词人声的唯一来源（2026-11-13 判据放宽，D-50）。
             body = strip_spoken_quotes(body)
             # 占位词兜底：整段都是占位词的短句机械剥掉；混写句保留，交给逐镜审计提醒。
             body = strip_slop(body)
@@ -646,6 +658,26 @@ class DPAgent(CrewAgent):
             if shot.camera.path and not _mentions_camera(body):
                 label = "运镜轨迹：" if language == "zh" else "Camera path: "
                 body = f"{body.strip().rstrip('。')}。{label}{shot.camera.path}".strip("。")
+
+            # 台词兜底（2026-11-13 孔乙己重生成实测）：SKILL 规则 9 教了官方音画
+            # 句式，deepseek 仍整片一字不写（21 镜 dialogue_ref 全认领、正文 0 句
+            # 台词）——native 模式没有台词文字=成片没有台词人声。台词原文在剧本
+            # 节拍里就有，代码按 dialogue_ref 拼 `角色说话：「…」`，不让它依赖模型自觉。
+            # 判据（2026-11-14 收紧）：只认「冒号挂引号」的官方台词句式为已写——
+            # 用「有任意引号」判会把招牌引用（粉板写下「孔乙己，十九文」）误当
+            # 台词，把认领的对白顶掉，掌柜该说话的画面变哑剧（002_015 实测）。
+            ref = str(shot.dialogue_ref or "").strip()
+            if ref and not _OFFICIAL_DLG_RE.search(body):
+                sc_obj = scene_map.get(shot.scene_id)
+                for b in (sc_obj.beats if sc_obj else []):
+                    if b.id == ref and (b.line or "").strip():
+                        speaker = char_map.get(b.speaker or "", b.speaker or "")
+                        verb = "角色说话" if language == "zh" else "says"
+                        body = (f"{body.strip().rstrip('。')}。{speaker}{verb}："
+                                f"「{b.line.strip()}」" if language == "zh" else
+                                f"{body.strip().rstrip('.')}. {speaker} {verb}: "
+                                f"\u201c{b.line.strip()}\u201d")
+                        break
 
             # 最终画面兜底（U11）：模型把最后一帧当情绪目的地，body 必须以
             # final_frame 收尾；LLM 漏写时把导演方案里的结束帧补成最后一句。

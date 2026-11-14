@@ -1201,12 +1201,11 @@ def test_fold_单镜组不产组提示词():
     assert a.group_prompt is None
 
 
-def test_fold_group_prompts_全厂商统一时间戳语法():
-    """切镜语法统一为时间戳方言（D-51，2026-11-14 A/B 实验定案）：
-    Seedance 2.0 实测时间戳写法无害且照常切镜（画面零文字渲染、
-    切点误差与「镜头N」方言同级），MiniMax 原生、2.5 官方支持——
-    一条语法三厂商，provider 分支删除。曾有按 5.37 文档的「镜头N（秒）」
-    分支，实测收益为零。"""
+def test_fold_group_prompts_切镜语法按厂商分支():
+    """D-52 定案（用户四维验收+切点数据同向）：Seedance 2.0 用
+    「镜头N（D秒）」——每机位显式报秒数，语速/音调/叙事节奏被窗口锚住，
+    切点误差比时间戳写法小一个量级（-0.25/-0.29 vs -0.46/-1.12）；
+    MiniMax 等其余厂商用原生时间戳语法。"""
     from app.crew.dp import _fold_group_prompts
 
     a = Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
@@ -1219,12 +1218,20 @@ def test_fold_group_prompts_全厂商统一时间戳语法():
         a.id: {"env": "环境X", "cast": "人物：Y", "body": "他俯身排钱", "style": ""},
         b.id: {"env": "环境X", "cast": "人物：Y", "body": "铜钱一枚枚增多", "style": ""},
     }
-    _fold_group_prompts([a, b], parts, language="zh")
+    # Seedance 2.0 → 镜头N 方言
+    _fold_group_prompts([a, b], parts, language="zh", provider="seedance")
     gp = a.group_prompt
-    assert "[Shot 1] 0-4s" in gp and "[Shot 2] At 00:04.000, cuts to" in gp
-    assert "镜头1（" not in gp                       # 旧分支方言彻底退役
-    assert "人物：Y" in gp                            # lock line 跨切镜照旧
-    # 接线：_apply 产出的组提示词同样是时间戳语法（防分支参数残留死灰复燃）
+    assert "镜头1（4秒）：" in gp and "镜头2（3秒）：" in gp
+    assert "At 00:" not in gp and "[Shot" not in gp
+    assert "人物：Y" in gp                              # lock line 跨切镜照旧
+
+    # MiniMax → 时间戳方言（原生语法，D-46 三源背书）
+    _fold_group_prompts([a, b], parts, language="zh", provider="minimax")
+    assert "[Shot 2] At 00:04.000, cuts to" in a.group_prompt
+    assert "镜头1（" not in a.group_prompt
+
+    # 接线：run 链的 target_provider 必须透传到折叠（漏传=静默回退
+    # 时间戳方言，2.0 语速锚丢失——D-51 差点因合并删掉这条链）
     script = _script()
     shots = [a.model_copy(update={"group_prompt": None}),
              b.model_copy(update={"group_prompt": None})]
@@ -1232,9 +1239,9 @@ def test_fold_group_prompts_全厂商统一时间戳语法():
         {"shot_id": "shot_scene_001_000", "characters": ["齐夏"], "prompt_body": "他俯身排钱"},
         {"shot_id": "shot_scene_001_001", "characters": ["齐夏"], "prompt_body": "铜钱一枚枚增多"},
     ]}]}
-    out = _dp()._apply(shots, raw, script, "", None, "zh")
+    out = _dp()._apply(shots, raw, script, "", None, "zh", provider="seedance")
     head = next(s for s in out if s.group_prompt)
-    assert "At 00:04.000" in head.group_prompt
+    assert "镜头1（4秒）" in head.group_prompt and "At 00:" not in head.group_prompt
 
 
 def test_fold_group_prompts_lock_line_逐块重述():

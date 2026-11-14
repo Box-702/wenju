@@ -42,7 +42,8 @@ log = logging.getLogger(__name__)
 # MiniMax 原生吃中文；Seedance（火山方舟豆包系）同为国内模型吃中文方言，
 # 且官方音画台词句式 `角色说话：「…」` 是中文写法——判英文等于一边教
 # 「台词写进提示词」一边把正文换成英文。
-# （切镜语法不分厂商：统一时间戳方言，见 D-51。）
+# （切镜语法按厂商分支：Seedance 2.0 用「镜头N（D秒）」报每机位秒数，
+#   其余用时间戳——D-52 定案，A/B 实验见 ~/.wenju/runs/ab_dialect_1114。）
 _ZH_PROVIDERS = {"minimax", "seedance"}
 
 # 视觉风格兜底（未提供风格指南时使用）。
@@ -139,24 +140,28 @@ def _light_phrase(env: str) -> str:
 
 
 def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
-                        *, language: str) -> None:
+                        *, language: str, provider: str = "") -> None:
     """把同 group 的机位折叠成一条组提示词（就地写 group_prompt 到组头镜头）。
 
-    切镜语法**全厂商统一为时间戳方言**（2026-11-14 A/B 实验定案，D-51）：
-      [全局锚：环境+人物+风格，只写一遍]
-      [Shot 1] 0-4s 中景，机位…动作…
-      [Shot 2] At 00:04.000, cuts to 特写…动作…
-    实验证据：同一 3 机位组在 Seedance 2.0 上双方言各投一次——时间戳版画面
-    无文字渲染、三机位照常执行（切点 3.54/8.88 vs 预算 4/10），「镜头N（秒）」
-    版并没有更准（3.75/9.71）；MiniMax 原生此语法、2.5 官方支持——一条语法
-    三厂商，分支删掉。曾按 5.37 文档给 2.0 分支「镜头N」语法，实测收益为零。
-    时间戳由组内 duration_sec 累加**代码算**——模型对精确时间支持不稳，
+    切镜语法按厂商分支（D-52 定案，用户四维验收+切点数据同向）：
+      MiniMax / Seedance 2.5： [Shot 1] 0-4s… / [Shot 2] At 00:04.000, cuts to…
+      Seedance 2.0：          镜头1（4秒）：… 镜头2（6秒）：…
+    为什么 2.0 用「镜头N（D秒）」：每机位**显式报时长**，模型把台词与表演
+    装进窗口——语速/音调/叙事节奏被秒数锚住（用户看片：这四项全面优于
+    时间戳版）；切点误差也小一个量级（-0.25/-0.29s vs -0.46/-1.12s）。
+    时间戳写法在 2.0 无害（无文字渲染）但没人管台词长度，A/B 实验
+    产物见 ~/.wenju/runs/ab_dialect_1114/。
+    时间戳/秒数由组内 duration_sec 累加**代码算**——模型对精确时间支持不稳，
     所以绝不让 LLM 自己数秒。
     全局锚去重：同组成员的环境/人物/风格段是逐字复用的同一份（锚纪律），
     取组头那份即可；body 各机位保留。
     单镜组（group_id 空或只剩 1 员）不写 group_prompt——下游照旧用 video_prompt。
     """
     zh = language == "zh"
+    prov = (provider or "").strip().lower()
+    # 2.5 认时间戳（官方文档）；只有 2.0 走镜头N 方言。模型名拿不到时
+    # 按 2.0 处理——DB 现行 seedance 配置就是 2.0 标准档。
+    seedance_20 = prov == "seedance"
     by_gid: dict[str, list[Shot]] = {}
     for s in shots:
         if s.group_id:
@@ -182,7 +187,10 @@ def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
         for i, m in enumerate(members, start=1):
             p = parts.get(m.id, {})
             body = p.get("body", "") or (m.video_prompt or "")
-            if i == 1:
+            if seedance_20:
+                # 豆包 2.0 方言：每机位显式报秒数——语速/节奏锚（D-52）
+                lead = f"镜头{i}（{int(round(m.duration_sec))}秒）：{body}"
+            elif i == 1:
                 lead = (f"[Shot 1] 0-{int(round(m.duration_sec))}s，{body}"
                         if zh else f"[Shot 1] 0-{int(round(m.duration_sec))}s: {body}")
             else:
@@ -348,12 +356,14 @@ class DPAgent(CrewAgent):
         )
         try:
             raw = self._invoke_json(system, user_prompt)
-            updated = self._apply(all_shots, raw, script, style, style_guide, language)
+            updated = self._apply(all_shots, raw, script, style, style_guide,
+                                  language, provider=target_provider)
 
             # 否定句有界修复（只修 1 轮）：装配完仍有否定描述时，让模型只把那些句子
             # 改写成正向，再重新装配。规则层已经尽力，这里是确定性兜底。
             if self._repair_negations(updated, raw):
-                updated = self._apply(all_shots, raw, script, style, style_guide, language)
+                updated = self._apply(all_shots, raw, script, style, style_guide,
+                                      language, provider=target_provider)
 
             n = sum(1 for s in updated if s.video_prompt)
             flagged = sum(1 for s in updated if s.prompt_audit)
@@ -555,6 +565,7 @@ class DPAgent(CrewAgent):
         style: str,
         style_guide: StyleGuide | None,
         language: str = "zh",
+        provider: str = "",
     ) -> list[Shot]:
         """组装最终 video_prompt。
 
@@ -730,7 +741,7 @@ class DPAgent(CrewAgent):
                 "style": eff_style.strip().rstrip("。") if eff_style else "",
             }
             updated.append(shot)
-        _fold_group_prompts(updated, parts_by_shot, language=language)
+        _fold_group_prompts(updated, parts_by_shot, language=language, provider=provider)
         return updated
 
     def _fallback(

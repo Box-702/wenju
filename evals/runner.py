@@ -688,7 +688,11 @@ def build_eval_llm(settings: Any = None, *, temperature: float = 0.0) -> LLM:
     """
     from app.llm import build_llm
 
-    return build_llm(settings, None, temperature=temperature)
+    # D-48 后模型配置只走 DB/BYOK：store 传 None 会拿到空配置，
+    # eval 与产品必须同源，故显式接全局 store。
+    from app.deps import store as get_store
+
+    return build_llm(settings, get_store(), temperature=temperature)
 
 
 def probe_llm(llm: LLM) -> str:

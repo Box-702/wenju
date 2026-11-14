@@ -11,8 +11,8 @@
     # 只跑某几条 case
     python -m evals.run --cases dialogue_tension,single_pressure
 
-    # 指定厂商与模型
-    CHAT_PROVIDER=deepseek python -m evals.run --provider minimax
+    # 目标视频 provider（决定提示词方言）；对话模型与产品同源（DB/BYOK，D-48）
+    python -m evals.run --provider seedance --provider-label Seedance
 
     # 存 JSON 报告
     python -m evals.run --out eval_report.json
@@ -53,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"无法构造模型：{e}", file=sys.stderr)
         return 2
     if not llm.available:
-        print("未配置可用的对话模型，无法跑 eval（设置 CHAT_PROVIDER 与对应 key）", file=sys.stderr)
+        print("未配置可用的对话模型，无法跑 eval（在应用设置里配 key，与产品同源）", file=sys.stderr)
         return 2
 
     print(f"模型：{llm.config.provider if llm.config else '?'} / "

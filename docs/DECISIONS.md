@@ -191,7 +191,7 @@
 
 **理由**：视频生成是**唯一按 token 计费的大头**（MiniMax H3 实测 6s/768P ≈ 19.5 万 token/条）。让用户自带 key，项目方零垫资、零责任。用户想换厂商时，改一行 `config_json.model` 就行，不需要产品侧发版。
 
-**2026-10-28 补充**：MiniMax 也接入了**对话**（`CHAT_PROVIDER=minimax`，模型 `MiniMax-Text-01`），
+**2026-10-28 补充**：MiniMax 也接入了**对话**（`CHAT_PROVIDER=minimax`【该 env 已随 D-48 退役，现走设置→模型】，模型 `MiniMax-Text-01`），
 于是**一把 key 打通对话 / 视频 / 配音**。代价是它的 `/chat/completions` 不支持
 `response_format=json_object`（实测 2013），结构化输出要走降级路径（见
 [`ARCHITECTURE.md` 2.5](ARCHITECTURE.md)）。这把 key 的价值在于**零配置可用**——

@@ -170,16 +170,20 @@ ProviderSpec(
 
 ### 2.2 已适配的厂商
 
+> key/模型名一律在「设置 → 模型」配置（DB/BYOK 唯一权威，D-48）；
+> 下表「备注」只写行为差异，不再写环境变量。
+
 | 厂商 | 对话 | 视觉质检 | 文生图 | 备注 |
 |---|---|---|---|---|
-| OpenAI 兼容（含自建网关 / vLLM） | ✅ | ✅ | ✅ | `OPENAI_BASE_URL` 指向任意兼容端点 |
-| DeepSeek | ✅ | ✅ | — | 推理模型需 `DEEPSEEK_THINKING=false` 直出 content |
-| 智谱 GLM | ✅ | ✅ | ✅ | 同一个 key 同时可调 GLM / CogView / CogVideoX |
-| Moonshot Kimi | ✅ | — | — | 用真实环境变量 `MOONSHOT_API_KEY` 配置 |
+| OpenAI 兼容（含自建网关 / vLLM） | ✅ | ✅ | ✅ | base_url 指向任意兼容端点即可接入 |
+| DeepSeek | ✅ | ✅ | — | 推理模型需 `DEEPSEEK_THINKING=false` 直出 content（env 豁免①） |
+| 智谱 GLM | ✅ | ✅ | ✅ | 同一个 key 同时可调 GLM / CogView |
+| Moonshot Kimi | ✅ | — | — | 对话 |
 | 通义千问 Qwen | ✅ | ✅ | — | 走 DashScope 兼容模式 |
-| MiniMax | ✅ | — | — | **一把 key 打通对话 / 视频（H3）/ 配音（T2A）**；`/chat/completions` 不支持 `response_format=json_object`，结构化输出走降级路径（见 2.5） |
-| Ollama（本地） | ✅ | ✅ | — | 无需 key；仅在 `CHAT_PROVIDER=ollama` 时启用 |
-| 视频（独立体系） | — | — | — | **只配了 MiniMax 一家**（用户自带 Key + 模型名，存 `api_providers.config_json.model`）。`VideoProvider` 抽象仍在（`app/video/base.py`），但 2026-11-01 已删掉 Runway / Kling / CogVideoX / Sora 四个从未启用的适配器——留着只是「将来可能支持」的想象，代价是每次改接口都要跟着改四份没人跑的实现 |
+| MiniMax | ✅ | — | ✅ | **一把 key 打通对话 / 视频（H3）/ 配音（T2A）/ 生图（H3-Image）**；`/chat/completions` 不支持 `response_format=json_object`，结构化输出走降级路径（见 2.5）；欠费时有 `MINIMAX_API_KEY_FALLBACKS` 备用 key 安全网（env 豁免②） |
+| 火山方舟 Seedance | — | — | ✅ | 视频（Seedance 2.0 系列）+ 生图（Seedream 5.x，含脸定妆照走信任传递免审）；OpenAI 兼容生图协议同构接入（`image.py`） |
+| Ollama（本地） | ✅ | ✅ | — | 无需 key，设置里选本地服务 |
+| 视频（独立体系） | — | — | — | **MiniMax + Seedance 两家**（用户自带 Key + 模型名，存 `api_providers.config_json.model`；Seedance 供 A/B 与备胎，UI 暂不暴露，按 name 显式取用）。`VideoProvider` 抽象仍在（`app/video/base.py`），2026-11-01 已删掉 Runway / Kling / CogVideoX / Sora 四个从未启用的适配器——留着只是「将来可能支持」的想象，代价是每次改接口都要跟着改四份没人跑的实现 |
 
 > 非 OpenAI 兼容的厂商（如 Anthropic Messages API）目前**没有**适配：需要为它单独实现
 > 协议客户端，而不是加一条 `ProviderSpec`。这是有意的取舍——主流可选厂商里它不占多数，

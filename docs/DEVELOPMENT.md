@@ -245,12 +245,19 @@ cd frontend && npm install && npm run build   # 构建产物由 FastAPI 托管
 
 ### 5.3 对话模型配置
 
-#### （1）优先级链：改 key 要连上一级一起注释
+#### （1）配置入口：只有「设置 → 模型」（DB/BYOK）
 
-`app/llm/registry.py` 的默认优先级链是 **OPENAI > ZHIPUAI > DEEPSEEK**。只想切到 DeepSeek，
-必须先把 `ZHIPUAI_API_KEY` 注释掉（或置空），否则不生效。
-更省事的做法是直接指定：`CHAT_PROVIDER=deepseek`（视觉/文生图同理，见 `VISION_PROVIDER` / `IMAGE_PROVIDER`），
-显式指定会跳过整条优先级链。
+【2026-11-14 重写：本节原「.env 优先级链 OPENAI > ZHIPUAI > DEEPSEEK、
+`CHAT_PROVIDER` 直接指定」的操作指引已随 D-48 整删——env 不再是模型
+配置入口，照旧文操作会白折腾。】
+
+现在唯一入口是应用内「设置 → 模型」贴 key（存 DB `api_providers`），
+默认模型由 `model_preferences` 的 chat 偏好决定。**没有偏好时按 DB 行序
+兜底取第一条启用的 llm 行**——这个隐式行为踩过坑（5.46：minimax 行排最前，
+全链路静默用了欠费厂商），所以新装环境务必在设置里显式选一次对话模型。
+视觉/文生图/配音/视频同理，各自独立一行配置；env 仅存两个豁免
+（`DEEPSEEK_THINKING` 行为开关、`MINIMAX_API_KEY_FALLBACKS` 安全网），
+见 `.env.example` 头部说明。
 
 #### （2）推理模型的 `reasoning_content` 陷阱
 

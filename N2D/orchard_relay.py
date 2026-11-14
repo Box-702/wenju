@@ -28,15 +28,28 @@ UNITS = [
                "下颌收紧，沉默倾听，喉结滚动，胸腔平缓起伏。",
      "duration_sec": 4},
     {"prompt": "At 00:13, cuts back 少女过肩镜头：情绪转坚定，直视对方缓慢顿挫念："
-               "{I have as much soul as you, and full as much heart!} 停顿换气，继续念后半段。"
-               "侧逆光，自然眨眼。",
+               "{I have as much soul as you, and full as much heart!} "
+               "念完停顿换气、嘴唇轻抿、目光不移。侧逆光，自然眨眼。",
      "duration_sec": 12,
      "shots": [
          {"duration_sec": 6, "shot_type": "over_shoulder", "subject": "20岁西方少女", "action": "坚定质问"},
          {"duration_sec": 6, "shot_type": "close_up", "subject": "20岁西方少女", "action": "顿挫念白"}]},
 ]
 
-LOG = Path(__file__).resolve().parent / "orchard_relay.log"
+def _log_path() -> Path:
+    """日志落产品主目录（D-44：项目文件夹零用户数据），家目录不可用才退回 N2D/。"""
+    try:
+        from app.home import ensure_home, runs_root
+
+        ensure_home(Path(__file__).resolve().parent.parent)
+        d = runs_root() / "果园relay"
+        d.mkdir(parents=True, exist_ok=True)
+        return d / "orchard_relay.log"
+    except Exception:  # noqa: BLE001
+        return Path(__file__).resolve().parent / "orchard_relay.log"
+
+
+LOG = _log_path()
 _fh = LOG.open("w", encoding="utf-8-sig")
 
 
@@ -75,7 +88,7 @@ def main() -> int:
     tools = {t.name: t for t in production.build(ctx)}
     r = tools["import_storyboard"].invoke({
         "units": json.dumps(UNITS, ensure_ascii=False),
-        "title": "果园对白·接力v2",
+        "title": "果园对白·Seedance标准档",
     })
     _t(f"① 导入：{r}")
     pid = collector["project_id"]
@@ -144,7 +157,7 @@ def main() -> int:
     from app.video.finalize import finalize_film
 
     _t("⑥ 成片合成（原生声音模式）…")
-    info = finalize_film(pid, version_id=approved_v.id, subtitles=False,
+    info = finalize_film(pid, version_id=approved_v.id, subtitles=True,
                          audio_mode="native", on_progress=lambda m: _t(f"   · {m}"))
     _t(f"   成片：{info.get('video_url')} · {info.get('duration_sec')}s · "
        f"{info.get('shots_used')}/{info.get('shots_total')} 镜")

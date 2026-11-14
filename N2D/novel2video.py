@@ -402,10 +402,22 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
     limit = args.shot_limit if args.shot_limit > 0 else len(shots)
     n_appr = 0
     for s in shots:
-        if (s.get("video_prompt") and n_appr < limit
-                and s.get("id") not in busy_shots):
+        if not s.get("video_prompt"):
+            continue
+        if s.get("id") in busy_shots:
+            # 已出片/在途的镜头不仅要跳过批准名额，还必须**撤回旧的 approved**：
+            # 续跑读到的提示词版本常是上一轮的「批量批准」版本，镜头自带
+            # approved——不撤就会进新版本的提交名单，同镜双份钱
+            # （2026-11-13 实测：002_000/001_002 各出现两条 succeeded）。
+            s["prompt_status"] = "needs_review"
+            continue
+        if n_appr < limit:
             s["prompt_status"] = "approved"
             n_appr += 1
+        else:
+            # 超出 limit 的同样要显式撤回——批次的提交名单来自 prompt_status，
+            # 不撤就是「--shot-limit 5 实际投 25 镜」（2026-11-13 实测踩中）。
+            s["prompt_status"] = "needs_review"
     refresh_prompt_audits(shots, style_context=_style_context(prompt_version))
     approved_v = st.create_video_version(
         project_id=p.id, shots=shots, style_guide=prompt_version.style_guide,

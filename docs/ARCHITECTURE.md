@@ -71,6 +71,8 @@ app/
 
 N2D/                          小说→成片直跑工作流（体检/批处理用，与产品共用同一套 app/* 函数）
 ├── novel2video.py            十步流水线 + --resume 断点续跑 + --shot-limit 分批；产物落 ~/.wenju/runs/
+├── regen_prompts.py          对已有作品重跑导演+摄影（零出片费用）→ 新版本 + 对照 md
+├── orchard_relay.py          果园对白 A/B 轮（import_storyboard→批准→批次→合成，验证接力）
 └── probe_seedance.py         Seedance 适配器校准探针（真 key 打最小任务对字段）
 ```
 
@@ -148,9 +150,9 @@ api/
 | `client.py` | 门面 `LLM`：`chat()` / `structured()` / `system_prompt()` / `vision()` / `image()` |
 | `base.py` | 数据契约：`Modality`（chat/vision/image）、`ModelConfig`、`ProviderSpec` |
 | `providers.py` | 厂商表 + `build_chat_model()`（唯一的 `ChatOpenAI` 构造点） |
-| `registry.py` | 配置解析：`.env` / DB → `ModelConfig` |
+| `registry.py` | 配置解析：DB/BYOK → `ModelConfig`（D-48 起 env 不再是入口；无偏好时按 DB 行序兜底，见 DEVELOPMENT 5.46） |
 | `vision.py` | 视觉客户端（定妆图质检），OpenAI 兼容多模态消息 |
-| `image.py` | 文生图客户端（CogView / OpenAI Images） |
+| `image.py` | 文生图客户端（CogView / OpenAI Images / MiniMax / 方舟 Seedream，同协议） |
 
 **适配策略：全部走 OpenAI 兼容协议。** 国内厂商（DeepSeek / 智谱 / Moonshot / Qwen）
 与本地服务（Ollama / vLLM）都提供 OpenAI 兼容端点，因此不需要为每家引入官方 SDK——
@@ -362,7 +364,7 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
 | 文件 | 受众 | 内容 | 谁用 |
 |---|---|---|---|
 | `director-breakdown/SKILL.md` | crew | 导演分镜方法论（三工作、细节律、五锚点、连续性计划） | `crew/director.py` |
-| `video-prompt-zh/SKILL.md` | crew | 摄影指导写作规则（中文，十一条） | `crew/dp.py` |
+| `video-prompt-zh/SKILL.md` | crew | 摄影指导写作规则（中文，十三条） | `crew/dp.py` |
 | `video-prompt-en/SKILL.md` | crew | 同上（英文，目标模型方言） | `crew/dp.py` |
 | `style-guide/SKILL.md` | crew | 美术指导方法论（视觉锚的唯一来源） | `crew/art_director.py` |
 | `novel-serial/SKILL.md` | main | 长篇小说分段改编：建图 → 提弧 → 选段 → 连载续接 | 主 Agent 按需 |
@@ -437,11 +439,12 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
   （锚逐字复用）。用户可以逐镜编辑、保存草稿、标记需修改或批准。
   每次人工操作创建新的 VideoVersion 快照；只有 prompt_status=approved 的镜头可提交。
   工作台支持多选镜头批量审批，版本列表展示 Prompt 审阅汇总，单镜可沿 parent_version_id 查看历史与差异。
-  写作规则共十一条，正文在 `app/skills/video-prompt-zh/SKILL.md`（英文版 -en）：
+  写作规则共十三条，正文在 `app/skills/video-prompt-zh/SKILL.md`（英文版 -en）：
   动作与运镜并重 / 呼吸感 / 光的方向 / 人物编号与距离 / 背景人物各有各的事 /
   只写看得见的东西 / 接触动作物理过程（一镜只给一个主事件）/ 禁止否定句 /
-  台词不进提示词 / 以 final_frame 收尾 / 情绪翻译成身体线索并禁占位词
-  （LLM 整段漏写运镜时用 camera.path 兜底补一次）
+  台词官方句式进提示词（`角色说话：「…」`，native 音画同生的人声锚）/ 以 final_frame 收尾 /
+  情绪翻译成身体线索并禁占位词 / 故意不完美治 AI 味 / 轴线写死屏幕方位
+  （LLM 漏写运镜/台词时用导演方案与节拍机械兜底补上，D-50）
 
 ⑧ 视频生成          app/video/
   registry 选 Provider → queue 提交 + 轮询 + 状态回调写回 DB

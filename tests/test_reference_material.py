@@ -341,7 +341,6 @@ def test_relay_anchor_prefers_last_frame_image(monkeypatch):
     公网成片直链 → reference_images 里出现 data:image/png，reference_videos 清空；
     抽帧失败回退裁尾视频；两条都失败透传整条（可用性 > 省钱）。"""
     import app.video.service as svc
-
     def _fake_frame_ok(url):
         return "data:image/png;base64,RkFJTUU="
 
@@ -371,3 +370,31 @@ def test_relay_anchor_prefers_last_frame_image(monkeypatch):
     many = [f"https://cdn/{i}.mp4" for i in range(12)]
     p4 = svc._job_params({"reference_videos": many})
     assert len(p4.reference_images) <= 9
+
+
+def test_ark_relay_url_passthrough_keeps_trust_provenance(monkeypatch):
+    """方舟成片直链必须原样透传（2026-11-14 实测推翻「接力概率被拦」）：
+    抽帧/裁尾转 data URI 会丢出处，方舟审核按「随手上传的真人素材」拦
+    （孔乙己 001_004 两次 content[5] 被拒即此）；Ark 自家直链走信任传递免审
+    （探针 cgt-20261114000257 实锤）。抽帧函数在此被 patch 成「必成功」，
+    若实现回退到抽帧路径本测试必挂。"""
+    import app.video.service as svc
+
+    monkeypatch.setattr("app.media.inline.clip_last_frame_uri",
+                        lambda u: "data:image/png;base64=FRAME")
+    monkeypatch.setattr("app.media.inline.clip_tail_data_uri",
+                        lambda u: "data:video/mp4;base64=TAIL")
+    ark = "https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/doubao-seedance-2-0/x.mp4"
+
+    p = svc._job_params({"reference_videos": [ark]}, "seedance")
+    assert p.reference_videos == [ark]          # 原样透传，不转 data URI
+    assert p.reference_images == []             # 不塞尾帧图
+
+    # URL 域名单独也成立（provider 名缺失的续跑/重试路径）
+    p2 = svc._job_params({"reference_videos": [ark]})
+    assert p2.reference_videos == [ark]
+
+    # 非方舟域保持老行为：照旧抽尾帧图
+    p3 = svc._job_params({"reference_videos": ["https://hailuo-video.cdn.minimaxi.com/x.mp4"]},
+                         "minimax")
+    assert p3.reference_images and not p3.reference_videos

@@ -26,10 +26,36 @@ from app.media.subtitles import (
     _subtitles_filter,
     burn_subtitles,
     timeline_estimated,
+    timeline_from_prompts,
     timeline_from_track,
     to_ass,
     to_srt,
 )
+
+
+def test_timeline_from_prompts_extracts_official_dialogue():
+    """无剧本版本（import_storyboard 直导分镜）的字幕兜底：台词从提示词提取。
+    果园 2026-11-14 实测：subtitles=True 却「剧本不可读，跳过字幕」——
+    台词明明就在 `{…}` / `角色说话：「…」` 句式里。"""
+    shots = [
+        Shot(id="shot_scene_001_000", scene_id="scene_001", order=0, duration_sec=9,
+             video_prompt="果园午后，过肩镜头：少女哽咽说：{Am I a machine without feelings?} "
+                          "手持轻微晃动。"),
+        Shot(id="shot_scene_001_001", scene_id="scene_001", order=1, duration_sec=4,
+             video_prompt="绅士正面近景，沉默倾听，喉结滚动。"),
+        Shot(id="shot_scene_001_002", scene_id="scene_001", order=2, duration_sec=12,
+             video_prompt="少女过肩镜头：@少女(char_a)缓慢顿挫念：{I have as much soul as you!} "
+                          "嘴唇轻抿。"),
+    ]
+    entries = timeline_from_prompts(shots)
+    texts = [e.text for e in entries]
+    assert texts == ["Am I a machine without feelings?",
+                     "I have as much soul as you!"]
+    e0, e1 = entries
+    assert e0.shot_id == "shot_scene_001_000" and 0 <= e0.start_ms < 9000
+    assert e1.shot_id == "shot_scene_001_002" and 13000 <= e1.start_ms < 25000  # 落在第三镜窗口内
+    assert e1.speaker == "少女"                                  # @人物(编号) 标注取说话人
+    assert e0.end_ms > e0.start_ms and e1.end_ms <= 25000       # 不跨出所属镜头
 
 
 def _script(with_dialogue: bool = True) -> Script:

@@ -63,9 +63,14 @@ def test_find_negations_detects_and_skips_sign_text():
 
 
 def test_strip_spoken_quotes_removes_dialogue_but_keeps_signs():
-    body = "小赵快步迎上，开口报告：「死者从七楼摔下。」苏砚点头。"
-    assert "死者从七楼摔下" not in strip_spoken_quotes(body)
-    assert "苏砚点头" in strip_spoken_quotes(body)
+    # 官方音画句式（冒号挂引号；2026-11-13 判据放宽——任意「…说/喊/报告：「台词」」
+    # 都算，旧字面判据把「哽咽说：」剥了，native 模式成片就没有台词人声）。
+    official = "小赵快步迎上，开口报告：「死者从七楼摔下。」苏砚点头。"
+    assert "死者从七楼摔下" in strip_spoken_quotes(official)
+    assert "苏砚点头" in strip_spoken_quotes(official)
+    # 旧写法：引号直接跟在说话动词后、没有冒号——会渲染成含混假语音，照旧剥除。
+    legacy = "小赵快步迎上，开口报告「死者从七楼摔下。」苏砚点头。"
+    assert "死者从七楼摔下" not in strip_spoken_quotes(legacy)
     sign = "警戒带上写着「禁止入内」三个字，雨丝不断。"
     assert strip_spoken_quotes(sign) == sign
 
@@ -136,9 +141,11 @@ def test_audit_breakdowns_flags_thin_shot():
 
 
 def test_audit_video_prompt_flags_all_killers():
-    issues = audit_video_prompt({"video_prompt": "齐夏站在门口，开口说道：「你终于来了。」"})
+    # 旧写法（无冒号）仍要拦；官方音画句式（冒号挂引号）2026-11-13 起保留不报。
+    issues = audit_video_prompt({"video_prompt": "齐夏站在门口，开口说道「你终于来了。」"})
     joined = " ".join(issues)
     assert "引用台词" in joined
+    assert audit_video_prompt({"video_prompt": "齐夏站在门口，开口说道：「你终于来了。」"}) == []
 
 
 def test_audit_video_prompt_flags_slop_negation_and_multi_move():
@@ -204,7 +211,8 @@ def test_audit_video_prompt_clean_prompt_passes():
 
 def test_refresh_prompt_audits_updates_shot_dicts_in_place():
     shots = [
-        {"id": "a", "video_prompt": "他说：「进来。」"},
+        # 旧写法（引号直挂说话动词、无冒号）仍报「引用台词」。
+        {"id": "a", "video_prompt": "他说道「进来。」"},
         {"id": "b", "video_prompt": ""},
     ]
     refresh_prompt_audits(shots)

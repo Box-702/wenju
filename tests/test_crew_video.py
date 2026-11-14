@@ -185,10 +185,72 @@ def test_director_validate_accepts_good_plan():
 def test_language_for_follows_provider_dialect():
     # MiniMax 原生吃中文：中文剧本就用中文提示词，英文剧本才转英文。
     assert language_for("minimax", "zh-CN") == "zh"
+    # Seedance（豆包系）同吃中文方言，官方音画台词句式也是中文写法。
+    assert language_for("seedance", "zh-CN") == "zh"
     assert language_for("", "zh-CN") == "zh"
     assert language_for("", "en-US") == "en"
     # 非中文原生 provider 一律英文——这类厂商只在显式配置时才会出现。
     assert language_for("runway", "zh-CN") == "en"
+
+
+def test_auto_group_packs_scene_solo_shots():
+    """导演不标组时的确定性兜底：同场相邻孤立单镜自动成组（默认值翻转 2026-11-13）。"""
+    from app.crew.director import GROUP_MAX_SEC, auto_group_scene
+
+    def _shot(i, dur=4.0, gid=""):
+        return Shot(id=f"shot_scene_001_{i:03d}", scene_id="scene_001", order=i,
+                    duration_sec=dur, group_id=gid,
+                    camera=CameraMovement(type="static"))
+
+    # 3 个 4s 孤立单镜 → 合成一组（12s ≤ 15）
+    bd = SceneBreakdown(scene_id="scene_001", shots=[_shot(i) for i in range(3)])
+    grouped, n_groups = auto_group_scene([bd])
+    assert (grouped, n_groups) == (3, 1)
+    assert len({s.group_id for s in bd.shots}) == 1 and bd.shots[0].group_id
+    assert [s.group_index for s in bd.shots] == [0, 1, 2]
+    # 幂等：再跑一次不重复成组
+    assert auto_group_scene([bd]) == (0, 0)
+    # 超 15s 的尾巴拆新组；已标组的尊重不动
+    bd2 = SceneBreakdown(scene_id="scene_001", shots=[
+        _shot(0, 6), _shot(1, 6), _shot(2, 6), _shot(3, 5, gid="g_exist"), _shot(4, 5, gid="g_exist")])
+    auto_group_scene([bd2])
+    assert {s.group_id for s in bd2.shots[:2]} == {bd2.shots[0].group_id}
+    assert bd2.shots[2].group_id != bd2.shots[0].group_id  # 18s 超预算 → 第三镜另起
+    assert bd2.shots[3].group_id == "g_exist" and bd2.shots[4].group_id == "g_exist"
+
+
+def test_motion_ratio_gate_forces_cameras():
+    """闸门 v2（2026-11-14 认知修正）：静止是基底、运镜是配给——
+    只给**有动机的镜**（emotion/pressure/带台词）配运镜且逐镜换型；
+    无动机镜保持 static（v1 无脑补运动被用户看片打回「刻意且重复」）。"""
+    from app.crew.director import enforce_motion_ratio
+
+    def _mk(i, fn=""):
+        return Shot(id=f"shot_scene_001_{i:03d}", scene_id="scene_001", order=i,
+                    duration_sec=4, function=fn,
+                    camera=CameraMovement(type="static"))
+
+    # 8 镜全静态：4 个有动机（emotion/pressure），4 个纯动作垫场
+    shots = [_mk(0, "emotion"), _mk(1), _mk(2, "pressure"), _mk(3),
+             _mk(4, "emotion"), _mk(5), _mk(6, "pressure"), _mk(7)]
+    bd = SceneBreakdown(scene_id="scene_001", shots=shots)
+    out, notes = enforce_motion_ratio([bd])
+    moved = [s for s in out[0].shots if s.camera.type != "static"]
+    assert len(moved) >= 2                       # 补到 ≤75% 静态即可
+    assert all(s.function in ("emotion", "pressure") for s in moved)  # 只动有动机镜
+    assert all(s.camera.path for s in moved)     # 带的轨迹供 DP 兜底拼接
+    assert any("固定机位" in n for n in notes)
+    # 逐镜换型：运动镜之间不重型（DIR-14 同源纪律）
+    keys = [(s.camera.type, s.camera.direction) for s in moved]
+    assert len(keys) == len(set(keys))
+    # 幂等：再跑一次不该再动
+    out2, notes2 = enforce_motion_ratio(out)
+    assert notes2 == []
+    # 全无动机的超标场：不补运动，但要有如实的说明（不能假装无事发生）
+    bd3 = SceneBreakdown(scene_id="scene_001", shots=[_mk(i) for i in range(8)])
+    out3, notes3 = enforce_motion_ratio([bd3])
+    assert all(s.camera.type == "static" for s in out3[0].shots)
+    assert any("无动机" in n for n in notes3)
 
 
 def test_dp_reuses_anchors_verbatim_and_filters_cast_per_shot():
@@ -599,6 +661,28 @@ def test_resolve_continuity_builds_reference_videos():
     assert "reference_videos" not in shots[2]          # 新组首镜不引用自己
 
 
+def test_resolve_continuity_chain_suppresses_group_anchor():
+    """接力只挂一条：chain 命中前镜成片后，组锚不再追加（果园 2026-11-14
+    实测：单元 3 同时挂 chain(单元2)+组锚(单元1) 两条接力视频，单元 1 成片
+    里的首句台词与踱步运镜被模型照着重演——两个机位的运镜信号互相打架）。"""
+    shots = [
+        {"id": "u1", "order": 0, "reference_group": "g", "chain_from": None, "video_url": "url1"},
+        {"id": "u2", "order": 1, "reference_group": "g", "chain_from": 0, "video_url": "url2"},
+        {"id": "u3", "order": 2, "reference_group": "g", "chain_from": 1},
+    ]
+    resolve_continuity(shots)
+    assert shots[1]["reference_videos"] == ["url1"]   # 单元 2：chain 即组锚，一条
+    assert shots[2]["reference_videos"] == ["url2"]   # 单元 3：只挂前镜，不挂 url1
+    # chain 断链（前镜没成片）时组锚补位——外观锚不能两头空
+    shots2 = [
+        {"id": "u1", "order": 0, "reference_group": "g", "chain_from": None, "video_url": "url1"},
+        {"id": "u2", "order": 1, "reference_group": "g", "chain_from": 0},
+        {"id": "u3", "order": 2, "reference_group": "g", "chain_from": 1},  # url2 不存在
+    ]
+    resolve_continuity(shots2)
+    assert shots2[2]["reference_videos"] == ["url1"]  # 断链 → 组锚补位
+
+
 # ---------- 视频 Provider：状态映射（真实踩过的字段/子串坑） ----------
 
 
@@ -693,17 +777,59 @@ def test_registry_refreshes_cached_provider_model():
 
 
 def test_dp_apply_strips_quoted_dialogue_from_prompt_body():
-    """DP 组装最终提示词时也要过一遍台词兜底，引用台词不能漏进成片提示词。"""
+    """DP 组装最终提示词时也要过一遍台词兜底：旧写法（引号直挂动词、无冒号）
+    会渲染成含混假语音，不能漏进成片提示词；官方音画句式（冒号挂引号）保留。"""
     script = _script()
     shots = [Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
                   camera=CameraMovement(type="static"))]
     llm_out = {"scenes": [{"scene_id": "scene_001", "shots": [
         {"shot_id": "shot_scene_001_000", "characters": ["齐夏"],
-         "prompt_body": "齐夏站在门口，开口说道：「你终于来了。」然后抬头。"},
+         "prompt_body": "齐夏站在门口，开口说道「你终于来了。」然后抬头。"},
     ]}]}
     out = _dp()._apply(shots, llm_out, script, "", None)[0].video_prompt
     assert "你终于来了" not in out
     assert "然后抬头" in out
+
+    # 官方句式（2026-11-13 放宽判据）：冒号挂引号的台词保留给音画同生。
+    llm_out2 = {"scenes": [{"scene_id": "scene_001", "shots": [
+        {"shot_id": "shot_scene_001_000", "characters": ["齐夏"],
+         "prompt_body": "齐夏站在门口，开口说道：「你终于来了。」然后抬头。"},
+    ]}]}
+    out2 = _dp()._apply(shots, llm_out2, script, "", None)[0].video_prompt
+    assert "你终于来了" in out2
+
+
+def test_dp_apply_dialogue_backfill_ignores_signboard_quotes():
+    """台词兜底按 dialogue_ref 从节拍回填官方句式；「已写过」判据只认
+    冒号挂引号——招牌引用（写下「…」）不算台词，不能顶掉认领的对白
+    （2026-11-14 孔乙己 002_015 实测：掌柜该说「不出一月定然还清」，
+    正文只有粉板文字「孔乙己，十九文」，旧判据把画面做成了哑剧）。"""
+    from app.domain import ScriptBeat
+
+    script = _script()
+    sc = script.scenes[0]
+    sc.beats = [
+        ScriptBeat(id="beat_001", type="action", text="掌柜记账。"),
+        ScriptBeat(id="beat_002", type="dialogue", speaker="char_a", line="不出一月，定然还清。"),
+    ]
+    shots = [Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
+                  dialogue_ref="beat_002", camera=CameraMovement(type="static"))]
+    # 情形一：正文只有招牌引号 → 必须回填台词
+    llm_out = {"scenes": [{"scene_id": "scene_001", "shots": [
+        {"shot_id": "shot_scene_001_000", "characters": ["齐夏"],
+         "prompt_body": "掌柜的手提笔在粉板上写下「孔乙己，十九文」，笔尖一顿一顿。"},
+    ]}]}
+    out = _dp()._apply(shots, llm_out, script, "", None)[0].video_prompt
+    assert "不出一月，定然还清" in out and "角色说话：「不出一月" in out
+    assert "写下「孔乙己，十九文」" in out          # 招牌文字保留
+
+    # 情形二：正文已有官方句式台词 → 不重复回填
+    llm_out2 = {"scenes": [{"scene_id": "scene_001", "shots": [
+        {"shot_id": "shot_scene_001_000", "characters": ["齐夏"],
+         "prompt_body": "齐夏角色说话：「不出一月，定然还清。」掌柜点头。"},
+    ]}]}
+    out2 = _dp()._apply(shots, llm_out2, script, "", None)[0].video_prompt
+    assert out2.count("不出一月") == 1
 
 
 def test_dp_apply_tags_anchors_with_asset_ids():
@@ -1073,6 +1199,42 @@ def test_fold_单镜组不产组提示词():
              subject="甲", duration_sec=4, video_prompt="P")
     _fold_group_prompts([a], {a.id: {"body": "P"}}, language="zh")
     assert a.group_prompt is None
+
+
+def test_fold_group_prompts_全厂商统一时间戳语法():
+    """切镜语法统一为时间戳方言（D-51，2026-11-14 A/B 实验定案）：
+    Seedance 2.0 实测时间戳写法无害且照常切镜（画面零文字渲染、
+    切点误差与「镜头N」方言同级），MiniMax 原生、2.5 官方支持——
+    一条语法三厂商，provider 分支删除。曾有按 5.37 文档的「镜头N（秒）」
+    分支，实测收益为零。"""
+    from app.crew.dp import _fold_group_prompts
+
+    a = Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
+             subject="孔乙己", duration_sec=4, group_id="g1", group_index=0,
+             video_prompt="环境X。人物Y。他俯身排钱。")
+    b = Shot(id="shot_scene_001_001", scene_id="scene_001", order=1,
+             subject="铜钱", duration_sec=3, group_id="g1", group_index=1,
+             video_prompt="环境X。人物Y。铜钱一枚枚增多。")
+    parts = {
+        a.id: {"env": "环境X", "cast": "人物：Y", "body": "他俯身排钱", "style": ""},
+        b.id: {"env": "环境X", "cast": "人物：Y", "body": "铜钱一枚枚增多", "style": ""},
+    }
+    _fold_group_prompts([a, b], parts, language="zh")
+    gp = a.group_prompt
+    assert "[Shot 1] 0-4s" in gp and "[Shot 2] At 00:04.000, cuts to" in gp
+    assert "镜头1（" not in gp                       # 旧分支方言彻底退役
+    assert "人物：Y" in gp                            # lock line 跨切镜照旧
+    # 接线：_apply 产出的组提示词同样是时间戳语法（防分支参数残留死灰复燃）
+    script = _script()
+    shots = [a.model_copy(update={"group_prompt": None}),
+             b.model_copy(update={"group_prompt": None})]
+    raw = {"scenes": [{"scene_id": "scene_001", "shots": [
+        {"shot_id": "shot_scene_001_000", "characters": ["齐夏"], "prompt_body": "他俯身排钱"},
+        {"shot_id": "shot_scene_001_001", "characters": ["齐夏"], "prompt_body": "铜钱一枚枚增多"},
+    ]}]}
+    out = _dp()._apply(shots, raw, script, "", None, "zh")
+    head = next(s for s in out if s.group_prompt)
+    assert "At 00:04.000" in head.group_prompt
 
 
 def test_fold_group_prompts_lock_line_逐块重述():

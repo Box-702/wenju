@@ -315,14 +315,21 @@ def finalize_film(
         srt_info: dict[str, Any] | None = None
         entries: list = []
         if subtitles:
-            if script is None:
-                emit("剧本不可读，跳过字幕")
-            else:
+            if script is not None:
                 entries = (
                     timeline_from_track(track)
                     if track
                     else timeline_estimated(script, shots, expected_shots=expected_per_scene)
                 )
+            if not entries:
+                # 无剧本版本（import_storyboard 直导的分镜作品）或剧本没有
+                # 对白节拍：台词兜底从镜头提示词提取（官方句式/花括号）。
+                # 旧行为是直接放弃字幕——果园 2026-11-14 用户实测「没字幕」。
+                from ..media.subtitles import timeline_from_prompts
+
+                entries = timeline_from_prompts(shots)
+                if entries:
+                    emit(f"字幕走提示词兜底（{len(entries)} 句）")
         if entries:
             try:
                 # 字幕画布按成片实测尺寸：字号/边距由 to_ass 从 height 推导，

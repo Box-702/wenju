@@ -67,6 +67,47 @@ def timeline_from_track(track: list[dict[str, Any]]) -> list[SubEntry]:
     return entries
 
 
+def timeline_from_prompts(shots: list[Shot]) -> list[SubEntry]:
+    """无剧本版本时的字幕兜底：台词直接从镜头提示词里取。
+
+    外部成品分镜（import_storyboard 直导，果园 2026-11-14 实测）没有小说→
+    剧本那几步，`_resolve_script` 返回 None，字幕整条链路哑火——但台词其实
+    就在提示词里：官方句式 `角色说话：「…」` / `说：{…}`（外部工具惯用花括号）。
+    时刻按「台词在提示词内的字符位置」在本镜窗口内比例排布（写词的位置≈
+    开口的时机），单句不低于 EST_LINE_MIN_SEC，不跨出所属镜头。
+    """
+    import re
+
+    line_re = re.compile(
+        r"(?:[\u4e00-\u9fffA-Za-z]{0,12}(?:说话|说道|说|念|喊|低语|呢喃|问道|回答))"
+        r"\s*[:：]\s*(?:[「“\"]([^」”\"]+)[」”\"]|\{([^}]+)\})")
+
+    entries: list[SubEntry] = []
+    t0 = 0.0
+    for s in sorted(shots, key=lambda x: x.order):
+        dur = max(1.0, s.duration_sec)
+        prompt = str(s.group_prompt or s.video_prompt or "")
+        for m in line_re.finditer(prompt):
+            text = (m.group(1) or m.group(2) or "").strip()
+            if not text:
+                continue
+            # 说话人：匹配段之前的最近一个 @人物名(编号) 标注，取不到留空。
+            head = prompt[:m.start()]
+            sp = re.findall(r"@([\u4e00-\u9fffA-Za-z0-9·]+)\(", head)
+            # 开口时刻 ≈ 台词文字在提示词里的相对位置 × 本镜窗口
+            frac = min(0.85, max(0.05, m.start() / max(1, len(prompt))))
+            start = t0 + frac * dur
+            end = min(t0 + dur, start + max(EST_LINE_MIN_SEC, len(text) / CHARS_PER_SEC))
+            entries.append(SubEntry(
+                speaker=sp[-1] if sp else "", text=text,
+                start_ms=int(start * 1000), end_ms=int(end * 1000),
+                shot_id=s.id,
+            ))
+        t0 += dur
+    entries.sort(key=lambda e: e.start_ms)
+    return entries
+
+
 def timeline_estimated(
     script: Script,
     shots: list[Shot],

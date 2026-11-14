@@ -45,15 +45,20 @@ def resolve_continuity(shots: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for s in shots:
         refs: list[str] = list(s.get("reference_videos") or [])
         # 首尾帧接力：链到更早镜头的成片。
+        chained = ""
         chain = s.get("chain_from")
         if chain is not None:
-            url = order_to_url.get(int(chain))
-            if url and url not in refs:
-                refs.append(url)
-        # 环境参考：同组锚镜（且不是自己）。
+            chained = order_to_url.get(int(chain), "")
+            if chained and chained not in refs:
+                refs.append(chained)
+        # 环境参考：同组锚镜（且不是自己）——**只在接力断链时补位**。
+        # 两条接力视频=两个不同机位的运镜信号互相打架（果园 2026-11-14 实测：
+        # 单元 3 挂了 chain(单元2) + 组锚(单元1) 两条，单元 1 成片里的首句
+        # 台词与踱步运镜被模型照着又演一遍）；chain 的前镜成片本来就同组同
+        # 光线同人物，外观锚已随链继承，组锚是纯冗余的干扰源。
         g = str(s.get("reference_group") or "")
         anchor = group_anchor.get(g)
-        if anchor is not None and anchor != int(s.get("order", -1)):
+        if not chained and anchor is not None and anchor != int(s.get("order", -1)):
             url = order_to_url.get(anchor)
             if url and url not in refs:
                 refs.append(url)

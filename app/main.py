@@ -94,7 +94,7 @@ def _wire_video_qa() -> None:
             job.id,
             _resolve_video_provider(job.provider),
             job.prompt,
-            _job_params(dict(job.params or {})),
+            _job_params(dict(job.params or {}), job.provider),
         )
 
     def _on_succeeded(job_id: str, info: dict[str, Any]) -> None:

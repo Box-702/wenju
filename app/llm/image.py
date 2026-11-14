@@ -132,6 +132,10 @@ _CLIENTS: dict[str, type[ImageClient]] = {
     # MiniMax H3-Image：POST /v1/images/generations → data[0].url，与 CogView 协议同形
     # （2026-11-11 实测：model=MiniMax-H3-Image，size/n 字段通用，negative_prompt 接受）。
     "minimax": CogViewImageClient,
+    # 火山方舟 Seedream：同为 OpenAI 兼容协议（2026-11-13 实测
+    # doubao-seedream-5-5-261028 + negative_prompt 字段直出 data[0].url）。
+    # 用它出的含真人脸定妆照可被 Seedance 视频接口免审核接受（信任传递）。
+    "seedance": CogViewImageClient,
 }
 
 

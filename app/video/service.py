@@ -81,7 +81,19 @@ class BatchCreateRequest(BaseModel):
 # ---------- Provider 解析与任务投递 ----------
 
 
-def _job_params(payload: dict[str, Any]) -> Any:
+def _is_trusted_relay(url: str, provider_name: str = "") -> bool:
+    """这条接力直链是否是「服务商自家产物、原样回喂可走信任传递」的。
+
+    目前只有方舟（Seedance 系）有此机制且实测有效（30 天内本账号模型产物
+    免审）。URL 域名判定为主（接力链的上一镜成片天然是该服务商的域），
+    provider 名为辅——两条都不满足一律走内联老路，MiniMax 行为逐字节不变。
+    """
+    if "volces.com" in url:
+        return True
+    return (provider_name or "").strip().lower() == "seedance"
+
+
+def _job_params(payload: dict[str, Any], provider_name: str = "") -> Any:
     """把落库的 params 映射成 Provider 统一入参（多余键进 extra）。
 
     参考素材是本机文件（回放地址 /api/assets/file/xxx），服务商拉不到这种相对
@@ -97,6 +109,14 @@ def _job_params(payload: dict[str, Any]) -> Any:
     前 5 张免费、零输入秒计费，且静帧只锚身份/环境/光线，不夹带上一镜的
     运镜信号（两条不同机位的接力视频会互相打架，果园 v2「中段偏移」嫌疑）；
     抽帧失败回退裁尾视频（可用性 > 省钱）。
+
+    **例外：方舟（seedance）直链原样透传，禁止转 data URI（2026-11-14 实测）**。
+    方舟的真人审核认素材**出处**：本账号 Seedance 成片直链走「信任传递」免审
+    （探针 cgt-20261114000257 实锤），但本地抽帧/裁尾再转 base64 后出处信息
+    全丢，与随手上传的真人素材无异——必拦。此前「接力含脸概率被拦」的
+    结论（5.45）实为本函数把 Ark 直链转成了 data URI：抽帧成功=被拒、
+    抽帧失败回退透传=通过，「概率」是假象。判据用 URL 域而不是 provider 名
+    更稳（接力 URL 来自上一镜成片，本就是该服务商的域），provider 名作双保险。
     """
     from ..media.inline import clip_last_frame_uri, clip_tail_data_uri, inline_media_urls
     from .base import VideoJobParams
@@ -111,7 +131,11 @@ def _job_params(payload: dict[str, Any]) -> Any:
     relay_frames: list[str] = []
     for u in inline_media_urls(deps.store(), payload.get("reference_videos") or []):
         if u.startswith("http"):
-            # 接力成片直链：优先抽尾帧图（免费档）；失败裁尾内联，再失败透传整条
+            if _is_trusted_relay(u, provider_name):
+                # 服务商自家成片直链：透传保出处（审核信任 + 免重复流量）
+                ref_videos.append(u)
+                continue
+            # 其他公网直链：优先抽尾帧图（免费档）；失败裁尾内联，再失败透传整条
             frame = clip_last_frame_uri(u)
             if frame:
                 relay_frames.append(frame)
@@ -162,7 +186,8 @@ def _submit_video_job(job: Any) -> None:
     if provider is None:
         raise HTTPException(400, f"未找到视频 Provider: {job.provider}")
 
-    deps.video_manager().submit(job.id, provider, job.prompt, _job_params(dict(job.params or {})))
+    deps.video_manager().submit(job.id, provider, job.prompt,
+                                _job_params(dict(job.params or {}), job.provider))
 
 
 # ---------- 出片意图（claim 幂等） ----------
@@ -508,9 +533,14 @@ def _auto_references(project_id: str, shot_id: str | None, version_id: str | Non
     script = None
     try:
         project = store.get_project(project_id)
-        script = store.latest_version(project).script if project else None
-    except Exception:  # noqa: BLE001
-        log.warning("自动参考回填：取剧本版本失败，跳过定妆图回填")
+        v = store.latest_version(project) if project else None
+        if v is not None:
+            # 有剧本版本才解析；import_storyboard 直导的分镜作品本来就没有
+            # 剧本版本（果园 demo），latest_version 返回 None 是正常路径，
+            # 不该走异常——旧写法把「没有剧本」报成「取剧本失败」，误导排查。
+            script = v.script
+    except Exception as e:  # noqa: BLE001
+        log.warning("自动参考回填：剧本解析失败（%s），跳过定妆图回填", str(e)[:80])
 
     from .continuity import resolve_submission_references
 
@@ -662,12 +692,20 @@ def generate_batch(project_id: str, payload: BatchCreateRequest) -> dict[str, An
 
     # 提交名单按**生成单元**折叠（S2）：同组成员只投组头一次——逐镜提交
     # 会把一段戏生成 N 遍（N 倍计费），这是镜头组架构必须堵的洞。
-    # 已在**本版**出片的单元跳过（与 N2D busy_shots 同源纪律，2026-11-13 果园v3：
-    # 批次中断后用户再说「出片」，旧代码把已成功的单元重新投一遍=重复计费；
-    # 按 version_id 过滤，所以改提示词开新版本后重跑不受影响）。
+    # 已出片单元的跳过规则（2026-11-14 收口，果园v3 5.43 + 孔乙己 5.44 +
+    # 用户看片「重复完成相同场景任务」三轮踩坑的共同正解）：**同 prompt
+    # 的成片存在就跳过，跨版本生效**——
+    #   · 续跑/重开批次：词没变，重投=纯浪费（旧版按 version_id 过滤，
+    #     续跑开新批准版本后旧成片全放行，正是双烧的洞）；
+    #   · 改词重出：新 prompt 对不上旧成片，照常提交（创作意图变了）；
+    #   · 手工提交/对账回写的无 version_id 任务：同样按 prompt 认。
+    # 想对已成功镜头原词重出，走单镜重试入口，不靠重开批次。
+    prompt_by_unit = {u["shot_id"]: u["prompt"] for u in _generation_units(version.shots)}
     done_here = {
         j.shot_id for j in store.list_video_jobs(project_id)
-        if j.status == "succeeded" and j.video_url and j.version_id == version.id
+        if j.status == "succeeded" and j.video_url
+        and j.shot_id in prompt_by_unit
+        and (j.prompt or "").strip() == prompt_by_unit[j.shot_id].strip()
     }
     units = [
         u for u in _generation_units(version.shots)

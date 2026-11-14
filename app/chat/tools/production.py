@@ -110,14 +110,28 @@ _ANCHOR_FEATURE_RE = re.compile(
 _ANCHOR_STOP_RE = re.compile(r"[。.\n]")
 # 台词开始：「…哽咽说：{…}」「念：{…}」——锚只要描写，不要对白。
 _DIALOGUE_RE = re.compile(r"[，,]?\s*(?:[\u4e00-\u9fff]{0,6}(?:说|念|道|喊|问道|回答|低语|呢喃))?\s*[:：]?\s*\{")
+# 表演/位移子句：全局锚截断点——这些是**这一镜**的动作指令，抄进锚会让
+# 每个后续单元都重演一遍（果园 2026-11-14 实测动作+运镜重复三次）。
+# 只收「明显是动态表演」的动词习惯语，静态外观（身穿/站姿/目光习惯性…）
+# 由更长的外观描述承担，不在此列——宁可截少不误杀外观。
+_ANCHOR_ACTION_RE = re.compile(
+    r"(缓慢|快步|转身|踱步|走近|走近|逼近|后退|移动|位移|迈步|上前|凑近|"
+    r"打量|扫视|盯着看|抬手|伸手|挥手|点头|摇头|俯身|起身|站起|坐下|"
+    r"凑到|抿嘴|皱眉|蹙眉|挑眉|泛红|哽咽|叹气|吸气|呼吸|吞咽|喉结|"
+    r"walk|turn|step|approach|scan|nod|shake|lean|rise|sit|sigh|swallow|"
+    r"raise|lower|reach|move|shift|gaze (?:moves|shifts))")
 _CAMERA_ONLY_RE = re.compile(
     r"(镜头|机位|景别|特写|近景|中景|全景|远景|俯拍|仰拍|过肩|主观|空镜|推拉|摇移|跟随)$")
 
 
 def _global_anchor(first_prompt: str) -> str:
-    """从首单元提示词取全局锚：优先第一个含锚特征（环境/人物）的句子，
-    在台词引用处截断。跳过纯机位短语开头的句子不够——锚句惯例是
-    「环境+机位+人物外观」同句（外部工具的全文首句正是这一句）。"""
+    """从首单元提示词取全局锚：第一个含锚特征（环境/人物）的句子，
+    在台词引用处截断，**再在第一个动作子句前截断**。
+
+    锚只该传静态事实（环境/机位/人物身份外观），不能夹带表演指令——
+    实测（果园 2026-11-14）：首句「…焦点锁在少女面部，她缓慢踱步打量对方，
+    眼眶泛红，哽咽说：{…}」整句抄进锚后，每个后续单元都收一遍
+    「踱步+打量+泛红」，同一段动作与运镜在成片里重演三次。"""
     for s in _ANCHOR_STOP_RE.split(first_prompt):
         s = s.strip(" ，,、")
         if len(s) < 8:
@@ -125,6 +139,14 @@ def _global_anchor(first_prompt: str) -> str:
         m = _DIALOGUE_RE.search(s)
         if m:
             s = s[:m.start()].strip(" ，,、:：")
+        # 动作截断：按逗号切子句，累加静态前缀，遇表演/位移子句即停。
+        kept: list[str] = []
+        for clause in re.split(r"[，,]", s):
+            if _ANCHOR_ACTION_RE.search(clause):
+                break
+            if clause.strip(" ：:"):
+                kept.append(clause.strip())
+        s = "，".join(kept).strip(" ，,、:：")
         if len(s) < 8 or not _ANCHOR_FEATURE_RE.search(s):
             continue
         return s[:150]

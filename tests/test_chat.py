@@ -919,6 +919,24 @@ def test_normalize_units_组内时间戳平移():
     assert "99" not in p and "空镜" in p
 
 
+def test_normalize_units_全局锚不夹带动作指令():
+    """锚只传静态事实（环境/机位/人物身份），动作子句截断——果园 2026-11-14
+    实测：首句「…焦点锁在少女面部，她缓慢踱步打量对方，眼眶泛红，哽咽说：{…}」
+    整句进锚后，每个后续单元重演同一套踱步+推近，成片动作运镜重复三次。"""
+    from app.chat.tools.production import normalize_units
+    out = normalize_units([
+        {"prompt": "果园午后，过肩镜头：前景虚焦男性肩膀，焦点锁在20岁西方少女面部，"
+                   "她缓慢踱步打量对方，眼眶泛红，哽咽说：{Am I a machine?} 说完停顿吸气。",
+         "duration_sec": 9},
+        {"prompt": "At 00:09, cuts to 30岁中世纪绅士正面近景：他沉默倾听。", "duration_sec": 4},
+    ])
+    u2 = out[1]["prompt"]
+    assert "果园午后" in u2 and "少女" in u2          # 静态锚保留
+    assert "踱步" not in u2 and "泛红" not in u2       # 动作子句被截断
+    assert "Am I a machine" not in u2                 # 台词不进锚
+    assert "绅士正面近景" in u2                        # 本段内容原样
+
+
 def test_import_storyboard_悬空指代闸门端到端(store, llm):
     import json as _json
     tools, collector = _make_tools(store, llm)

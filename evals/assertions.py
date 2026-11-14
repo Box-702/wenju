@@ -187,6 +187,24 @@ def assert_director(
                 f"{len(thin)}/{n_all} 镜的 action 不足 3 段（微动作循环 = PPT，"
                 "v3『83 秒重复一个动作』的直接指标）",
             )
+        # 运镜配给制（2026-11-14 用户看片：闸门机械补运动后「推近复读三次」
+        # = 另一种刻意）：相邻两镜不用同一种运镜；同型运镜之间至少隔两镜。
+        # 只查运动镜头（static/steady 无方向，天然豁免）——静止不是罪。
+        ordered_shots = sorted(all_shots, key=lambda x: x.order)
+        movers = [s for s in ordered_shots
+                  if (s.camera.type or "static") not in ("static", "steady", "")]
+        for a, b in zip(movers, movers[1:]):
+            key_a = (a.camera.type, (a.camera.direction or "").strip())
+            key_b = (b.camera.type, (b.camera.direction or "").strip())
+            if key_a == key_b:
+                gap = b.order - a.order - 1
+                if gap < 2:
+                    res.add(
+                        "DIR-14", "warn", "director",
+                        f"运镜复读：{a.id} 与 {b.id} 连续使用同一种运镜"
+                        f"（{key_a[0]}{'/' + key_a[1] if key_a[1] else ''}，中间仅隔 "
+                        f"{gap} 镜）——运镜是配给制，相邻镜头换型或改静止",
+                    )
 
     return res
 
@@ -255,7 +273,7 @@ def assert_dp(
         if quotes:
             res.add(
                 "DPT-05", "critical", where,
-                f"含引用台词（「{quotes[0][:14]}」）：会渲染成含混的假说话，语音应交给后期配音",
+                f"含引用台词（「{quotes[0][:14]}」）：旧写法（无冒号）会渲染成含混假语音；官方句式需在引号前加冒号",
             )
 
         # 一镜多运镜

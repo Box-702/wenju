@@ -15,7 +15,10 @@
 // =====================================================================
 
 import { computed, ref, watch, onMounted } from 'vue'
-import { store, loadShots, loadVideoJobs, loadAssets, loadOverview } from '../stores/app'
+import {
+  store, loadShots, loadVideoJobs, loadAssets, loadOverview,
+  submitVideoJob, playVideo, bulkReviewPrompts, startVideoBatch,
+} from '../stores/app'
 import AppIcon from './AppIcon.vue'
 import ShotList from './video/ShotList.vue'
 import { openPromptEditor, loadPromptHistory, loadSkills, useSkill } from '../stores/app'
@@ -116,6 +119,18 @@ function toggleScene(id) {
 async function onEditPrompt(shot) {
   openPromptEditor(shot)
   await loadPromptHistory(shot.id)
+}
+
+// 侧栏的镜头列表此前只绑了 @edit-prompt——同一个 ShotList 组件在产出页
+// （VideoWorkbench）绑全了 8 个事件，侧栏这边「刷新 / 全部生成视频 /
+// 生成视频 / 播放 / 批准选中」五个按钮点了没反应。同一份组件两套行为，
+// 用户只会觉得这个界面坏了。
+async function onBulkApprove(shotIds) {
+  await bulkReviewPrompts(shotIds, 'approve')
+}
+
+async function onStartBatch() {
+  await startVideoBatch()
 }
 
 /** 镜头视图：已生成的视频优先展示 */
@@ -341,8 +356,13 @@ watch(() => store.assetRefreshSeq, refresh)
         class="cp-shots"
         compact
         :shots="store.shots || []"
-        :scenes="store.scenes || []"
+        :scenes="store.viewerScript?.scenes || []"
         @edit-prompt="onEditPrompt"
+        @refresh="refresh"
+        @generate-all="onStartBatch"
+        @generate-video="submitVideoJob"
+        @play-video="playVideo"
+        @bulk-approve="onBulkApprove"
       />
     </div>
 

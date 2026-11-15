@@ -9,19 +9,27 @@
 // 用于工作目录设置弹窗与右侧「同步到工作目录」区域，保持同一套视觉语言。
 // =====================================================================
 
+import { computed } from 'vue'
 import FolderIcon from './FolderIcon.vue'
+import { store } from '../stores/app'
 
 const props = defineProps({
   root: { type: String, default: '' },        // 工作目录根路径（可空）
-  items: {
-    type: Array,
-    default: () => [
-      { code: '01_原稿', name: '原著 / 原始文本' },
-      { code: '02_版本', name: '每次生成的剧本快照' },
-      { code: '03_导出', name: '导出的 .txt / .md / .docx' },
-      { code: '04_知识库', name: '项目知识与备忘录' },
-    ],
-  },
+  /** 磁盘上真实存在的目录（/projects/{id}/files）；没有就用后端声明的目录清单。 */
+  folders: { type: Array, default: () => [] },
+})
+
+// 目录行：优先真实磁盘目录（带文件数），磁盘上还空着时用后端声明的目录清单
+// （后端有 7 个目录，此前这里硬编码了 4 个，少显示三个）。
+const items = computed(() => {
+  if (props.folders.length) {
+    return props.folders.map((f) => ({
+      code: f.code,
+      name: f.label,
+      count: (f.files || []).length,
+    }))
+  }
+  return (store.workspace?.dirs || []).map((d) => ({ code: d.code, name: d.name }))
 })
 </script>
 
@@ -39,6 +47,7 @@ const props = defineProps({
         <FolderIcon class="ic" />
         <span class="code">{{ it.code }}</span>
         <span class="desc">{{ it.name }}</span>
+        <span v-if="it.count" class="count">{{ it.count }}</span>
       </div>
     </div>
   </div>
@@ -56,4 +65,5 @@ const props = defineProps({
 .branch { color: var(--dim); font-family: var(--mono); font-size: 11px; width: 12px; flex: none; }
 .code { color: var(--ink); font-weight: 600; white-space: nowrap; }
 .desc { color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.count { margin-left: auto; color: var(--dim); font-family: var(--mono); font-size: 10.5px; }
 </style>

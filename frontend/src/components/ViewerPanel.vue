@@ -233,7 +233,7 @@ function onSceneDragEnd() {
           <span v-if="exportMsg" class="foot-msg">{{ exportMsg }}</span>
         </div>
         <div v-if="store.workspace?.configured && showWs" class="foot-ws">
-          <FolderTree :root="store.workspace.root" />
+          <FolderTree :root="store.workspace.root" :folders="store.projectFiles?.folders || []" />
         </div>
       </div>
     </div>

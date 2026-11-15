@@ -2355,6 +2355,50 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 
 ---
 
+### 5.62 界面上的「假按钮」：同一份组件两套行为 + FormData 被 JSON.stringify 掉（2026-11-15）
+
+- **症状**：
+  ① 右侧栏的镜头列表上，「刷新 / 全部生成视频 / 生成视频 / 播放 / 批准选中」
+     五个按钮**点了没反应**；同样的按钮在产出页（视频工作台）却一切正常；
+  ② 音色克隆一提交就报参数不对；
+  ③ 工作目录的目录树只显示 4 个目录，成片目录（07_成片）在树上根本看不到。
+- **根因**：
+  ① 侧栏与产出页用的是**同一个** `ShotList.vue`，但产出页绑了 8 个事件、
+     侧栏只绑了 `@edit-prompt`——组件 emit 了，没人接，按钮就成摆设。
+     更早的一处：侧栏还传了 `:scenes="store.scenes"`，而 store 里根本没有
+     `scenes` 这个字段（只有 `scenesMap`），恒为 `[]`。
+  ② `api(path, method, body)` 只认 `body instanceof FormData`，
+     而音色克隆写的是 `api(url, 'POST', { body: fd })`——FormData 被
+     `JSON.stringify` 成 `{"body":{}}`，服务端收到的是空表单。
+     同一份代码里 `importProject` / `uploadAsset` 都是直传的，只有这一处错。
+  ③ 后端 `app/workspace.py` 的 `SUBDIRS` 已有 7 个目录，前端
+     `FolderTree.vue` 把 4 个写死在 props 默认值里；而真正能反映磁盘情况的
+     `WorkspaceTree.vue` **从来没人 import**——整棵树的数据拉了没人渲染。
+- **解法**：
+  1. 侧栏 `<ShotList>` 补齐 `@refresh / @generate-all / @generate-video /
+     @play-video / @bulk-approve`，`:scenes` 改用 `store.viewerScript?.scenes`；
+  2. 音色克隆的 FormData **直传**（去掉 `{ body: fd }` 包装）；
+  3. 删掉两个死组件（`WorkspaceTree.vue` / `LogoMark.vue`）；
+     `FolderTree.vue` 改为「优先渲染磁盘上真实存在的目录（带文件数），
+     没有就用后端 `/api/workspace` 返回的目录清单」——后端补 `dirs`
+     与 `root_dirs`（白模的 `blender/` 在工作目录根下，按作品分子目录）；
+  4. 按 D-39「整段对话迁进作品、每作品一个对话」，删掉 store 里 8 个
+     再无入口的对话管理函数（新建/重命名/删除对话、全局对话、折叠项目、
+     左栏开关）——它们的 REST 端点仍在，但产品口径已收敛，留着只会让人
+     以为「还能建对话」。
+  5. `batch_started` 载荷此前前端**不渲染**（后端发了、MessageItem 没有
+     分支）→ 新增 `BatchStartedCard.vue`，进度读全局批次轮询（与产出页
+     同一份数据，不会两处数字打架）。
+- **涉及文件**：`frontend/src/components/ContextPanel.vue`、
+  `frontend/src/components/AssetPanel.vue`、
+  `frontend/src/components/FolderTree.vue`、
+  `frontend/src/components/ViewerPanel.vue`、
+  `frontend/src/components/MessageItem.vue`、
+  `frontend/src/components/BatchStartedCard.vue`（新增）、
+  `frontend/src/stores/app.js`、`frontend/src/App.vue`；
+  `app/api/system.py`；删 `frontend/src/components/{WorkspaceTree,LogoMark}.vue`；
+  `tests/test_api.py`。
+
 ## 六、排查手册（症状 → 先查什么）
 
 | 症状 | 先查 |
@@ -2634,3 +2678,24 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   只验了 filter 字符串的形状，xfade 的 offset 算得对不对要真片才知道，
   留待花钱轮；② `supports_cancel` 只覆盖 MiniMax 与 Seedance 两个厂商；
   ③ Seedance 的 DELETE 端点仍「存在与否未实测」，标的是尽力而为。
+
+### T-11 空缺全量修复 · 第三批：界面上的假功能（2026-11-15，完成，零花费）
+
+- **假设**：审计点名的「点了没反应」都是**绑定缺失**而不是逻辑写错；
+  FormData 那处是参数包装写错；目录树少显示是前端硬编码。
+- **过程**：读组件源码定位 emit 与绑定的差集 → 侧栏补齐 5 个绑定 +
+  修 `store.scenes` → 音色克隆 FormData 直传 → 删两个死组件 →
+  FolderTree 改读真实目录（后端补 `dirs`/`root_dirs`）→ 删 8 个无入口
+  的对话管理 store 函数 → 新增 BatchStartedCard 并接进 MessageItem
+  → 前端构建 + 后端全量回归 + 新增 1 条接口断言。
+- **发现的问题**：① 侧栏与产出页用同一份组件却是两套绑定——**同一个组件在
+  两个位置行为不一致**，比「功能没做」更坏：用户会先怀疑界面坏了；
+  ② 删死组件时发现 `WorkspaceTree.vue` 拉的数据（真实磁盘树）其实是好
+  数据，只是没人渲染——改成让 FolderTree 直接用，而不是一并丢掉；
+  ③ FormData 那处的正确写法在同文件里就有两个样本（`importProject`、
+  `uploadAsset`），说明「第三种写法」是手滑不是设计。
+- **效果**：618 passed（基线 617，+1 目录清单断言）；前端构建通过；
+  后端 ruff 无新增。
+- **遗留**：① 工作目录「设置」入口与「生成资产图」按钮属批次 4（后端能力
+  前端可见），本批只把 store 函数留着；② 音色克隆的修复**未做真机验证**
+  （需要用户自己的音频样本），留待人工过一遍；③ 白模面板属批次 4。

@@ -535,6 +535,24 @@ def test_clear_model_preference_is_idempotent(client):
     assert resp.json()["removed"] == 0
 
 
+
+def test_workspace_api_给出完整目录清单(client):
+    """GET /api/workspace 要返回结构化目录清单。
+
+    前端此前把 4 个目录硬编码在组件里，后端实际有 7 个（05_分镜 / 06_素材 /
+    07_成片）——目录树少显示三个，用户以为成片没落盘。
+    """
+    from app.workspace import SUBDIRS
+
+    r = client.get("/api/workspace")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    codes = [d["code"] for d in body["dirs"]]
+    assert codes == [c for c, _ in SUBDIRS], "目录清单必须与后端 SUBDIRS 一致"
+    assert "07_成片" in codes
+    # 根目录下还有白模那一摊（按作品分子目录）
+    assert any(d["code"] == "blender" for d in body["root_dirs"])
+
 def test_workspace_open_endpoint(client, tmp_path, monkeypatch):
     """POST /api/workspace/open：工作区跳转（文件管理器打开）。
     - 根内子目录放行、标题原文自动映射到清洗名；

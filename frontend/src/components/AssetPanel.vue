@@ -503,7 +503,10 @@ async function submitVoiceClone() {
     fd.append('file', voiceClone.file)
     fd.append('character', voiceClone.charId)
     fd.append('voice_name', voiceClone.name)
-    const r = await api(`/projects/${store.pid}/voices/clone`, 'POST', { body: fd })
+    // FormData 要**直接**当第三个参数传：api() 只认 body instanceof FormData，
+    // 包成 { body: fd } 会被 JSON.stringify 成 {"body":{}}，服务端收到的是
+    // 空表单——音色克隆此前一直报 422。
+    const r = await api(`/projects/${store.pid}/voices/clone`, 'POST', fd)
     notify(`已生成音色「${r.name || voiceClone.name}」`, 'ok')
     voiceClone.open = false
     await loadLibrary()

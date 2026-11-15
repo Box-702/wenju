@@ -106,12 +106,17 @@ def get_workspace() -> dict[str, Any]:
     """返回当前工作目录配置（含根路径、落盘模式与目录结构说明）。"""
     ws = common.workspace()
     info = ws.info(deps.settings().effective_workspace_root)
-    # 已配置时附带一份结构说明文字。
+    # 已配置时附带一份结构说明文字 + 结构化目录清单（前端据此渲染目录树，
+    # 此前前端把 4 个目录硬编码在组件里，后端实际有 7 个，少显示三个）。
     info["structure"] = (
         "\n".join(f"{code}/  <-  {label}" for code, label in SUBDIRS)
         if ws.configured
         else None
     )
+    info["dirs"] = [{"code": code, "name": label} for code, label in SUBDIRS]
+    # 工作目录根下还有白模那一摊（按作品分子目录）：不是每个作品都有，
+    # 但目录表里得写出来，用户才知道白模落在哪。
+    info["root_dirs"] = [{"code": "blender", "name": "白模施工单与渲染（按作品分目录）"}]
     return info
 
 

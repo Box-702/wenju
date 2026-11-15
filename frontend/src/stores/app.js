@@ -23,9 +23,8 @@ export const store = reactive({
   expanded: {},        // pid -> 是否展开
 
   // 全局对话（不绑定项目；在对话里创建项目后自动归档到该项目组下）
-  globalConvs: [],     // [{ id, title, user_message_count, created_at }]
   // 工作区文件树
-  workspaceTree: null, // { root, folders: [{name, type, children}] }
+  projectFiles: null,  // 当前作品在工作目录里的真实目录（/projects/{id}/files）
 
   // 对话与版本
   messages: [],        // 当前对话消息 [{ role, content, events, payloads, streaming }]
@@ -197,12 +196,6 @@ export async function deleteProject(pid) {
 // ---------------------------------------------------------------------
 // 右侧查看面板开关
 // ---------------------------------------------------------------------
-/** 开/关左侧导航面板。 */
-export function toggleLeftPanel() {
-  store.leftOpen = !store.leftOpen
-  localStorage.setItem('sw-layout:leftOpen', store.leftOpen ? '1' : '0')
-}
-
 /** 聚焦到单个场景（右栏显示场景详情）。传 null 退出聚焦。
  *  必须带上场景所属项目：右栏的剧本文本（viewerScript）可能还没加载，
  *  或停留在另一个项目上——只设 focusedSceneId 会渲染出空白。 */
@@ -283,15 +276,6 @@ export async function loadScenes(pid) {
   } catch { store.scenesMap[pid] = [] }
 }
 
-/** 折叠/展开项目节点。 */
-export async function toggleProject(pid) {
-  store.expanded[pid] = !store.expanded[pid]
-  if (store.expanded[pid]) {
-    await loadConversations(pid)
-    await loadScenes(pid)
-  }
-}
-
 /** 场景拖拽排序：乐观更新本地，落库为新版本；失败回滚重拉。 */
 export async function reorderScenes(fromId, toId) {
   const pid = store.pid
@@ -363,117 +347,17 @@ export async function selectConversation(pid, convId, token = ++_navSeq) {
   await loadViewer(token)
 }
 
-/** 新建对话（自动命名，不弹窗）。若当前项目已有空白对话则直接选中，不重复创建。 */
-export async function newConversation(pid) {
-  // 检查是否有空白对话（无用户消息的对话）——利用列表接口已返回的 user_message_count，无需逐个请求。
-  const convs = store.convMap[pid] || []
-  const blank = convs.find((c) => (c.user_message_count ?? 0) === 0)
-  if (blank) {
-    setHint('当前已有空白对话，直接使用即可')
-    await selectConversation(pid, blank.id)
-    return
-  }
-  // 没有空白对话才真正创建
-  const count = convs.length
-  try {
-    const c = await api(`/projects/${pid}/conversations`, 'POST', { title: `对话 ${count + 1}` })
-    await loadConversations(pid) // 刷新左侧树的对话列表
-    await selectConversation(pid, c.id)
-  } catch (e) { notify('新建对话失败：' + e.message) }
-}
-
-/** 重命名对话（由树节点内联编辑提交）。pid 为该对话所属项目，刷新其对话列表。 */
-export async function setConversationTitle(pid, convId, title) {
-  const t = title.trim()
-  if (!t) return
-  try {
-    await api(`/conversations/${convId}`, 'PATCH', { title: t })
-    await loadConversations(pid || store.pid)
-  } catch (e) { notify(e.message) }
-}
-
-/** 删除对话；若删的是当前对话则清空选择并回到项目空态。确认由调用方（内联两步）负责。
- *  pid 为该对话所属项目：从树上看可能不是当前选中的项目，刷新时不能混用 store.pid。 */
-export async function deleteConversation(convId, pid = store.pid) {
-  try {
-    await api(`/conversations/${convId}`, 'DELETE')
-    if (store.convId === convId) {
-      store.convId = null
-      store.messages = []
-    }
-    const target = pid || store.pid
-    if (target) await loadConversations(target)
-    else await loadGlobalConversations()
-    notify('已删除对话', 'ok')
-  } catch (e) { notify(e.message) }
-}
-
-// ---------------------------------------------------------------------
-// 全局对话（不绑定项目）
-// ---------------------------------------------------------------------
-
-/** 加载全局对话列表。 */
-export async function loadGlobalConversations() {
-  try { store.globalConvs = await api('/conversations') } catch { store.globalConvs = [] }
-}
-
-/** 新建全局对话。 */
-export async function newGlobalConversation() {
-  const blank = store.globalConvs.find((c) => (c.user_message_count ?? 0) === 0)
-  if (blank) {
-    setHint('当前已有空白对话，直接使用即可')
-    await selectGlobalConversation(blank.id)
-    return
-  }
-  const count = store.globalConvs.length
-  try {
-    const c = await api('/conversations', 'POST', { title: `对话 ${count + 1}` })
-    await loadGlobalConversations()
-    await selectGlobalConversation(c.id)
-  } catch (e) { notify('新建对话失败：' + e.message) }
-}
-
-/** 选中一个全局对话（不关联项目）。 */
-export async function selectGlobalConversation(convId) {
-  // 同 selectConversation：点击当前全局对话不做任何事，保护进行中的流。
-  if (store.pid === null && store.convId === convId && (store.streaming || store.messages.length)) {
-    setHint('已在该对话中')
-    return
-  }
-  const token = ++_navSeq
-  store.pid = null
-  store.convId = convId
-  store.focusedSceneId = null
-  store.messages = []
-  store.versions = []
-  await loadHistory(token)
-}
-
 // ---------------------------------------------------------------------
 // 工作区文件树
 // ---------------------------------------------------------------------
 
-/** 加载工作区目录结构。 */
-export async function loadWorkspaceTree() {
+/** 加载当前作品在工作目录里的真实目录结构（磁盘上有哪些文件）。 */
+export async function loadProjectFiles() {
+  if (!store.pid) { store.projectFiles = null; return }
   try {
-    const ws = await api('/workspace')
-    if (!ws.configured || !ws.root) {
-      store.workspaceTree = null
-      return
-    }
-    // 加载根目录下的项目文件夹
-    const folders = []
-    for (const p of store.projects) {
-      try {
-        const files = await api(`/projects/${p.id}/files`)
-        if (files.folders) {
-          folders.push({ name: p.title, pid: p.id, folders: files.folders })
-        }
-      } catch {}
-    }
-    store.workspaceTree = { root: ws.root, folders }
+    store.projectFiles = await api(`/projects/${store.pid}/files`)
   } catch {
-    store.workspaceTree = null
+    store.projectFiles = null
   }
 }
 

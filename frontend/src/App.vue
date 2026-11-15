@@ -23,7 +23,7 @@ import PatchDrawer from './components/PatchDrawer.vue'
 import PromptEditor from './components/video/PromptEditor.vue'
 import AssetPreview from './components/AssetPreview.vue'
 import Toast from './components/Toast.vue'
-import { loadTree, loadWorkspace, loadWorkspaceTree, restorePanelPrefs, toggleRightPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, loadAssetRefs, closePromptEditor, saveShotPrompt } from './stores/app'
+import { loadTree, loadWorkspace, loadProjectFiles, restorePanelPrefs, toggleRightPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, loadAssetRefs, closePromptEditor, saveShotPrompt } from './stores/app'
 import { initNav, pushNav } from './nav'
 import { importProject } from './api'
 
@@ -205,6 +205,8 @@ watch(() => [store.pid, store.convId], () => {
   // 进入作品 → 拉一份可 @ 引用的资产清单（角色 / 场景 / 成片）与引用索引（编号 → 定妆照）
   loadAssetIndex()
   loadAssetRefs()
+  // 工作目录里的真实文件树（右侧「工作目录」区渲染它）
+  loadProjectFiles()
   if (!isNarrow.value) return
   store.leftOpen = false
   store.rightOpen = false
@@ -231,7 +233,7 @@ onMounted(async () => {
   window.addEventListener('keydown', globalKey)
   await loadWorkspace()
   await loadTree()
-  await loadWorkspaceTree()
+  await loadProjectFiles()
   // 启动时若已有进行中的批次，立刻接上全局轮询（刷新页面不断进度）
   await pollVideoBatch()
   ensureBatchPolling()

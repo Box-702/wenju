@@ -153,15 +153,36 @@ def _parse_answer(text: str) -> tuple[bool, str]:
     return True, "（未能解析判定，按通过处理）"
 
 
-def qa_check(video_url: str, vision: Any = None, *, count: int | None = None) -> dict[str, Any]:
+def frame_count_for(duration_sec: float | None) -> int:
+    """抽帧数按片长放大。
+
+    固定 5 帧对 4 秒的单镜够用，对 15 秒的镜头组就太稀——组里几个机位挤在
+    15 秒里，抽 5 帧很可能整个机位都没抽到，缺陷就这么漏过去了。
+    经验值：每 2 秒一帧，下限取配置值（VIDEO_QA_FRAMES），上限 9 帧。
+    """
+    from ..config import get_settings
+
+    base = max(3, min(9, get_settings().video_qa_frames or 5))
+    if not duration_sec or duration_sec <= 0:
+        return base
+    scaled = int(round(float(duration_sec) / 2.0))
+    return max(base, min(9, scaled))
+
+
+def qa_check(
+    video_url: str,
+    vision: Any = None,
+    *,
+    count: int | None = None,
+    duration_sec: float | None = None,
+) -> dict[str, Any]:
     """逐帧质检成片，聚合判定。
 
     返回 {"verdict": "pass" | "fail" | "skipped", "issues": [...], "frames": n}。
     没有视觉模型 / 抽帧失败 → skipped（质检不阻断任务）。
+    duration_sec 给了就按片长放大抽帧数（组比单镜长，抽得稀会漏检）。
     """
-    from ..config import get_settings
-
-    n = count or max(3, min(9, get_settings().video_qa_frames or 5))
+    n = count or frame_count_for(duration_sec)
     frames = extract_frames(video_url, count=n)
     if not frames:
         return {"verdict": "skipped", "issues": [], "frames": 0}
@@ -270,10 +291,141 @@ def _llm_rewrite(prompt: str, issues: list[str]) -> str | None:
     return None
 
 
-def rewrite_prompt_for_retry(prompt: str, issues: list[str]) -> str:
-    """重 roll 前按质检结论改写提示词；LLM 失败退回确定性追加。"""
+# 组提示词里的机位标记（DP 折叠时写的：[Shot 1] 0-4s，…）。
+_SEG_MARK = re.compile(r"(\[Shot\s+\d+\])")
+
+
+def _prompt_segments(prompt: str) -> tuple[str, list[str], list[str]]:
+    """把组提示词切成 (前缀, 各段标记, 各段正文)。非组提示词返回空。"""
+    parts = _SEG_MARK.split(prompt)
+    if len(parts) < 5:
+        return "", [], []
+    return parts[0], parts[1::2], parts[2::2]
+
+
+def _group_segments(job: Any, store: Any) -> list[tuple[str, float, float]]:
+    """组内各机位的时间区间 [(机位 id, 起秒, 止秒)]。
+
+    按 group_member_ids 与各机位的 duration_sec 累加——与 DP 折叠组提示词
+    时用的时间轴同口径，所以「第 N 帧」能对回具体哪一机位。
+    """
+    params = dict(getattr(job, "params", None) or {})
+    member_ids = list(params.get("group_member_ids") or [])
+    if len(member_ids) < 2 or not getattr(job, "version_id", None):
+        return []
+    version = store.get_video_version(job.version_id)
+    if version is None:
+        return []
+    by_id = {
+        s.get("id"): s for s in (version.shots or [])
+        if isinstance(s, dict) and s.get("id")
+    }
+    out: list[tuple[str, float, float]] = []
+    t = 0.0
+    for sid in member_ids:
+        s = by_id.get(sid)
+        if s is None:
+            continue
+        d = max(0.0, float(s.get("duration_sec") or 0))
+        out.append((str(sid), t, t + d))
+        t += d
+    return out if len(out) >= 2 else []
+
+
+def _locate_bad_segments(
+    issues: list[str],
+    segments: list[tuple[str, float, float]],
+    duration_sec: float | None,
+    frame_count: int | None,
+) -> dict[int, list[str]]:
+    """把「第 N 帧：…」的缺陷定位到组内第几段机位。返回 {段序号: 该段的缺陷}。"""
+    if not segments or not duration_sec or not frame_count:
+        return {}
+    out: dict[int, list[str]] = {}
+    for issue in issues:
+        m = re.match(r"第(\d+)帧", str(issue).strip())
+        if not m:
+            continue
+        idx = int(m.group(1))
+        # 抽帧是均匀取的，第 idx 帧落在 (idx-0.5)/帧数 * 时长 处
+        t = (idx - 0.5) / frame_count * float(duration_sec)
+        for si, (_sid, start, end) in enumerate(segments):
+            if start <= t < end:
+                out.setdefault(si, []).append(issue)
+                break
+    return out
+
+
+def _llm_rewrite_segment(prompt: str, body: str, issues: list[str]) -> str | None:
+    """只改写一段：把整段提示词当上下文给模型，但只要它输出这一段的改写。
+
+    这样既保住模型的改写能力（它看得见锚与风格段），又保证「只动坏的那一段」
+    ——整篇重写会把没坏的机位也搭进去，白降级 = 白花钱且下一版更差。
+    """
+    try:
+        from ..deps import llm as get_llm
+
+        facade = get_llm()
+        if not facade.available:
+            return None
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        resp = facade.chat().invoke([
+            SystemMessage(content=REWRITE_SYSTEM),
+            HumanMessage(content=(
+                f"整段提示词（上下文，只读）：\n{prompt}\n\n"
+                f"要改写的这一段：\n{body}\n\n"
+                f"这一段里的致命缺陷：\n"
+                + "\n".join(f"- {i}" for i in issues[:4])
+                + "\n\n只输出改写后的这一段（不要解释、不要引号）："
+            )),
+        ])
+        out = str(resp.content or "").strip()
+        if out and len(out) >= max(10, len(body) * 0.3):
+            return out
+    except Exception as e:  # noqa: BLE001
+        log.warning("提示词分段 LLM 降级改写失败，用确定性兜底：%s", e)
+    return None
+
+
+def _rewrite_group_segments(
+    prompt: str,
+    issues: list[str],
+    bad: dict[int, list[str]],
+) -> str:
+    """只改写缺陷所在的那几段，其余机位逐字保留。"""
+    prefix, marks, bodies = _prompt_segments(prompt)
+    if not bodies:
+        return prompt
+    out = prefix
+    for i, (mark, body) in enumerate(zip(marks, bodies)):
+        if i in bad:
+            seg_issues = bad[i]
+            body = _llm_rewrite_segment(prompt, body, seg_issues) or _fallback_rewrite(
+                body, seg_issues,
+            )
+        out += mark + body
+    return out
+
+
+def rewrite_prompt_for_retry(
+    prompt: str,
+    issues: list[str],
+    *,
+    segments: list[tuple[str, float, float]] | None = None,
+    duration_sec: float | None = None,
+    frame_count: int | None = None,
+) -> str:
+    """重 roll 前按质检结论改写提示词；LLM 失败退回确定性追加。
+
+    镜头组：只改写缺陷落在的那一段机位，其余逐字保留。
+    """
     if not issues:
         return prompt
+    if segments and len(segments) >= 2:
+        bad = _locate_bad_segments(issues, segments, duration_sec, frame_count)
+        if bad:
+            return _rewrite_group_segments(prompt, issues, bad)
     return _llm_rewrite(prompt, issues) or _fallback_rewrite(prompt, issues)
 
 
@@ -308,7 +460,9 @@ def reroll_if_needed(
     if params.get("qa"):
         return None
 
-    result = qa_check(job.video_url)
+    duration = float(params.get("duration_sec") or 0)
+    segments = _group_segments(job, store)
+    result = qa_check(job.video_url, duration_sec=duration)
     params["qa"] = result
     store.update_video_job(job_id, params=params)
 
@@ -327,7 +481,10 @@ def reroll_if_needed(
         return None
 
     # 反馈驱动：重 roll 不是原样重抽，而是按缺陷改写提示词后再抽。
-    new_prompt = rewrite_prompt_for_retry(job.prompt, result["issues"])
+    new_prompt = rewrite_prompt_for_retry(
+        job.prompt, result["issues"],
+        segments=segments, duration_sec=duration, frame_count=result.get("frames"),
+    )
     rewritten = new_prompt != job.prompt
     new_job = store.create_video_job(
         project_id=job.project_id,

@@ -47,7 +47,9 @@ const awaiting = computed(() => batch.value?.status === 'awaiting_approval')
 const progressText = computed(() => {
   const b = batch.value
   if (!b) return ''
-  return `${Math.min(b.current_index + 1, b.total)} / ${b.total} 镜`
+  // 批次推进的单位是**生成单元**（镜头组折叠后的一条视频），不是单镜——
+  // 文案跟着单位走，别让「3 段」和「5 镜」在同一屏打架。
+  return `${Math.min(b.current_index + 1, b.total)} / ${b.total} 段`
 })
 const promptCount = computed(() => {
   const prompts = store.shots.filter((shot) => shot.video_prompt)
@@ -185,7 +187,7 @@ function formatVersionTime(value) {
             :class="['seg-btn', { active: store.videoMode === 'approval' }]"
             title="每镜完成后暂停，预览后决定继续/重跑/终止"
             @click="setVideoMode('approval')"
-          >逐镜审批</button>
+          >逐段审批</button>
         </div>
       </div>
 
@@ -377,7 +379,7 @@ function formatVersionTime(value) {
         <span class="batch-status">
           <template v-if="batch.status === 'running'">生成中 {{ progressText }}</template>
           <template v-else-if="awaiting">等待审批 {{ progressText }}</template>
-          <template v-else-if="batch.status === 'done'">批次完成（{{ batch.total }} 镜）</template>
+          <template v-else-if="batch.status === 'done'">批次完成（{{ batch.total }} 段）</template>
           <template v-else-if="batch.status === 'failed'">批次失败</template>
           <template v-else-if="batch.status === 'aborted'">已终止</template>
         </span>
@@ -390,14 +392,14 @@ function formatVersionTime(value) {
         <video v-if="currentVideoUrl" :src="currentVideoUrl" controls class="review-video" />
         <div v-else class="review-empty">成片地址加载中…</div>
         <div class="review-actions">
-          <button class="rv ok" @click="batchCommand('approve')">✓ 通过，下一镜</button>
-          <button class="rv" @click="batchCommand('reroll')">↻ 重跑本镜</button>
+          <button class="rv ok" @click="batchCommand('approve')">✓ 通过，下一段</button>
+          <button class="rv" @click="batchCommand('reroll')">↻ 重跑本段</button>
           <button class="rv danger" @click="batchCommand('abort')"><AppIcon name="close" /> 终止批次</button>
         </div>
       </div>
       <div v-else-if="running || batch.status === 'failed' || batch.status === 'aborted'" class="review-actions">
         <button v-if="running" class="rv danger" @click="batchCommand('abort')">终止批次</button>
-        <button v-if="batch.status === 'failed'" class="rv" @click="batchCommand('reroll')">重跑当前镜</button>
+        <button v-if="batch.status === 'failed'" class="rv" @click="batchCommand('reroll')">重跑当前段</button>
       </div>
     </div>
 

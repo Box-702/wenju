@@ -90,7 +90,7 @@ const batchFailNote = computed(() => batch.value?.error || '批次中断（常�
         <span v-if="filmPhase === 'error'" class="mono err">{{ filmError }}</span>
       </template>
       <template v-else-if="filmPhase === 'running' && !batchDone && !batchFailed">
-        <span class="mono run">生成中 {{ batchProgress }} · 前一镜完成自动接后一镜</span>
+        <span class="mono run">生成中 {{ batchProgress }} 段 · 前一段完成自动接后一段</span>
         <span class="flex1"></span>
         <button class="btn ghost small" @click="showView('video')">看进度</button>
       </template>

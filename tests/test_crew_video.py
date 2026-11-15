@@ -946,7 +946,10 @@ def test_reroll_if_needed_bounded_and_records_verdict(monkeypatch):
         )
         return store, created, updates
 
-    monkeypatch.setattr(qa, "qa_check", lambda url: {"verdict": "fail", "issues": ["第2帧：手穿模"], "frames": 5})
+    monkeypatch.setattr(
+        qa, "qa_check",
+        lambda url, **kw: {"verdict": "fail", "issues": ["第2帧：手穿模"], "frames": 5},
+    )
     submitted: list[str] = []
     submit = lambda job: submitted.append(job.id)  # noqa: E731
 
@@ -970,7 +973,10 @@ def test_reroll_if_needed_bounded_and_records_verdict(monkeypatch):
     assert "QA 未通过" in updates[-1]["error_message"]
 
     # 合格：什么都不做，但 verdict 已记录
-    monkeypatch.setattr(qa, "qa_check", lambda url: {"verdict": "pass", "issues": [], "frames": 5})
+    monkeypatch.setattr(
+        qa, "qa_check",
+        lambda url, **kw: {"verdict": "pass", "issues": [], "frames": 5},
+    )
     store, created, updates = make_store({"duration_sec": 8})
     assert qa.reroll_if_needed("j1", {"status": "succeeded"}, store=store,
                                submit=submit, max_reroll=1) is None

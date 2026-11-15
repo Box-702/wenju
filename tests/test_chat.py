@@ -346,7 +346,6 @@ def test_reasoning_delta_reads_additional_kwargs():
 
 def test_memory_scope_visibility(store):
     """global 全可见；project/conversation 只对归属上下文可见，按 global→project→conversation 排序。"""
-    from app.store import Memory
 
     store.add_memory(kind="preference", scope="global", content="喜欢克制结尾")
     store.add_memory(kind="decision", scope="project", project_id="p1", content="城市定为赛博朋克")
@@ -449,7 +448,7 @@ def test_compress_summary_advances_beyond_window(store):
     静默蒸发。锚点版把「滚出窗口的覆盖点」退化成窗口内全量重摘（合并式
     摘要天然去重），摘要每轮照常推进。
     """
-    from app.memory import RECENT_KEEP, compress_history_if_needed
+    from app.memory import compress_history_if_needed
 
     class _FakeLLM:
         available = True
@@ -477,7 +476,6 @@ def test_compress_summary_advances_beyond_window(store):
 
 def test_compress_survives_llm_failure(store, caplog):
     """摘要 LLM 抛错：回落截断，不抛异常、不写坏摘要。"""
-    import pytest
     from app.memory import RECENT_KEEP, compress_history_if_needed
 
     class _BadLLM:

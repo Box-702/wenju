@@ -211,12 +211,16 @@ def build(ctx: ToolContext) -> list:
         from ...video.service import cancel_video_job as _api_cancel_job
 
         try:
-            _api_cancel_job(job.id)
+            result = _api_cancel_job(job.id)
         except Exception as e:  # noqa: BLE001
             detail = getattr(e, "detail", None) or str(e)
             return f"取消失败：{detail}"
-        return (f"已取消镜头 {sid} 的生成任务（{job.id}）。镜头方案与已批准的提示词保持不变，"
-                "随时可以重跑或继续其他镜头。")
+        # 本地取消 ≠ 服务商那边真的停了——MiniMax 没有取消端点，
+        # 那条任务可能还在生成、费用照计。这话必须说，不能让用户误以为省钱。
+        note = result.get("note") or ""
+        tail = f"（{note}）" if note else ""
+        return (f"已取消镜头 {sid} 的生成任务（{job.id}）{tail}。"
+                "镜头方案与已批准的提示词保持不变，随时可以重跑或继续其他镜头。")
 
     @tool
     def finalize_film(project_id: str, subtitles: bool = True,

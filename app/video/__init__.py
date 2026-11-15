@@ -5,14 +5,9 @@
 # 提供一致的提交 → 轮询 → 下载接口。
 # =====================================================================
 
-from .base import VideoJobParams, VideoJobResponse, VideoJobStatus, VideoProvider
 from .registry import ProviderRegistry, get_registry
 
 __all__ = [
-    "VideoProvider",
-    "VideoJobParams",
-    "VideoJobResponse",
-    "VideoJobStatus",
     "ProviderRegistry",
     "get_registry",
 ]

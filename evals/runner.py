@@ -21,7 +21,7 @@ from typing import Any
 from app.crew.art_director import run_art_director
 from app.crew.director import run_director
 from app.crew.dp import run_dp
-from app.domain import SceneBreakdown, Script, Shot, StyleGuide
+from app.domain import SceneBreakdown, Shot, StyleGuide
 from app.llm import LLM
 
 from .assertions import AssertionResult, assert_director, assert_dp, assert_pipeline, summarize

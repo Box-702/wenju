@@ -714,7 +714,7 @@ def set_video_milestone(version_id: str, milestone: str | None = None) -> dict[s
 # import api 层的分层违规）。这里按旧名字再导出——路由、既有调用方与
 # 测试的引用路径保持不变。
 
-from ..video.service import (  # noqa: E402,F401
+from ..video.service import (  # noqa: E402,F401,F811
     BatchCreateRequest,
     VideoJobCreate,
     _batch_submit,

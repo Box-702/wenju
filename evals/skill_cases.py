@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 # 一次对话的工具调用序列
 ToolCall = dict[str, Any]

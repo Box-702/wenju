@@ -22,8 +22,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
-import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -363,7 +361,6 @@ def _run_chat(
 def _disable_skills() -> None:
     """把 load_skill 从工具集里摘掉——模拟「没有技能系统」。"""
     from app.chat import conductor
-    from app.chat.tools import memory_tools
 
     original = conductor.build_chat_tools
 

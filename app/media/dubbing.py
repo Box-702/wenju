@@ -34,7 +34,6 @@ from ..llm.tts import TTSClient
 from .casting import (  # assign_voices 为旧调用点保留（已修好串角，见 casting.py）
     VOICE_FALLBACK,
     Casting,
-    assign_voices,
     cast_script,
 )
 
@@ -124,7 +123,6 @@ def plan_dubbing(
     )
     char_map = {c.id: c.name for c in script.characters}
     beat_map = _scene_beat_map(script)
-    scene_of = {sc.id: sc for sc in script.scenes}
     ordered = sorted(shots, key=lambda s: s.order)
     plan = DubbingPlan(total_sec=sum(max(1.0, s.duration_sec) for s in ordered), cast=cast)
     plan.cast_warnings.extend(cast.warnings)

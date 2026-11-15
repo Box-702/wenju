@@ -10,7 +10,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.api as api_mod
-import app.api.video as video_api
 import app.video.service as video_service
 from app.agent.tasks import SubAgentRunner
 from app.main import create_app
@@ -257,7 +256,6 @@ def test_video_generation_carries_aspect_ratio(client, sample_text, monkeypatch)
     而提交现在带幂等闸门（同镜头同意图会复用既有任务，不重复建），
     两条路径都投同一个镜头就只会剩一个任务——那是闸门在起作用，不是本用例要测的。
     """
-    import app.api.video as video_api
 
     project = _import_project(client, sample_text)
     created = client.post(
@@ -436,7 +434,6 @@ def test_出片时长用导演定的值而不是写死的六秒(client, sample_t
     模型——动作硬塞进更短的时间，只能丢节拍、糊成一片。
     优先级：调用方显式指定 > 导演给该镜的 duration_sec > 节奏默认值。
     """
-    import app.api.video as video_api
 
     project = _import_project(client, sample_text)
     created = client.post(

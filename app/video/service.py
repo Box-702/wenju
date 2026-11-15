@@ -672,20 +672,49 @@ def _auto_references(project_id: str, shot_id: str | None, version_id: str | Non
 
 
 def cancel_video_job(job_id: str) -> dict[str, Any]:
-    """取消视频生成任务：先请服务商侧停止，再收尾本地状态。"""
+    """取消视频生成任务：先请服务商侧停止，再收尾本地状态。
+
+    返回里带 `remote_cancelled` 与 `note`：**本地置为已取消 ≠ 服务商那边
+    真的停了**。MiniMax V2 没有取消端点（见 providers/minimax.py），那条
+    任务可能还在生成、费用照计——话必须说到位，否则「已取消」会被用户
+    理解成「不花钱了」。
+    """
     j = deps.store().get_video_job(job_id)
     if not j:
         raise HTTPException(404, "任务不存在")
     # 服务商侧取消是尽力而为：任务已不在内存队列（如进程重启过）或 provider
     # 不支持取消时，不影响本地状态收尾——本地状态才是前端看到的那份。
+    remote_cancelled = False
+    supports_cancel = False
+    provider_label = j.provider or "服务商"
     try:
         provider = _resolve_video_provider(j.provider)
         if provider is not None:
-            deps.video_manager().cancel(job_id, provider)
+            supports_cancel = bool(getattr(provider, "supports_cancel", False))
+            provider_label = getattr(provider, "label", None) or provider_label
+            remote_cancelled = bool(deps.video_manager().cancel(job_id, provider))
     except Exception as e:  # noqa: BLE001
         log.warning("通知 provider 取消任务 %s 失败：%s", job_id, e)
     deps.store().update_video_job(job_id, status="cancelled", finished_at=_now())
-    return {"id": job_id, "status": "cancelled"}
+    if remote_cancelled:
+        note = "已在服务商侧取消。"
+    elif not supports_cancel:
+        note = (
+            f"已在本地取消，但 {provider_label} 没有可用的取消接口——"
+            "服务商那边可能还在生成，费用照计。"
+        )
+    else:
+        note = (
+            f"已在本地取消；{provider_label} 侧的取消请求没能确认，"
+            "那条任务可能还在生成，费用照计。"
+        )
+    return {
+        "id": job_id,
+        "status": "cancelled",
+        "remote_cancelled": remote_cancelled,
+        "supports_cancel": supports_cancel,
+        "note": note,
+    }
 
 
 def retry_video_job(job_id: str) -> dict[str, Any]:

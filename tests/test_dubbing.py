@@ -8,13 +8,11 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from app.domain import (
-    Adaptation,
     Character,
     Location,
     Scene,
@@ -23,10 +21,9 @@ from app.domain import (
     Shot,
     Source,
 )
+from app.media.casting import assign_voices
 from app.media.dubbing import (
     DubLine,
-    assign_voices,
-    dub_video,
     mix_dubbing,
     plan_dubbing,
     synthesize_track,

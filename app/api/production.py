@@ -59,7 +59,6 @@ def start_reference_assets(project_id: str) -> dict[str, object]:
     if version is None:
         raise HTTPException(400, "还没有剧本版本，先在对话里生成初稿")
 
-    from ..agent.tasks import SubAgentRunner
     from ..domain import StyleGuide
     from ..media.refs import build_reference_assets
 
@@ -83,13 +82,12 @@ def start_reference_assets(project_id: str) -> dict[str, object]:
 def production_status(project_id: str) -> dict[str, object]:
     """最近一次生产任务的状态。
 
-    说明：SubAgentTask 不带 project_id（任务面板是全局的），这里返回的是
-    **全局最近一次**生产任务——单机单用户场景下即当前用户刚点的那次。
+    按 project_id 过滤：任务面板是全局的，但生产任务是**作品级**的——
+    不按作品过滤的话，A 作品会读到 B 作品刚跑的那次生产流水线结果
+    （此前此函数忽略 project_id，返回全局最近一次）。
     """
-    from ..agent.tasks import get_runner
-
-    runner = get_runner()
-    for t in runner.list_tasks():
+    runner = deps.subagent_runner()
+    for t in runner.list_tasks(project_id=project_id):
         if t.name.startswith("生产流水线"):
             return {"task_id": t.id, "status": t.status, "result": t.result}
     return {"task_id": None, "status": "idle", "result": None}

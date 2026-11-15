@@ -2307,6 +2307,54 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 
 ---
 
+### 5.61 审计出的四类「看着有、其实是空壳」（2026-11-15）
+
+- **症状**：
+  ① 视频拼接的「带转场」分支产出的 filter 与硬拼**一模一样**，注释承诺的
+     「全局 fade」根本没加，`crossfade_duration` 传进来也从没用过；
+  ② 取消视频任务时，MiniMax 侧的 `cancel_job` 恒返回 False，而调用方
+     只看到「已取消」——用户会以为这单不花钱了，其实远端那条可能还在跑；
+  ③ 技能加载工具会对模型说「该技能还有附属文件」，却**没有任何工具能读
+     回来**（`skill_file()` 全库零调用）；
+  ④ `GET /projects/{id}/production` 忽略 `project_id`，返回全局最近一次
+     生产任务——A 作品会读到 B 作品刚跑的结果。
+- **根因**：① 注释写的是「计划」，代码落的是「占位」——两条分支的
+  filter 字符串长得一样，测试没断言就没人发现；② 厂商能力边界没有
+  表达方式（Provider 类没有「能不能取消」这个能力位），调用方只能
+  看到布尔返回值，分不清「取消失败」和「本来就不支持」；③ 第三级披露
+  只做了加载器一半（能列附件名），没做另一半（能把附件读回来）；
+  ④ 函数的 docstring 写着一句已经过时的理由（「SubAgentTask 不带
+  project_id」），后来任务对象加了 project_id，函数却没跟着用。
+- **解法**：
+  1. **转场走真 xfade**：视频 `xfade` 链 + 音频 `acrossfade` 链，
+     offset 按各片段实测时长算；**时长探不到就退回硬拼**——宁可没有
+     转场，也不要拼出黑屏。cut 保持纯 concat（生产路径默认值不变）。
+  2. **Provider 增加 `supports_cancel` 能力位**：MiniMax 置 False
+     （.cn/.io 官方文档都没有取消端点）、Seedance 置 True（尽力而为）。
+     取消接口改为返回 `remote_cancelled` + `supports_cancel` + 一句
+     给用户看的 `note`（远端没停就明说「费用照计」），对话工具也照抄。
+  3. **`load_skill` 支持 `file` 参数**：带文件名就返回附件正文；没有
+     附件时**不提**「还有附属文件」——提了就得给读回来的路。
+  4. **`production_status` 按 project_id 过滤**：改用
+     `deps.subagent_runner()` + `list_tasks(project_id=...)`。
+- **顺带清理的死代码**（零调用，删掉不是清理而是止损）：
+  `HumanDecision` / `_interrupt_value` / `thread_is_busy` /
+  `video_registry` / `Modality` / `register_image_client` / `data_uri` /
+  `default_voice_for` / `list_available` / `FinalizeOptions` /
+  `list_chat_images` / `set_voice_enabled` / `estimate_cost`；
+  另有 6 个包的 `__init__` 整包再导出 40+ 个没人从包路径取过的名字
+  （改口径时真正要改的那一份在子模块里，包层再导出一遍反而让人不知道
+  该改哪儿）。ruff 全量 534 → 488。
+- **涉及文件**：`app/video/assemble.py`、`app/video/base.py`、
+  `app/video/providers/{minimax,seedance}.py`、`app/video/service.py`、
+  `app/chat/tools/{memory_tools,video}.py`、`app/api/production.py`、
+  `app/skills/__init__.py`、`app/llm/__init__.py`、`app/media/__init__.py`、
+  `app/video/__init__.py`、`app/chat/__init__.py`、`app/crew/__init__.py`、
+  `app/{agent/state,agent/runner,deps,llm/base,llm/image,llm/client,media/casting,media/dubbing,video/finalize,video/registry,store}.py`；
+  `tests/test_code_holes.py`（新增 12 条）、`tests/test_dubbing.py`。
+
+---
+
 ## 六、排查手册（症状 → 先查什么）
 
 | 症状 | 先查 |
@@ -2563,3 +2611,26 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   下一批做——在此之前侧栏镜头列表仍是一条条平铺；② 白模反哺、预算闸门
   等后续批次；③ 本轮零花费验证，**真实出片口径（组提示词在视频模型上的
   实际表现）未做真机验证**，留待花钱轮。
+
+### T-10 空缺全量修复 · 第二批：代码空洞与死代码（2026-11-15，完成，零花费）
+
+- **假设**：审计点名的「空壳」确实只是空壳（注释与实现不符），不是别处
+  已经补上了；删死代码不会踩到动态引用。
+- **过程**：逐个读代码确认 → 转场改 xfade 链（4 条断言锁 filter 内容）
+  → Provider 加 `supports_cancel`、取消接口改为如实回报（3 条断言）
+  → `load_skill` 接上 `file` 参数（2 条断言，含「无附件时不空许诺」）
+  → `production_status` 按作品过滤（1 条断言）→ 删 13 个零调用函数 +
+  40+ 个死再导出 + 32 处死导入 → 全量回归。
+- **发现的问题**：① ruff `--fix` 删掉 `app/media/dubbing.py` 里为旧调用点
+  保留的 `assign_voices` 再导出，直接把 `tests/test_dubbing.py` 的导入
+  打断——**兼容再导出是测试的隐式依赖面**，ruff 看不出来；
+  ② `Modality` 删掉后 `app/llm/client.py` 的 `from .base import Modality`
+  会直接 ImportError——ruff 的 F401 看不见「`__all__` 里列着就算用过」，
+  这种要靠跑测试兜住；③ 转场参数此前是「传进来但没用」，改真实现时才发现
+  还需要片段时长才能算 offset，于是多补了 `_probe_duration`。
+- **效果**：617 passed（基线 605，+12 新增 tests/test_code_holes.py）；
+  ruff 致命子集 0、全量 534 → 488（净减 46）；前端构建通过。
+- **遗留**：① 转场真实现**未在真机上跑过**（本轮零花费，没素材可拼）——
+  只验了 filter 字符串的形状，xfade 的 offset 算得对不对要真片才知道，
+  留待花钱轮；② `supports_cancel` 只覆盖 MiniMax 与 Seedance 两个厂商；
+  ③ Seedance 的 DELETE 端点仍「存在与否未实测」，标的是尽力而为。

@@ -122,6 +122,11 @@ class VideoProvider(ABC):
     pricing_per_sec: float = 0.0  # 美元/秒，0 表示未知
     supported_resolutions: list[str] = field(default_factory=lambda: ["1280x720", "1920x1080"])
     chinese_prompt_support: bool = False
+    # 服务商是否提供「取消在途任务」的接口。
+    # False 不代表本地不能收尾——本地一律能把任务置为已取消；但远端那条
+    # 可能还在跑、费用照计。调用方要如实告诉用户这一点，别让「已取消」
+    # 被当成「不花钱了」（MiniMax V2 没有取消端点，见 providers/minimax.py）。
+    supports_cancel: bool = False
 
     def __init__(self, api_key: str = "", base_url: str = "", **kwargs: Any) -> None:
         self.api_key = api_key
@@ -158,14 +163,13 @@ class VideoProvider(ABC):
 
     @abstractmethod
     async def cancel_job(self, external_task_id: str) -> bool:
-        """取消正在运行的任务。返回是否成功。"""
-        ...
+        """取消正在运行的任务。返回是否**在服务商侧**真的取消掉了。
 
-    def estimate_cost(self, duration_sec: float) -> float | None:
-        """估算生成费用。返回 None 表示无法估算。"""
-        if self.pricing_per_sec <= 0:
-            return None
-        return round(self.pricing_per_sec * duration_sec, 4)
+        返回 False 不代表本地任务还在跑——本地收尾由调用方负责（置为
+        cancelled）。False 的含义是「远端可能还在生成，费用照计」，
+        所以调用方必须把这句话透给用户。
+        """
+        ...
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} name={self.name!r} label={self.label!r}>"

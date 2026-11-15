@@ -19,7 +19,6 @@
 from __future__ import annotations
 
 import base64
-import json
 import logging
 import threading
 import time
@@ -40,7 +39,6 @@ from .tools.context import short as _short
 log = logging.getLogger(__name__)
 
 # 对话 conductor 的工具循环上限（定义在内核里，这里只做再导出）。
-from .loop import MAX_TOOL_STEPS as MAX_CHAT_TOOL_STEPS  # noqa: E402
 
 # 重建历史上下文时携带的图片上限（按时间取最近的）。多模态图片以 base64
 # 进请求体，一张图就是几千 token——超出部分的旧图降级成文字占位，防止
@@ -79,10 +77,6 @@ def release_thread(thread_id: str) -> None:
     with _active_lock:
         _active_threads.discard(thread_id)
 
-
-def thread_is_busy(thread_id: str) -> bool:
-    with _active_lock:
-        return thread_id in _active_threads
 
 # 兼容别名：工具闭包写入的收集器类型现在定义在 tools.context。
 _Collector = Collector

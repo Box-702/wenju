@@ -14,8 +14,6 @@ from .agent.tasks import SubAgentRunner, get_runner
 from .config import Settings, get_settings
 from .llm import LLM, build_llm
 from .store import Store
-from .video import ProviderRegistry
-from .video import get_registry as get_video_registry
 from .video.queue import VideoJobManager
 from .video.batch import get_batch_manager
 from .video.queue import get_manager as get_video_manager
@@ -50,11 +48,6 @@ def subagent_runner() -> SubAgentRunner:
     except Exception as e:  # noqa: BLE001
         log.warning("后台任务落库不可用（%s），任务历史将仅保留在内存", e)
     return runner
-
-
-@lru_cache
-def video_registry() -> ProviderRegistry:
-    return get_video_registry()
 
 
 @lru_cache

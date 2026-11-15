@@ -50,7 +50,10 @@ def client(store, llm, settings, monkeypatch):
     return TestClient(create_app())
 
 
-GROUP_PROMPT = "环境锚。人物锚。[Shot 1] 0-4s，排钱。[Shot 2] At 00:04.000, cuts to 掌柜打量。风格段。"
+GROUP_PROMPT = (
+    "环境锚。人物锚。[Shot 1] 0-4s，排钱。"
+    "[Shot 2] At 00:04.000, cuts to 掌柜打量。风格段。"
+)
 
 
 def _group_shots(member_status: str = "needs_review") -> list[dict]:

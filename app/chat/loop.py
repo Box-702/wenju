@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from ..llm import LLM
 

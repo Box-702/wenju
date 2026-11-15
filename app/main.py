@@ -180,8 +180,7 @@ async def _lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    settings = get_settings()
-    # LangSmith 监控变量已由模块级 bootstrap_env() 注入；这里只取 settings。
+    # LangSmith 监控变量已由模块级 bootstrap_env() 注入。
     _wire_video_job_writeback()
     _wire_video_qa()
     _wire_video_batch()

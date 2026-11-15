@@ -13,37 +13,7 @@
 # （不提交视频任务），而是两者之间的视觉锚注册环节。
 # =====================================================================
 
-from .assets import (
-    build_index,
-    lookup,
-    normalize_style,
-    rekey,
-)
-from .refs import (
-    MAX_REFERENCE_IMAGES,
-    apply_reference_images,
-    build_reference_assets,
-    character_prompt,
-    environment_prompt,
-)
-from .casting import CastMember, Casting, assign_voices, cast_script
-from .dubbing import DubbingPlan, dub_video, plan_dubbing
-
-__all__ = [
-    "MAX_REFERENCE_IMAGES",
-    "CastMember",
-    "Casting",
-    "DubbingPlan",
-    "apply_reference_images",
-    "assign_voices",
-    "build_index",
-    "build_reference_assets",
-    "cast_script",
-    "character_prompt",
-    "dub_video",
-    "environment_prompt",
-    "lookup",
-    "normalize_style",
-    "plan_dubbing",
-    "rekey",
-]
+# 子模块一律从具体文件直接 import（from .assets import build_index）——
+# 本包不再整包再导出：整包再导出会让「该写哪个 import」变成一道题，
+# 而真正要改口径的地方永远是子模块里的那一份。
+__all__: list[str] = []

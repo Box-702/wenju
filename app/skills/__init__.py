@@ -13,9 +13,6 @@ from __future__ import annotations
 
 from .loader import (
     SKILLS_DIR,
-    Skill,
-    SkillMeta,
-    SkillNotFound,
     clear_cache,
     list_skills,
     load_skill,
@@ -29,9 +26,6 @@ from .loader import (
 __all__ = [
     "SKILLS_DIR",
     "parse_skill_text",
-    "Skill",
-    "SkillMeta",
-    "SkillNotFound",
     "clear_cache",
     "list_skills",
     "load_skill",

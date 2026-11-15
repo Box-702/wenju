@@ -13,26 +13,10 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
-from pydantic import BaseModel
-
-
-class HumanDecision(BaseModel):
-    """用户在 review 中断处做出的结构化决策。
-
-    - accept     接受（可只接受部分 patch，见 patch_indexes）；
-    - edit       接受前先人工修改（decision.patch 为修改后的操作清单）；
-    - regenerate 带反馈重新生成（feedback 会并入指令，回到 propose 重做）；
-    - reject     拒绝，结束本次运行。
-    """
-
-    action: Literal["accept", "reject", "edit", "regenerate"] = "accept"
-    patch_indexes: list[int] | None = None
-    patch: list[dict[str, Any]] | None = None
-    feedback: str | None = None
 
 
 class AgentState(TypedDict, total=False):

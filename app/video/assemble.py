@@ -17,6 +17,29 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+# xfade 支持的转场名（ffmpeg 4.3+）。产品只暴露 cut / fade / dissolve 三种，
+# 这里列全是为了让「不认识的名字」有确定的降级去处（→ fade）而不是报错。
+_XFADE_TRANSITIONS = {
+    "fade", "fadeblack", "fadewhite", "fadegrays", "dissolve", "pixelize",
+    "radial", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft",
+    "slideright", "slideup", "slidedown", "circlecrop", "rectcrop", "distance",
+    "diagtl", "diagtr", "diagbl", "diagbr", "hlslice", "hrslice", "vuslice",
+    "vdslice", "hblur", "zoomin",
+}
+
+
+def _probe_duration(path: str) -> float:
+    """探一个视频片段的时长（秒）。探不到返回 0。
+
+    xfade 要靠 offset 决定转场发生在第几秒，没有时长就没法算——所以
+    「探不到」必须显式返回 0，让调用方退回硬拼，而不是拿 0 当真值拼出黑屏。
+    """
+    try:
+        info = get_video_info(path)
+        return float(info.get("duration") or 0.0)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
 
 def find_ffmpeg() -> str | None:
     """查找 FFmpeg：PATH 优先；都没有时用 imageio-ffmpeg 自带的二进制兜底，
@@ -178,8 +201,9 @@ def _filter_complex(
             cmd.extend(["-i", vp])
 
         n = len(video_paths)
+        mode = (transition or "cut").strip().lower()
 
-        if transition == "cut" or n <= 1:
+        if mode == "cut" or n <= 1:
             # 简单拼接
             filter_parts = []
             for i in range(n):
@@ -190,17 +214,45 @@ def _filter_complex(
                 "-map", "[outv]", "-map", "[outa]",
             ])
         else:
-            # 带转场的拼接
-            # 简化处理：两两拼接
-            # 对于多片段，先用 concat 拼接，再加全局 fade
-            filter_parts = []
-            for i in range(n):
-                filter_parts.append(f"[{i}:v:0][{i}:a:0]")
-            filter_str = "".join(filter_parts) + f"concat=n={n}:v=1:a=1[outv][outa]"
-            cmd.extend([
-                "-filter_complex", filter_str,
-                "-map", "[outv]", "-map", "[outa]",
-            ])
+            # 真转场：视频走 xfade 链、音频走 acrossfade 链。
+            #
+            # 此前的「带转场」分支产出的 filter 与 cut 分支**一模一样**
+            # （都是纯 concat），注释承诺的「全局 fade」根本没加；
+            # crossfade_duration 传进来也从没被用过——转场是个空壳。
+            # xfade 要求知道每个片段的时长才能算 offset（转场发生在第几秒），
+            # 探不到时长就退回硬拼——宁可没有转场，也不要拼出黑屏。
+            durations = [_probe_duration(vp) for vp in video_paths]
+            if not durations or any(d <= 0 for d in durations):
+                log.warning("转场拼接：片段时长探不到，退回硬拼（无转场）")
+                filter_parts = []
+                for i in range(n):
+                    filter_parts.append(f"[{i}:v:0][{i}:a:0]")
+                filter_str = "".join(filter_parts) + f"concat=n={n}:v=1:a=1[outv][outa]"
+                cmd.extend([
+                    "-filter_complex", filter_str,
+                    "-map", "[outv]", "-map", "[outa]",
+                ])
+            else:
+                dur = max(0.05, float(crossfade_duration or 0.5))
+                xname = mode if mode in _XFADE_TRANSITIONS else "fade"
+                vfilters: list[str] = []
+                afilters: list[str] = []
+                prev_v, prev_a = "0:v", "0:a"
+                elapsed = durations[0]
+                for i in range(1, n):
+                    offset = max(0.0, elapsed - dur)
+                    out_v, out_a = f"vx{i}", f"ax{i}"
+                    vfilters.append(
+                        f"[{prev_v}][{i}:v]xfade=transition={xname}"
+                        f":duration={dur:.3f}:offset={offset:.3f}[{out_v}]")
+                    afilters.append(
+                        f"[{prev_a}][{i}:a]acrossfade=d={dur:.3f}:c1=tri:c2=tri[{out_a}]")
+                    prev_v, prev_a = out_v, out_a
+                    elapsed = offset + durations[i]
+                cmd.extend([
+                    "-filter_complex", ";".join(vfilters + afilters),
+                    "-map", f"[{prev_v}]", "-map", f"[{prev_a}]",
+                ])
 
         cmd.extend([
             "-c:v", "libx264",

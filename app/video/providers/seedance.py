@@ -87,6 +87,9 @@ class SeedanceProvider(VideoProvider):
     pricing_per_sec = 0.99  # 720p 标准档粗算口径，仅展示；实算走 estimate_cost_real
     supported_resolutions = ["480p", "720p", "1080p"]
     chinese_prompt_support = True
+    # 方舟有 DELETE 任务端点（cancel_job 里在调）；端点存在与否未实测，
+    # 失败只当没取消——所以这里标的是「尽力而为」，不是「保证能取消」。
+    supports_cancel = True
 
     def __init__(self, api_key: str = "", base_url: str = "", **kwargs: Any) -> None:
         # key 只从调用方注入（DB api_providers 行，D-48：env 不再是配置入口）。

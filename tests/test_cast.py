@@ -28,8 +28,7 @@ from app.media.casting import (
     infer_gender,
 )
 from app.media.library import apply_library_patch, build_library
-from app.video.rhythm import default_pacing, rhythm_table, suggest_duration
-from app.pipeline.visual_styles import get_visual_style
+from app.video.rhythm import rhythm_table, suggest_duration
 
 
 def _script(characters: list[dict], *, dialogue: dict[str, int] | None = None) -> Script:

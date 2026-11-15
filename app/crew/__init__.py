@@ -10,15 +10,6 @@
 # 成片拼接由 app/video/assemble.py（FFmpeg）负责，不属于 Agent。
 # =====================================================================
 
-from .art_director import run_art_director
-from .base import CrewAgent, CrewTaskResult
-from .director import run_director
-from .dp import run_dp
-
-__all__ = [
-    "CrewAgent",
-    "CrewTaskResult",
-    "run_director",
-    "run_dp",
-    "run_art_director",
-]
+# 三个剧组角色的入口一律从具体文件直接 import
+# （from .director import run_director）——本包不再整包再导出。
+__all__: list[str] = []

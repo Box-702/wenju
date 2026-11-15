@@ -28,7 +28,6 @@ from app.domain import (
     Source,
     StyleGuide,
 )
-from app.crew.dramaturgy import strip_spoken_quotes
 from app.video.continuity import resolve_continuity, resolve_submission_references
 
 # ---------- 测试夹具 ----------
@@ -195,7 +194,7 @@ def test_language_for_follows_provider_dialect():
 
 def test_auto_group_packs_scene_solo_shots():
     """导演不标组时的确定性兜底：同场相邻孤立单镜自动成组（默认值翻转 2026-11-13）。"""
-    from app.crew.director import GROUP_MAX_SEC, auto_group_scene
+    from app.crew.director import auto_group_scene
 
     def _shot(i, dur=4.0, gid=""):
         return Shot(id=f"shot_scene_001_{i:03d}", scene_id="scene_001", order=i,
@@ -1105,7 +1104,6 @@ def _capture_bodies(monkeypatch, mm):
 def test_h3档位收敛分辨率与时长(monkeypatch):
     """Highspeed 没有 2K、Max 不支持 4s——create_job 必须按档位收敛，
     而不是只对照全类 supported_resolutions。"""
-    from app.video import providers
     from app.video.base import VideoJobParams
     from app.video.providers import minimax as mm
 

@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import os
 
 import pytest
 
@@ -40,7 +39,6 @@ def test_bootstrap_calls_load_dotenv(clean_env, monkeypatch):
 
     这条不依赖本机 .env 是否存在——CI 上没有 .env 也要绿。
     """
-    import app.config as cfg
 
     calls: list[object] = []
 

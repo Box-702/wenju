@@ -22,7 +22,6 @@ import shutil
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -36,14 +35,6 @@ log = logging.getLogger(__name__)
 
 # 下载/合成的单镜超时与轮询已由 provider 侧保证，这里只约束下载。
 _DOWNLOAD_TIMEOUT = 300
-
-
-@dataclass
-class FinalizeOptions:
-    """成片合成选项（用户可选项都收在这里）。"""
-
-    subtitles: bool = True   # 台词字幕烧录
-    audio_mode: str = "native"  # native 原生音画同生（默认）/ dub TTS 配音 / silent 静片
 
 
 def _emit(rec: dict[str, Any], msg: str) -> None:

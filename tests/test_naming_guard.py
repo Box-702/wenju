@@ -1,7 +1,6 @@
 """名层护栏的回归测试：deepseek 把显示名写成拼音 slug（2026-11-10 完整跑实测）。"""
 from __future__ import annotations
 
-import pytest
 
 import app.pipeline.generation as gen
 from app.pipeline.generation import Bible, ScenePlan, _bible_naming_issue

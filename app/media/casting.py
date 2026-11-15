@@ -99,11 +99,6 @@ def gender_of_voice(voice_id: str) -> str:
     return "unknown"
 
 
-def default_voice_for(gender: str) -> str:
-    """该性别的默认音色；性别不明按男声。"""
-    return VOICE_FEMALE_MATURE if gender == "female" else VOICE_MALE_MATURE
-
-
 # ---- 性别推断 ----------------------------------------------------------
 
 # 强线索：出现在**名字**里基本可以定性（只查名字，不查描述——描述里

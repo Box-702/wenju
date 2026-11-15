@@ -70,20 +70,32 @@ def build(ctx: ToolContext) -> list:
         return f"没有找到记忆 {mid}——先用 recall 确认可见的 id（已删的或不属于当前范围的去不掉）。"
 
     @tool
-    def load_skill(name: str) -> str:
-        """加载某个工作流的完整执行细则（步骤顺序、硬门槛、失败怎么处理）。只能加载系统提示「可用技能」里列出的名字；进入该领域做事之前先调用一次，同一轮里不必重复。参数：name=技能名。"""
+    def load_skill(name: str, file: str = "") -> str:
+        """加载某个工作流的执行细则（步骤顺序、硬门槛、失败处理）。只能加载系统提示「可用技能」里列出的名字；动手前先调一次，同一轮不重复。参数：name=技能名；file=附属文件名（可选，留空只要正文）。"""
         from ...skills import load_skill as _load_skill_body
+        from ...skills import skill_file as _read_skill_file
 
         key = (name or "").strip()
         allowed = main_skill_names()
         if key not in allowed:
             # 不抛异常：工具报错会污染这一轮的消息流，返回可读提示让模型自己改口。
             return f"没有这个技能：{key or '（空）'}。可加载：{'、'.join(sorted(allowed)) or '无'}。"
+        want_file = (file or "").strip()
+        if want_file:
+            # 附属文件（第三级披露）：正文里提到「还有附件 X」时，用它把附件读回来。
+            try:
+                return _read_skill_file(key, want_file)
+            except Exception as e:  # noqa: BLE001
+                return f"技能 {key} 的附属文件 {want_file} 读取失败：{e}"
         try:
             skill = _load_skill_body(key)
         except Exception as e:  # noqa: BLE001
             return f"技能 {key} 读取失败：{e}"
-        extra = f"\n\n（该技能还有附属文件：{'、'.join(skill.files)}）" if skill.files else ""
+        extra = (
+            f"\n\n（该技能还有附属文件：{'、'.join(skill.files)}；"
+            "要读某个附件就再调一次 load_skill 并带上 file 参数）"
+            if skill.files else ""
+        )
         return skill.body + extra
 
     return [load_skill, remember, recall, forget]

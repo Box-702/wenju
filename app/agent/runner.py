@@ -28,14 +28,6 @@ def _select_ops(patch: list[dict[str, Any]], indexes: list[int] | None) -> list[
     return [ops[i] for i in indexes if 0 <= i < len(ops)]
 
 
-def _interrupt_value(result: dict[str, Any]) -> dict[str, Any] | None:
-    """从 invoke 返回中提取 interrupt 载荷。"""
-    interrupts = result.get("__interrupt__")
-    if interrupts:
-        return interrupts[0].value
-    return None
-
-
 def start_agent_run(
     store: Store,
     llm: LLM,

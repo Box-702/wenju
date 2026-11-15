@@ -88,6 +88,10 @@ class MiniMaxProvider(VideoProvider):
     pricing_per_sec = 0.045  # 粗略估算值，仅用于费用预估展示
     supported_resolutions = ["480P", "768P", "2K"]
     chinese_prompt_support = True
+    # MiniMax V2 官方文档（.cn 与 .io 两份）都没有取消任务的端点：
+    # 只有「创建任务」与「查询任务」两个接口。所以远端取消不了——
+    # 本地能把这条任务置为已取消，但服务端那条可能还在生成、费用照计。
+    supports_cancel = False
 
     # H3 系列档位表（官方定价页 2026-11-12 截图逐格核对）。要点：
     # - 秒价**按分辨率分档**（H3: 2K ¥0.80 / 768P ¥0.50；Highspeed: 768P ¥0.40 /
@@ -458,5 +462,11 @@ class MiniMaxProvider(VideoProvider):
         )
 
     async def cancel_job(self, external_task_id: str) -> bool:
-        log.info("MiniMax V2 取消任务 %s：需要 DELETE 接口，暂未接入", external_task_id)
+        # MiniMax V2 没有取消端点（见类属性 supports_cancel 的说明）。
+        # 这里如实返回 False：调用方据此告诉用户「本地已取消，但远端可能
+        # 还在跑、费用照计」——不能假装取消成功了。
+        log.info(
+            "MiniMax V2 无取消端点，任务 %s 只能在本地标记取消（远端可能仍在生成）",
+            external_task_id,
+        )
         return False

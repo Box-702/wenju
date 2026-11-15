@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import base64
 import logging
 from abc import ABC, abstractmethod
 from typing import Any
@@ -139,11 +138,6 @@ _CLIENTS: dict[str, type[ImageClient]] = {
 }
 
 
-def register_image_client(name: str, cls: type[ImageClient]) -> None:
-    """注册自定义文生图客户端（扩展点）。"""
-    _CLIENTS[name.strip().lower()] = cls
-
-
 def build_image_client(config: ModelConfig | None) -> ImageClient | None:
     """按 ModelConfig.provider 选择客户端；未配置则返回 None。"""
     if config is None or not config.api_key:
@@ -155,6 +149,3 @@ def build_image_client(config: ModelConfig | None) -> ImageClient | None:
     return cls(config)
 
 
-def data_uri(raw: bytes, mime: str = "image/png") -> str:
-    """把二进制图片转成 data URI（服务端拉不到临时 URL 时的稳妥方案）。"""
-    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"

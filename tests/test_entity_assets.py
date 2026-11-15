@@ -23,7 +23,6 @@ from app.media.assets import (
     normalize_style,
     rekey,
 )
-from app.media.casting import cast_script
 from app.media.library import apply_library_patch, build_library
 
 

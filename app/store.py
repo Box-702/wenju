@@ -1167,15 +1167,6 @@ class Store:
         with self.session() as s:
             return s.get(ChatImage, image_id)
 
-    def list_chat_images(self, thread_id: str) -> list[ChatImage]:
-        with self.session() as s:
-            return (
-                s.query(ChatImage)
-                .filter_by(thread_id=thread_id)
-                .order_by(ChatImage.created_at.asc())
-                .all()
-            )
-
     # ---- Conversation（项目下的对话线程）----
 
     # ---- Media assets ----
@@ -1563,17 +1554,6 @@ class Store:
             {"voice_id": v.voice_id, "name": v.name, "gender": v.gender}
             for v in self.list_voice_pool(enabled_only=True)
         ]
-
-    def set_voice_enabled(self, voice_id: str, enabled: bool) -> VoicePool | None:
-        """勾选/取消勾选一个音色。池里没有这个 voice_id 时不新建（发现才有行）。"""
-        with self.session() as s:
-            row = s.get(VoicePool, str(voice_id or "").strip())
-            if row is None:
-                return None
-            row.enabled = bool(enabled)
-            s.commit()
-            s.refresh(row)
-            return row
 
     def set_voice_pool_enabled(self, voice_ids: list[str]) -> int:
         """整批设为启用集：列表里的 enabled=True，其余系统音色全部 False。

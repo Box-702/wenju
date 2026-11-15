@@ -17,7 +17,6 @@ from app.crew.dramaturgy import (
     find_camera_moves,
     find_negations,
     find_slop_words,
-    find_spoken_quotes,
     refresh_prompt_audits,
     strip_camera_moves,
     strip_slop,

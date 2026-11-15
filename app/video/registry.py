@@ -79,32 +79,6 @@ class ProviderRegistry:
         """
         self._instances.clear()
 
-    def list_available(self) -> list[dict[str, Any]]:
-        """列出所有已注册的 Provider 信息（不含 API Key）。"""
-        result: list[dict[str, Any]] = []
-        seen: set[str] = set()
-
-        # 已实例化的
-        for name, inst in self._instances.items():
-            result.append(self._describe(inst))
-            seen.add(name)
-
-        # 仅有类注册的
-        for name, cls in self._classes.items():
-            if name not in seen:
-                result.append({
-                    "name": cls.name,
-                    "label": cls.label,
-                    "configured": False,
-                    "supports_text_to_video": cls.supports_text_to_video,
-                    "supports_image_to_video": cls.supports_image_to_video,
-                    "max_duration_sec": cls.max_duration_sec,
-                    "pricing_per_sec": cls.pricing_per_sec,
-                    "supported_resolutions": cls.supported_resolutions,
-                    "chinese_prompt_support": cls.chinese_prompt_support,
-                })
-        return result
-
     @staticmethod
     def _describe(provider: VideoProvider) -> dict[str, Any]:
         return {

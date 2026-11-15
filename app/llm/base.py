@@ -13,16 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any
-
-
-class Modality(StrEnum):
-    """模型能力维度。"""
-
-    CHAT = "chat"  # 文本对话 / 工具调用 / 结构化输出
-    VISION = "vision"  # 多模态理解（看图回答，用于定妆图质检）
-    IMAGE = "image"  # 文生图（参考资产）
 
 
 @dataclass

@@ -23,7 +23,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel
 
 from ..config import Settings
-from .base import Modality, ModelConfig
+from .base import ModelConfig
 from .image import ImageClient, build_image_client
 from .providers import build_chat_model, get_provider_spec
 from .registry import describe_providers, resolve_chat, resolve_image, resolve_vision
@@ -287,4 +287,4 @@ def build_llm(settings: Settings | None = None, store: Any = None, *, temperatur
 
 
 # 供上层按能力维度做校验/展示。
-__all__ = ["LLM", "Modality", "ModelConfig", "build_llm", "get_provider_spec"]
+__all__ = ["LLM", "ModelConfig", "build_llm", "get_provider_spec"]

@@ -2271,6 +2271,42 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 
 ---
 
+### 5.60 镜头组提交必 409：用户批的是 A，系统发的是 B（2026-11-15）
+
+- **症状**：作品里有镜头组（同场连续默认成组，D-49）时，「指定镜头出片」
+  与镜头卡上的「生成视频」按钮**必然 409**，报「提交内容与该镜头已批准的
+  Prompt 不一致」。整片批次却正常——所以现象是「批量能出、单挑不能」。
+- **根因**：同一段戏有两个提示词字段，而**发出去的**和**校验的**取的不是同一个。
+  组头同时持有 `video_prompt`（它自己那一机位的单镜版）与 `group_prompt`
+  （DP 折叠后的整段提示词，也就是真正提交给视频模型的那条）。
+  - 工具层 `app/chat/tools/video.py` 传的是 `video_prompt`；
+  - 服务端等值校验 `app/video/service.py` 比的是 `group_prompt`；
+  - 前端展示与编辑的也是 `video_prompt`。
+  于是「用户批准的文本」与「系统发出去的文本」永远是两条。组员更糟：
+  `group_prompt` 只写在组头上，组员取到空串 → 409「该镜头还没有 Prompt」。
+- **解法**：把「这一镜到底提交哪条提示词」收成一个口径
+  （`app/video/service.py:unit_prompt`：有 `group_prompt` 就用它，否则用
+  `video_prompt`），四处全部改走它——
+  1. 服务端等值校验改用 `unit_prompt`；
+  2. 对话工具不再逐镜拼 prompt，改按**生成单元**（`generation_units`）
+     提交：投组头、发组提示词、一段戏只建一个任务（逐机位投 = N 倍计费）；
+  3. 编辑器保存端点按组头/单镜自动选字段（`prompt_field`），写错字段
+     同样会 409；
+  4. 前端展示与编辑改走 `shownPrompt`（`frontend/src/stores/app.js`），
+     提交改走 `submitPromptOf`，组内机位统一投组头。
+  另把 `unit_approved` 收紧到 docstring 早就写着的口径：**组内有机位被标
+  「需修改」就不投整段**（批了半段戏就发出去等于替用户做主）——此前代码
+  只看组头，与自己的注释矛盾。
+- **顺带**：`generation_units` / `unit_approved` 从私有名改为公开
+  （此前 `app/video/finalize.py` 已跨模块 import 私有名，是坏味道）。
+- **涉及文件**：`app/video/service.py`、`app/chat/tools/video.py`、
+  `app/api/video.py`、`app/video/finalize.py`、
+  `frontend/src/stores/app.js`、`frontend/src/components/video/ShotList.vue`、
+  `frontend/src/components/video/PromptEditor.vue`；
+  `tests/test_video_submit_group.py`（新增 9 条）、`tests/test_video_idempotency.py`。
+
+---
+
 ## 六、排查手册（症状 → 先查什么）
 
 | 症状 | 先查 |
@@ -2505,3 +2541,25 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **效果**：白模能力进产品对话；工具 27→31，主技能 9→10；测试 582→596。
 - **遗留**：① 白模 mp4 → 参考素材挂接走现有 UI 挑选器（对话侧挂接未做）；
   ② E2E 产物在 `~/.wenju/runs/blockout_e2e/`（验证完即删）；③ ruff 全量债务未清。
+
+### T-09 空缺全量修复 · 第一批：镜头组提交口径（2026-11-15，完成，零花费）
+
+- **假设**：审计发现的 409 是「提交单位口径不一致」而不是「闸门太严」；
+  把它统一到生成单元后，组头提交、编辑保存、单镜提交三条路都该通。
+- **过程**：读代码定位到四处取不同的提示词字段 → 后端加 `unit_prompt`
+  单一口径 → 工具层改走 `generation_units` → 编辑端点按组头选字段 →
+  前端加 `shownPrompt` / `submitPromptOf` / `isSubmittable` 三个口径函数 →
+  新增 9 条用例（组头放行 / 单镜提示词仍被挡 / 组内需修改不投 / 工具按组
+  只建一个任务 / 未批准仍拒发 / 编辑写回字段）→ 全量回归 → 前端构建。
+- **发现的问题**：① 「统一口径」不能只改服务端——前端展示与编辑的是单镜
+  提示词，光改后端只是把 409 换成「用户批 A、发 B」的静默错配，所以前端
+  必须同步改；② `unit_approved` 的 docstring 与实现矛盾（写着「组内任何
+  机位没批都不投」，代码只看组头），一并收紧；③ 首版把工具层的批准前置
+  删掉了，整片路径因此直接打到 `deps.store()`，老用例
+  `test_submit_videos_requires_approval` 变红——**前置校验要留在批次之前**。
+- **效果**：605 passed（基线 596，+9）；ruff 致命子集 0、全量 534（零新增）；
+  前端构建通过。
+- **遗留**：① 组折叠 UI（组头一条、组员折叠）属 PLAN-shot-group S4，
+  下一批做——在此之前侧栏镜头列表仍是一条条平铺；② 白模反哺、预算闸门
+  等后续批次；③ 本轮零花费验证，**真实出片口径（组提示词在视频模型上的
+  实际表现）未做真机验证**，留待花钱轮。

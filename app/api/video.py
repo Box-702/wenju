@@ -538,7 +538,12 @@ def review_video_prompt(
     if target is None:
         raise HTTPException(404, "镜头不存在")
 
-    target["video_prompt"] = payload.prompt.strip()
+    # 组头的可提交提示词是折叠后的组提示词（与提交闸门同一口径，
+    # app/video/service.py:unit_prompt）。前端展示/编辑的就是这一条，
+    # 保存也必须写回同一个字段——写错字段的话，用户改的是 A、系统提交
+    # 的是 B，等值校验会直接 409。
+    prompt_field = "group_prompt" if target.get("group_prompt") else "video_prompt"
+    target[prompt_field] = payload.prompt.strip()
     target["prompt_status"] = (
         "approved" if payload.decision == "approve" else
         "needs_revision" if payload.decision == "needs_revision" else
@@ -573,6 +578,7 @@ def review_video_prompt(
     return {
         "version_id": version.id,
         "shot_id": shot_id,
+        "prompt_field": prompt_field,
         "prompt_status": target["prompt_status"],
         "approved_count": approved,
         "needs_review_count": needs_review,

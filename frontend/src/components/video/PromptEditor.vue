@@ -153,7 +153,9 @@ const refAssetIds = ref([])
 const pickerOpen = ref(false)
 
 watch(() => props.shot, (s) => {
-  editedPrompt.value = s?.video_prompt || ''
+  // 组头的可提交提示词是折叠后的组提示词——那才是最终发出去的那条，
+  // 编辑器要编辑的就是它（与后端 unit_prompt / 前端 shownPrompt 同口径）。
+  editedPrompt.value = s?.group_prompt || s?.video_prompt || ''
   note.value = s?.prompt_review_note || ''
   refAssetIds.value = [...(s?.reference_asset_ids || [])]
 }, { immediate: true })
@@ -198,7 +200,9 @@ const auditItems = computed(() => {
 function review(decision) {
   emit('review', {
     ...props.shot,
-    video_prompt: editedPrompt.value.trim(),
+    // 单独用一个 key 传编辑后的原文：组头的 group_prompt 与单镜的 video_prompt
+    // 是两个字段，不能用 video_prompt 覆盖（会写错字段，提交时 409）。
+    prompt: editedPrompt.value.trim(),
     prompt_review_note: note.value.trim(),
     reference_asset_ids: [...refAssetIds.value],
     decision,

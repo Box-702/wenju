@@ -69,50 +69,64 @@ def build(ctx: ToolContext) -> list:
         if v is None or not v.shots:
             return "还没有镜头方案：请先「拆解镜头」「撰写镜头提示词」并批准。"
         wanted = {s.strip() for s in shot_ids.split(",") if s.strip()}
-        approved = [
-            s["id"] for s in v.shots
-            if isinstance(s, dict) and s.get("id") and s.get("video_prompt")
-            and s.get("prompt_status") == "approved" and (not wanted or s["id"] in wanted)
-        ]
-        if not approved:
-            return "没有可提交的镜头：提示词需要先经过人工批准。可以说「批准全部提示词」，或先看看镜头清单。"
-        from ...video.service import VideoJobCreate, generate_batch, submit_video_job
+        from ...video.service import (
+            BatchCreateRequest,
+            VideoJobCreate,
+            generate_batch,
+            generation_units,
+            submit_video_job,
+            unit_approved,
+        )
 
+        # 提交单位 = 生成单元（镜头组折叠后的一条视频；单镜自成一条）。
+        units = generation_units(v.shots)
+        ready = [u for u in units if u["prompt"] and unit_approved(v.shots, u)]
+        not_approved = ("没有可提交的镜头：提示词需要先经过人工批准。"
+                        "可以说「批准全部提示词」，或先看看镜头清单。")
         try:
             if wanted:
-                # 指定镜头：逐镜直接提交（接力链主要服务整片连拍，这里不强求）。
+                # 指定镜头：按**生成单元**提交——镜头组是一条视频里的几个切镜，
+                # 逐机位提交会把一段戏生成 N 遍（N 倍计费），而且组头提交的是
+                # 折叠后的组提示词（unit_prompt），不是某一机位的单镜提示词。
+                targets = [u for u in units if set(u["member_ids"]) & wanted]
+                if not targets:
+                    return (f"没有找到要出片的镜头（{'、'.join(sorted(wanted))}）。"
+                            "可以先查镜头清单确认 id。")
+                ready_ids = {u["shot_id"] for u in ready}
+                submit_units = [u for u in targets if u["shot_id"] in ready_ids]
+                if not submit_units:
+                    return not_approved
                 created = 0
                 reused = 0
-                for sid in approved:
-                    shot = next(s for s in v.shots if isinstance(s, dict) and s.get("id") == sid)
+                for u in submit_units:
                     _job, is_new = submit_video_job(p.id, VideoJobCreate(
-                        shot_id=sid, provider="minimax", model="default",
-                        prompt=shot.get("video_prompt") or "", version_id=v.id,
+                        shot_id=u["shot_id"], provider="minimax", model="default",
+                        prompt=u["prompt"], version_id=v.id,
                     ))
                     created += 1 if is_new else 0
                     reused += 0 if is_new else 1
-                # 幂等：已在跑的镜头不会重复提交（那会重复计费），
-                # 所以要如实说「几个新建、几个本来就在跑」。
-                if reused and not created:
-                    return (f"这 {reused} 个镜头已经在生成了（没有重复提交，不会重复计费），"
-                            "稍后可问我进度。")
+                blocked = len(targets) - len(submit_units)
+                parts: list[str] = []
+                if created:
+                    parts.append(f"已提交 {created} 个镜头的视频生成")
                 if reused:
-                    return (f"已提交 {created} 个镜头的视频生成，另有 {reused} 个本来就在跑"
-                            "（没有重复提交）。稍后可问我进度。")
-                return f"已提交 {created} 个指定镜头的视频生成，稍后可问我进度。"
+                    parts.append(f"另有 {reused} 个本来就在跑（没有重复提交，不会重复计费）")
+                if blocked:
+                    parts.append(f"{blocked} 个因提示词未批准或组内有机位待修改而跳过")
+                return "；".join(parts) + "。稍后可问我进度。"
+            if not ready:
+                return not_approved
             # 整片：走批次（串行推进，前一镜成片自动作为后一镜接力参考）。
-            from ...video.service import BatchCreateRequest
-
             batch = generate_batch(p.id, BatchCreateRequest(version_id=v.id))
         except Exception as e:  # noqa: BLE001  FastAPI HTTPException 也走这里，转成用户可读文本
             detail = getattr(e, "detail", None) or str(e)
             return f"提交视频生成失败：{detail}"
         if batch.get("status") == "failed":
-            return f"批次启动失败：{batch.get('error') or '未知原因'}"
+            return f"批次启动失败：{batch.get('error') or '未知错误'}"
         ctx.collector["payloads"].append({
             "type": "batch_started", "batch_id": batch.get("id"), "project_id": p.id,
         })
-        total = batch.get("total") or len(approved)
+        total = batch.get("total") or 0
         return f"已开始出片：共 {total} 个镜头会按顺序生成，前一镜完成后自动作为后一镜的参考以保持连贯。可以随时问我「出片进度」。"
 
     @tool

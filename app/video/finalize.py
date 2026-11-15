@@ -181,9 +181,9 @@ def finalize_film(
         # ---- 镜头组展开（S2b，PLAN-shot-group）----
         # 生成单元=一次提交：组任务挂在组头 shot_id 上，一条 clip 覆盖全组；
         # 成员镜头不各自找任务（永远找不到，也不该重复下载）。
-        from .service import _generation_units
+        from .service import generation_units
 
-        unit_by_head = {u["shot_id"]: u for u in _generation_units(shot_dicts)}
+        unit_by_head = {u["shot_id"]: u for u in generation_units(shot_dicts)}
         ready = 0
         # 每个 clip 覆盖几个成员镜头（校准循环按它把 shots 切段配对 clips）
         unit_member_counts: list[int] = []

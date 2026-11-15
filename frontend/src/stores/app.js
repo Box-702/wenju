@@ -132,6 +132,48 @@ export function clearHint() {
 }
 
 // ---------------------------------------------------------------------
+// 镜头组的提示词口径（与后端 app/video/service.py:unit_prompt 同一口径）
+//
+// 镜头组 = 一次生成 = 一条视频里的几个切镜。组头持有折叠后的「组提示词」，
+// 那才是最终提交给视频模型的原文；组头的 video_prompt 只是它自己那一机位的
+// 单镜版本，不会被提交。
+//
+// 曾经前端展示/编辑的是单镜提示词、后端提交的是组提示词——用户改的是 A、
+// 系统发的是 B，等值校验直接 409。两边必须走同一个口径。
+// ---------------------------------------------------------------------
+
+/** 这一镜展示给人看的提示词：组头显示折叠后的组提示词，其余显示自己的。 */
+export function shownPrompt(shot) {
+  if (!shot) return ''
+  return shot.group_prompt || shot.video_prompt || ''
+}
+
+/** 这一镜所属镜头组的组头（组提示词挂在组头上，提交也是投组头）。 */
+export function groupHeadOf(shot) {
+  if (!shot) return null
+  if (shot.group_prompt) return shot
+  if (!shot.group_id) return null
+  const members = (store.shots || []).filter(s =>
+    s.group_id === shot.group_id && s.scene_id === shot.scene_id)
+  if (members.length < 2) return null
+  return members.find(s => s.group_prompt) || members[0] || null
+}
+
+/** 提交这一镜时真正会发出去的提示词：组内机位按组头算（投的是整段）。 */
+export function submitPromptOf(shot) {
+  if (!shot) return ''
+  if (shot.group_prompt) return shot.group_prompt
+  const head = groupHeadOf(shot)
+  return (head && head.group_prompt) || shot.video_prompt || ''
+}
+
+/** 这一镜能不能出片：组内机位按组头的批准状态算。 */
+export function isSubmittable(shot) {
+  const target = groupHeadOf(shot) || shot
+  return Boolean(target && target.prompt_status === 'approved' && submitPromptOf(target))
+}
+
+// ---------------------------------------------------------------------
 // 导航时序守卫：快速切换项目/对话时，慢响应不得覆盖新选中的数据。
 // 每次导航（选项目/选对话）取一个自增 token，await 返回后 token 已过期
 // 就直接丢弃本次结果。
@@ -1009,10 +1051,15 @@ export async function loadOverview() {
 
 /** 提交视频生成任务。 */
 export async function submitVideoJob(shot) {
-  if (!store.pid || !shot?.video_prompt) return
-  if (shot.prompt_status !== 'approved') {
+  if (!store.pid || !shot) return
+  // 镜头组的机位不能单独出片——组是一条视频里的几个切镜，逐机位提交会把
+  // 一段戏生成 N 遍（N 倍计费）。统一投组头。
+  const target = groupHeadOf(shot) || shot
+  const prompt = submitPromptOf(target)
+  if (!prompt) return
+  if (target.prompt_status !== 'approved') {
     notify('请先编辑并批准这个镜头的 Prompt', 'info')
-    openPromptEditor(shot)
+    openPromptEditor(target)
     return
   }
   // 视频生成固定走 MiniMax；模型名取设置里配置的，缺省 H3
@@ -1030,14 +1077,14 @@ export async function submitVideoJob(shot) {
 
   try {
     const job = await api(`/projects/${store.pid}/video/generate`, 'POST', {
-      shot_id: shot.id,
+      shot_id: target.id,
       provider,
       model,
-      prompt: shot.video_prompt,
+      prompt,
       version_id: store.videoVersionId,
       params: { aspect_ratio: store.videoAspect || null },
     })
-    notify(`视频任务已提交：${shot.subject || shot.id}`, 'ok')
+    notify(`视频任务已提交：${target.subject || target.id}`, 'ok')
     await loadVideoJobs()
     return job
   } catch (e) {
@@ -1290,7 +1337,9 @@ export async function saveShotPrompt(shot, decision = 'save', note = '') {
       `/projects/${store.pid}/video-versions/${store.videoVersionId}/shots/${encodeURIComponent(shot.id)}/prompt`,
       'PUT',
       {
-        prompt: shot.video_prompt,
+        // 组头存的是折叠后的组提示词（后端按组头/单镜自动选字段），
+        // 前端必须把用户看到的那条原文发过去。编辑器改过的原文优先。
+        prompt: shot.prompt || shownPrompt(shot),
         decision,
         note,
         // 用户从参考素材里挑的参考视频（素材 id，≤3）；无则传空数组清空

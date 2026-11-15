@@ -480,9 +480,9 @@ def _group_shots():
 
 
 def test_generation_units_折叠组只留组头():
-    from app.video.service import _generation_units
+    from app.video.service import generation_units
 
-    units = _generation_units(_group_shots())
+    units = generation_units(_group_shots())
     assert [u["shot_id"] for u in units] == ["shot_scene_001_000", "shot_scene_001_002"]
     g = units[0]
     assert g["group_id"] == "g1"
@@ -494,22 +494,22 @@ def test_generation_units_折叠组只留组头():
 
 def test_generation_units_旧数据等价单镜():
     """无 group 字段的旧版本数据 → 每镜一单元，逐字节兼容。"""
-    from app.video.service import _generation_units
+    from app.video.service import generation_units
 
     legacy = [{"id": f"shot_scene_001_{i:03d}", "order": i, "duration_sec": 4,
                "video_prompt": f"P{i}"} for i in range(3)]
-    units = _generation_units(legacy)
+    units = generation_units(legacy)
     assert [u["shot_id"] for u in units] == [s["id"] for s in legacy]
     assert all(not u["group_id"] for u in units)
 
 
 def test_unit_approved_组内未批不投():
-    from app.video.service import _generation_units, _unit_approved
+    from app.video.service import generation_units, unit_approved
 
     shots = _group_shots()
     shots[0]["prompt_status"] = "needs_review"   # 组头没批
-    units = _generation_units(shots)
-    assert not any(_unit_approved(shots, u) and u["group_id"] == "g1" for u in units)
+    units = generation_units(shots)
+    assert not any(unit_approved(shots, u) and u["group_id"] == "g1" for u in units)
 
 
 def test_auto_relay_only_uses_same_version_clips(store, llm, settings, monkeypatch):
@@ -647,7 +647,7 @@ def test_generation_units_跨场景重复组键不合并():
     """组键只在场景内唯一：两个场景复用同一个 group_id 时绝不能并成一个
     生成单元（旧写法全局按 group_id 分桶，跨场重复键会把两段不相邻的戏
     拼成一次生成）。"""
-    from app.video.service import _generation_units
+    from app.video.service import generation_units
 
     shots = [
         {"id": "shot_a_0", "scene_id": "scene_001", "order": 0, "duration_sec": 4,
@@ -661,7 +661,7 @@ def test_generation_units_跨场景重复组键不合并():
         {"id": "shot_b_1", "scene_id": "scene_002", "order": 3, "duration_sec": 5,
          "video_prompt": "PB2", "group_id": "g1", "group_index": 1},
     ]
-    units = _generation_units(shots)
+    units = generation_units(shots)
     assert len(units) == 2, f"跨场同组键被合并成 {len(units)} 个单元"
     assert units[0]["prompt"] == "GA" and units[1]["prompt"] == "GB"
     assert units[0]["member_ids"] == ["shot_a_0", "shot_a_1"]

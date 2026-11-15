@@ -312,7 +312,7 @@ def _same_intent(job: Any, payload: VideoJobCreate, effective_params: dict[str, 
 # ---------- 提交（单镜 / 镜头组，S2 PLAN-shot-group） ----------
 
 
-def _generation_units(shots: list[Any]) -> list[dict[str, Any]]:
+def generation_units(shots: list[Any]) -> list[dict[str, Any]]:
     """把镜头列表折叠成生成单元：单镜自成单元；同 group_id 的机位合成一个单元。
 
     组键是 **(scene_id, group_id)**，不是裸 group_id：两个场景复用同一个
@@ -342,9 +342,25 @@ def _generation_units(shots: list[Any]) -> list[dict[str, Any]]:
     return units
 
 
+def unit_prompt(shot: dict[str, Any]) -> str:
+    """这一镜真正送去生成的提示词。
+
+    组头持有**折叠后的组提示词**（group_prompt）——那是把组内几个机位连成
+    一次生成、一条视频里切几个镜头的那句话，也就是最终提交给视频模型的
+    原文。组头的 video_prompt 只是它自己那一机位的单镜版本，**不会**被提交。
+    单镜（无 group_prompt）用 video_prompt。
+
+    这个口径必须处处一致：等值校验、提交工具、前端展示与编辑全部走它。
+    曾经各处各取各的（工具层传 video_prompt、校验层比 group_prompt），
+    结果「指定镜头出片」在有镜头组的作品上必然 409——用户看到并批准的是
+    一条文本，系统提交的却是另一条。
+    """
+    return str(shot.get("group_prompt") or "") or str(shot.get("video_prompt") or "")
+
+
 def _unit_of(members: list[dict[str, Any]]) -> dict[str, Any]:
     head = members[0]
-    prompt = str(head.get("group_prompt") or "") if len(members) > 1 else ""
+    prompt = unit_prompt(head) if len(members) > 1 else ""
     prompt = prompt or str(head.get("video_prompt") or "")
     return {
         "shot_id": str(head.get("id")),
@@ -357,12 +373,22 @@ def _unit_of(members: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _unit_approved(all_shots: list[Any], unit: dict[str, Any]) -> bool:
-    """单元的批准状态看组头（单镜单元即自己）。组内任何机位没批都不投——
-    批了半段戏就提交等于替用户做主。"""
-    head = next((s for s in all_shots
-                 if isinstance(s, dict) and s.get("id") == unit["shot_id"]), None)
-    return bool(head) and head.get("prompt_status") == "approved"
+def unit_approved(all_shots: list[Any], unit: dict[str, Any]) -> bool:
+    """这个生成单元能不能提交。
+
+    规则：组头已批准 **且** 组内没有机位被标「需修改」。
+    - 组头承载的是折叠后的组提示词，用户批准它 = 批准这一整段戏；
+      组内机位不再各自要批（否则一段戏要批 N 次，用户会以为出片坏了）。
+    - 但只要有任何一个机位被标了 needs_revision，就不投：批了半段戏就提交
+      等于替用户做主（那句「需修改」就是他明确说了这段还不行）。
+    """
+    member_ids = set(unit.get("member_ids") or [])
+    members = [s for s in all_shots
+               if isinstance(s, dict) and s.get("id") in member_ids]
+    head = next((s for s in members if s.get("id") == unit["shot_id"]), None)
+    if not head or head.get("prompt_status") != "approved":
+        return False
+    return not any(m.get("prompt_status") == "needs_revision" for m in members)
 
 
 def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, bool]:
@@ -416,14 +442,27 @@ def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, boo
                if isinstance(s, dict) and str(s.get("group_id") or "") == gid
                and str(s.get("scene_id") or "") == str(shot.get("scene_id") or "")] \
         if gid else [shot]
-    approved_prompt = (str(shot.get("group_prompt") or "") if gid and len(members) > 1
-                       else str(shot.get("video_prompt") or ""))
+    # 组头的可提交提示词是折叠后的组提示词（unit_prompt 单一口径）；
+    # 单镜走自己的 video_prompt。
+    approved_prompt = unit_prompt(shot)
     if not approved_prompt:
         raise HTTPException(409, "该镜头还没有 Prompt，无法提交出片")
     if shot.get("prompt_status") != "approved":
         raise HTTPException(409, "该镜头的 Prompt 尚未批准，请先完成人工审阅")
     if (payload.prompt or "").strip() != approved_prompt.strip():
         raise HTTPException(409, "提交内容与该镜头已批准的 Prompt 不一致——改过内容需要重新批准")
+    # 组内有机位被标「需修改」就不投这一段（与批次同一口径，见 unit_approved）：
+    # 提交的是折叠后的组提示词，它覆盖组内全部机位——批了半段戏就提交
+    # 等于替用户做主。
+    if gid and len(members) > 1:
+        blocked = [str(m.get("id")) for m in members
+                   if m.get("prompt_status") == "needs_revision"]
+        if blocked:
+            raise HTTPException(
+                409,
+                f"这一段里有机位被标记为需要修改（{'、'.join(blocked)}），"
+                "先改完再出片——提交的提示词覆盖整段，半段没批不该发出去。",
+            )
 
     # 时长：显式 > 导演（组=各机位之和）> 节奏默认（按本场 pacing + 项目改编类型给的建议值）。
     # 短剧项目默认 4–5 秒一镜——短视频时代的注意力只给开头三秒，不能用电影的
@@ -743,7 +782,7 @@ def _batch_submit(
 
     # 单元索引：批次推进传的是单元 id（组头），prompt 取折叠后的单元文本
     # （组=group_prompt，单镜=video_prompt）——与 generate_batch 的名单同源。
-    unit_by_id = {u["shot_id"]: u for u in _generation_units(shots)}
+    unit_by_id = {u["shot_id"]: u for u in generation_units(shots)}
 
     def _submit(shot_id: str) -> str | None:
         shot = next((s for s in shots if isinstance(s, dict) and s.get("id") == shot_id), None)
@@ -810,7 +849,7 @@ def generate_batch(project_id: str, payload: BatchCreateRequest) -> dict[str, An
     #     挡掉，用户拿到全是不属于本批的旧镜头；
     #   · 手工提交/对账回写的无 version_id 任务：意图相同同样认。
     # 想对已成功镜头原词重出，走单镜重试入口，不靠重开批次。
-    units_all = _generation_units(version.shots)
+    units_all = generation_units(version.shots)
     unit_by_id = {u["shot_id"]: u for u in units_all}
     provider = payload.provider or _pick_video_provider()[0]
     model = payload.model or "default"
@@ -849,7 +888,7 @@ def generate_batch(project_id: str, payload: BatchCreateRequest) -> dict[str, An
             done_here.add(j.shot_id)
     units = [
         u for u in units_all
-        if u["prompt"] and _unit_approved(version.shots, u) and u["shot_id"] not in done_here
+        if u["prompt"] and unit_approved(version.shots, u) and u["shot_id"] not in done_here
     ]
     shot_ids = [u["shot_id"] for u in units]
     if not shot_ids:

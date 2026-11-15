@@ -41,7 +41,7 @@
           >
             <div class="shot-top">
               <input
-                v-if="shot.video_prompt"
+                v-if="shownPrompt(shot)"
                 type="checkbox"
                 :checked="selectedIds.includes(shot.id)"
                 :disabled="shot.prompt_status === 'approved'"
@@ -73,11 +73,11 @@
               </template>
               <span v-else class="anchor-none-tip">未锁锚（这一镜没有角色/场景引用）</span>
             </div>
-            <div v-if="compact && shot.video_prompt" class="shot-prompt">
+            <div v-if="compact && shownPrompt(shot)" class="shot-prompt">
               <span :class="['prompt-label', shot.prompt_status]">
                 {{ promptStatusLabel(shot) }}
               </span>
-              <AssetRefText :text="firstSentence(shot.video_prompt)" />
+              <AssetRefText :text="firstSentence(shownPrompt(shot))" />
               <button class="shot-more" type="button" @click.stop="openShot[shot.id] = !openShot[shot.id]">
                 {{ openShot[shot.id] ? '收起' : '详情' }}
               </button>
@@ -99,19 +99,19 @@
               背景 {{ truncate(shot.background_action, 80) }}
             </div>
             <div v-if="!compact && shot.final_frame" class="shot-path">终帧 {{ truncate(shot.final_frame, 80) }}</div>
-            <div v-if="shot.video_prompt && !compact" class="shot-prompt">
+            <div v-if="shownPrompt(shot) && !compact" class="shot-prompt">
               <span :class="['prompt-label', shot.prompt_status]">
                 {{ promptStatusLabel(shot) }}
               </span>
               <span v-if="shot.prompt_audit?.length" class="audit-tag" title="提示词自动审计提醒，在审阅面板查看详情">
                 <AppIcon name="warning" /> {{ shot.prompt_audit.length }}
               </span>
-              <AssetRefText :text="truncate(shot.video_prompt, 100)" />
+              <AssetRefText :text="truncate(shownPrompt(shot), 100)" />
             </div>
             <!-- 紧凑模式展开：全文提示词 + 运镜/空间等细节（可读优先） -->
             <div v-if="compact && openShot[shot.id]" class="shot-detail">
-              <p v-if="shot.video_prompt" class="detail-prompt">
-                <AssetRefText :text="shot.video_prompt" />
+              <p v-if="shownPrompt(shot)" class="detail-prompt">
+                <AssetRefText :text="shownPrompt(shot)" />
               </p>
               <p v-if="shot.camera?.path" class="detail-line">运动：{{ shot.camera.path }}</p>
               <p v-if="shot.spatial" class="detail-line">空间：{{ shot.spatial }}</p>
@@ -123,7 +123,7 @@
               <button
                 class="small ok"
                 @click.stop="$emit('generate-video', shot)"
-                v-if="shot.video_prompt && shot.prompt_status === 'approved' && !shot.video_url"
+                v-if="isSubmittable(shot) && !shot.video_url"
               >生成视频</button>
               <button
                 class="small ghost"
@@ -146,7 +146,7 @@
 import { ref, computed, reactive, watch } from 'vue'
 import AppIcon from '../AppIcon.vue'
 import AssetRefText from '../AssetRefText.vue'
-import { store } from '../../stores/app'
+import { isSubmittable, shownPrompt, store } from '../../stores/app'
 
 const props = defineProps({
   shots: { type: Array, default: () => [] },
@@ -178,7 +178,7 @@ const groupedShots = computed(() => {
   return groups
 })
 const pendingShots = computed(() => props.shots.filter(
-  shot => shot.video_prompt && shot.prompt_status !== 'approved',
+  shot => shownPrompt(shot) && shot.prompt_status !== 'approved',
 ))
 const allPendingSelected = computed(() => (
   pendingShots.value.length > 0 &&
@@ -243,16 +243,16 @@ function cameraLabel(cam) {
 function videoStatusClass(shot) {
   if (shot.video_url) return 'done'
   if (shot.video_job_id) return 'generating'
-  if (shot.video_prompt && shot.prompt_status === 'approved') return 'ready'
-  if (shot.video_prompt) return 'review'
+  if (isSubmittable(shot)) return 'ready'
+  if (shownPrompt(shot)) return 'review'
   return 'pending'
 }
 
 function videoStatusLabel(shot) {
   if (shot.video_url) return '完成'
   if (shot.video_job_id) return '生成中'
-  if (shot.video_prompt && shot.prompt_status !== 'approved') return '待审阅'
-  if (shot.video_prompt) return '待生成'
+  if (shownPrompt(shot) && shot.prompt_status !== 'approved') return '待审阅'
+  if (shownPrompt(shot)) return '待生成'
   return '未准备'
 }
 
@@ -263,7 +263,7 @@ function promptStatusLabel(shot) {
 /** 这一镜用到的锚：提示词里 @引用的实体 → 资产（定妆照/场景图）。
     没图的锚（缺图）会被标出来——那些镜头的角色跨镜会漂。 */
 function anchorsOf(shot) {
-  const text = String(shot?.video_prompt || '')
+  const text = shownPrompt(shot)
   const ids = []
   for (const m of text.matchAll(/@[^@\s，。；;、（）()]{0,20}\(([a-z]+_[a-z0-9_]+)\)/gi)) {
     if (!ids.includes(m[1])) ids.push(m[1])

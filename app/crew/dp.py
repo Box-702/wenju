@@ -140,7 +140,8 @@ def _light_phrase(env: str) -> str:
 
 
 def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
-                        *, language: str, provider: str = "") -> None:
+                        *, language: str, provider: str = "",
+                        spatial_anchors: dict[str, str] | None = None) -> None:
     """把同 group 的机位折叠成一条组提示词（就地写 group_prompt 到组头镜头）。
 
     切镜语法按厂商分支（D-52 定案，用户四维验收+切点数据同向）：
@@ -179,6 +180,14 @@ def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
             v = head_parts.get(key, "")
             if v:
                 seg.append(v)
+        # 第三个固定锚段：空间锚（来自白模施工单，D-56）。
+        # 与 env / cast 同性质：确定性生成、逐字复用，模型不许改写。
+        # 没做白模就没有这一段——不占提示词预算。
+        if spatial_anchors:
+            akey = f"{members[0].scene_id}::{members[0].group_id}"
+            anchor = str(spatial_anchors.get(akey) or "")
+            if anchor:
+                seg.append(anchor)
         cursor = 0.0
         # lock line（seedance 借鉴清单 #3，2026-11-13）：模型跨切镜不保留任何
         # 提示词没重复的东西——组头的全局锚只管到第一个机位，后半组
@@ -749,7 +758,11 @@ class DPAgent(CrewAgent):
                 "style": eff_style.strip().rstrip("。") if eff_style else "",
             }
             updated.append(shot)
-        _fold_group_prompts(updated, parts_by_shot, language=language, provider=provider)
+        _fold_group_prompts(
+            updated, parts_by_shot, language=language, provider=provider,
+            # 空间锚（白模施工单产出的确定性文字，D-56）：有就拼，没有不占预算
+            spatial_anchors=(style_guide.spatial_anchors if style_guide else None),
+        )
         return updated
 
     def _fallback(

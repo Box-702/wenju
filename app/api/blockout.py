@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from ..media.blockout import blockout_dir, get_blockout_manager
+from ..media.blockout import blockout_dir, color_legend, get_blockout_manager, parse_sheet
 from . import common
 
 router = APIRouter()
@@ -33,10 +33,21 @@ def get_blockout(project_id: str) -> dict[str, Any]:
             sheet_text = ""
     rec = get_blockout_manager().get(project_id) or {}
     result = rec.get("result") or {}
+    # 颜色图例按**当前施工单**算（不是按上次渲染）——改单还没渲，图例也该跟着变
+    legend: list[dict[str, Any]] = []
+    if sheet_text:
+        try:
+            sheet, _errors = parse_sheet(sheet_text)
+            if sheet:
+                legend = color_legend(sheet)
+        except Exception:  # noqa: BLE001
+            legend = []
     return {
         "project_id": project_id,
         "has_sheet": bool(sheet_text),
         "sheet": sheet_text,
+        # 颜色 → 对象名 的对照：没有它，颜色就是密码
+        "legend": legend,
         "render": {
             # 渲染状态是**进程内**的（BlockoutManager 是内存单例，重启即作废），
             # 所以重启后回到 idle 是正常的——产物本身在资产库里，不受影响。

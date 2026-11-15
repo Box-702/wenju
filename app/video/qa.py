@@ -182,6 +182,8 @@ def qa_check(
     没有视觉模型 / 抽帧失败 → skipped（质检不阻断任务）。
     duration_sec 给了就按片长放大抽帧数（组比单镜长，抽得稀会漏检）。
     """
+    from ..config import get_settings
+
     n = count or frame_count_for(duration_sec)
     frames = extract_frames(video_url, count=n)
     if not frames:
@@ -398,7 +400,7 @@ def _rewrite_group_segments(
     if not bodies:
         return prompt
     out = prefix
-    for i, (mark, body) in enumerate(zip(marks, bodies)):
+    for i, (mark, body) in enumerate(zip(marks, bodies, strict=True)):
         if i in bad:
             seg_issues = bad[i]
             body = _llm_rewrite_segment(prompt, body, seg_issues) or _fallback_rewrite(

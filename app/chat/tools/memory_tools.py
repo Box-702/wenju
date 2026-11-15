@@ -98,4 +98,38 @@ def build(ctx: ToolContext) -> list:
         )
         return skill.body + extra
 
-    return [load_skill, remember, recall, forget]
+    @tool
+    def search_history(keyword: str = "", limit: int = 8) -> str:
+        """在本次对话的历史里找东西（用户说「刚才那条」「上次说的」时用）。
+
+        返回带 message_id 的条目——引用历史时用这个 id，不要凭记忆转述
+        （转述会走样）。参数：keyword=要找的关键词（留空=最近几条）；limit=最多几条。
+        """
+        conv = ctx.collector.get("conversation_id") or ""
+        if not conv:
+            return "现在不在某个对话里，没有可搜的历史。"
+        try:
+            rows = store.list_chat_messages(conv, limit=200)
+        except Exception as e:  # noqa: BLE001
+            return f"读历史失败：{e}"
+        key = (keyword or "").strip()
+        picked = []
+        for m in rows:
+            content = (m.content or "").strip()
+            if not content:
+                continue
+            if key and key not in content:
+                continue
+            picked.append((m.id, m.role, content))
+        if not picked:
+            return f"历史里没有匹配「{key}」的内容。" if key else "历史还是空的。"
+        picked = picked[-max(1, int(limit or 8)):]
+        lines = ["【历史条目】"]
+        for mid, role, content in picked:
+            excerpt = content.replace("\n", " ")
+            if len(excerpt) > 160:
+                excerpt = excerpt[:160] + "…"
+            lines.append(f"- [{mid}] {role}：{excerpt}")
+        return "\n".join(lines)
+
+    return [load_skill, remember, recall, forget, search_history]

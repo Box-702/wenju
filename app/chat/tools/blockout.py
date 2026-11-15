@@ -23,7 +23,7 @@ def build_blockout_tools(ctx: ToolContext) -> list[Any]:
         调用：按 blockout 技能里的格式写**全文**（不是增量补丁），保存前严格校验，
         有问题会逐条返回且不落盘。参数：project_id=项目 id；content=施工单全文；
         note=本轮改了什么（给用户看的备注）。"""
-        from ...media.blockout import blockout_dir, parse_sheet
+        from ...media.blockout import blockout_dir, parse_sheet, save_spatial_facts
 
         p = ctx.project(project_id)
         sheet, errors = parse_sheet(content)
@@ -31,6 +31,9 @@ def build_blockout_tools(ctx: ToolContext) -> list[Any]:
             return "施工单没保存，先改这几处：\n" + "\n".join(f"- {e}" for e in errors)
         d = blockout_dir(p.id)
         (d / "施工单.md").write_text(content, encoding="utf-8")
+        # 空间事实同步进项目风格数据——下次跑摄影指导时，它会作为第三个
+        # 固定锚段进组提示词（与 env / cast 锚同性质，逐字复用）。
+        anchor = save_spatial_facts(ctx.store, p.id, sheet)
         meta = sheet["meta"]
         head = (f"施工单已保存（{note or '新起草'}）：{len(sheet['objects'])} 个对象、"
                 f"{len(sheet['shots'])} 个镜头、{meta['duration_sec']:.0f} 秒 @ "
@@ -39,7 +42,14 @@ def build_blockout_tools(ctx: ToolContext) -> list[Any]:
         shots = "\n".join(
             f"- {s['shot']}（{s.get('label') or '未命名'}）：{float(s['start']):g}-"
             f"{float(s['end']):g}s" for s in sheet["shots"])
-        return (f"{head}\n【镜头】\n{shots}\n"
+        tail = ""
+        if anchor:
+            tail = (f"\n【空间锚】{anchor}（已挂到这场戏的提示词上，"
+                    "重跑「撰写镜头提示词」就会带上）")
+        elif not str(sheet["meta"].get("scene_id") or "").strip():
+            tail = ("\n提示：施工单头部写上 `scene_id: scene_001`（可选 `group_id: g1`），"
+                    "这份白模的空间布局就能自动进到该场戏的镜头提示词里。")
+        return (f"{head}\n【镜头】\n{shots}{tail}\n"
                 "没问题就说「渲染白模」，要调整继续说。")
 
     @tool

@@ -66,6 +66,11 @@ async function loadBlockout() {
   }
 }
 
+function rgbCss(rgb) {
+  const c = rgb || [0.7, 0.7, 0.7]
+  return `rgb(${c.map((x) => Math.round((x || 0) * 255)).join(',')})`
+}
+
 watch(() => store.sideView, (v) => { if (v === 'blockout') loadBlockout() })
 watch(() => store.pid, () => { if (store.sideView === 'blockout') loadBlockout() })
 
@@ -437,6 +442,14 @@ watch(() => store.assetRefreshSeq, refresh)
           controls
           preload="metadata"
         ></video>
+        <!-- 颜色图例：白模靠颜色认人，没有对照表就只是一堆彩色方块 -->
+        <div v-if="blockout.legend?.length" class="bo-legend">
+          <div class="bo-legend-head">颜色对照</div>
+          <div v-for="it in blockout.legend" :key="it.name" class="bo-legend-row">
+            <span class="bo-swatch" :style="{ background: rgbCss(it.rgb) }"></span>
+            <span class="bo-legend-name">{{ it.name }}</span>
+          </div>
+        </div>
         <div v-if="blockout.render?.error" class="cp-error">{{ blockout.render.error }}</div>
         <pre v-if="blockout.sheet" class="cp-sheet">{{ blockout.sheet }}</pre>
         <div v-else class="cp-empty">还没有施工单。在对话里说「做白模」起草一份。</div>
@@ -730,4 +743,16 @@ watch(() => store.assetRefreshSeq, refresh)
 }
 
 .asset-acts { display: flex; gap: 2px; flex: none; }
+/* 白模：颜色图例 */
+.bo-legend { margin: 8px 0; }
+.bo-legend-head { font-size: 11px; color: var(--dim); margin-bottom: 4px; }
+.bo-legend-row {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11.5px; color: var(--muted); line-height: 1.9;
+}
+.bo-swatch {
+  width: 12px; height: 12px; border-radius: 3px; flex: none;
+  border: 1px solid var(--line);
+}
+.bo-legend-name { color: var(--ink); word-break: break-all; }
 </style>

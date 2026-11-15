@@ -62,13 +62,29 @@ def build(ctx: ToolContext) -> list:
         )
 
     @tool
-    def submit_videos(project_id: str, shot_ids: str = "") -> str:
-        """提交视频生成：为提示词已批准的镜头启动批量出片（串行推进，前一镜成片自动作为后一镜的接力参考）。参数：project_id=项目 id；shot_ids 可选（逗号分隔只出指定镜头），留空=全部已批准的镜头。"""
+    def submit_videos(
+        project_id: str,
+        shot_ids: str = "",
+        reference_asset_ids: str = "",
+    ) -> str:
+        """提交视频生成：为提示词已批准的镜头启动批量出片（串行推进，前一镜成片自动作为后一镜的接力参考）。参数：project_id=项目 id；shot_ids 可选（逗号分隔只出指定镜头），留空=全部已批准的镜头；reference_asset_ids 可选（逗号分隔的素材 id，当作本次出片的参考锚，如白模视频，id 从 list_assets 取）。"""
         p = ctx.project(project_id)
         v = ctx.latest_video_version(p)
         if v is None or not v.shots:
             return "还没有镜头方案：请先「拆解镜头」「撰写镜头提示词」并批准。"
         wanted = {s.strip() for s in shot_ids.split(",") if s.strip()}
+        # 参考素材：只接受属于本作品的素材（别的作品的素材挂上去会串画面）
+        refs: list[str] = []
+        for aid in (reference_asset_ids or "").split(","):
+            aid = aid.strip()
+            if not aid:
+                continue
+            asset = ctx.store.get_asset(aid)
+            if asset is None:
+                return f"没有这个素材：{aid}。用 list_assets 看可用的素材 id。"
+            if asset.project_id != p.id:
+                return f"素材 {aid} 不属于本作品，不能当参考锚。请先导入到本作品。"
+            refs.append(aid)
         from ...video.service import (
             BatchCreateRequest,
             VideoJobCreate,
@@ -102,6 +118,7 @@ def build(ctx: ToolContext) -> list:
                     _job, is_new = submit_video_job(p.id, VideoJobCreate(
                         shot_id=u["shot_id"], provider="minimax", model="default",
                         prompt=u["prompt"], version_id=v.id,
+                        params=({"reference_asset_ids": refs} if refs else {}),
                     ))
                     created += 1 if is_new else 0
                     reused += 0 if is_new else 1
@@ -128,6 +145,75 @@ def build(ctx: ToolContext) -> list:
         })
         total = batch.get("total") or 0
         return f"已开始出片：共 {total} 个镜头会按顺序生成，前一镜完成后自动作为后一镜的参考以保持连贯。可以随时问我「出片进度」。"
+
+    @tool
+    def generate_video(
+        project_id: str,
+        shot_id: str,
+        style: str = "",
+        ratio: str = "",
+        duration: int = 0,
+    ) -> str:
+        """生成一个镜头的视频（单镜出片）。参数：project_id=项目 id；shot_id=镜头 id；
+        style=视觉风格（实拍 / 二次元 / 三维 / 水墨，留空=用项目已设定的）；
+        ratio=画面比例（9:16 / 16:9 / 1:1）；duration=时长秒（0=用镜头设计的时长）。
+
+        缺 style / ratio 时**先问用户**，不要自己替用户定——它们直接决定成片长什么样。
+        提示词必须已批准；组镜头的出片单位是组头。
+        """
+        p = ctx.project(project_id)
+        sid = (shot_id or "").strip()
+        v = ctx.latest_video_version(p)
+        if v is None or not v.shots:
+            return "还没有镜头方案：请先「拆解镜头」「撰写镜头提示词」。"
+        shot = next(
+            (s for s in v.shots if isinstance(s, dict) and s.get("id") == sid), None,
+        )
+        if shot is None:
+            return f"没有找到镜头 {sid}，先查镜头清单确认 id。"
+
+        style_set = str((ctx.store.get_video_style(p.id) or {}).get("visual_style") or "")
+        missing: list[str] = []
+        if not (style or "").strip() and not style_set:
+            missing.append("视觉风格（实拍 / 二次元 / 三维 / 水墨）")
+        if not (ratio or "").strip():
+            missing.append("画面比例（9:16 竖屏 / 16:9 横屏 / 1:1）")
+        if missing:
+            return ("出片前需要确认这几样（直接决定成片长什么样，不替你定）："
+                    + "、".join(missing)
+                    + "。用户回答后带参数再调一次。")
+        if shot.get("prompt_status") != "approved":
+            return (f"镜头 {sid} 的提示词还没批准，出片前要先人工批准"
+                    "（可以说「批准全部提示词」）。")
+
+        from ...video.service import (
+            VideoJobCreate,
+            generation_units,
+            submit_video_job,
+            unit_prompt,
+        )
+
+        # 组镜头：提交单位是组头，发的是折叠后的组提示词
+        unit = next(
+            (u for u in generation_units(v.shots) if sid in set(u["member_ids"])), None,
+        )
+        target_id = unit["shot_id"] if unit else sid
+        prompt = unit_prompt(shot) if unit else str(shot.get("video_prompt") or "")
+        params: dict[str, Any] = {}
+        if (ratio or "").strip():
+            params["aspect_ratio"] = ratio.strip()
+        if duration:
+            params["duration_sec"] = int(duration)
+        try:
+            _job, is_new = submit_video_job(p.id, VideoJobCreate(
+                shot_id=target_id, provider="minimax", model="default",
+                prompt=prompt, version_id=v.id, params=params,
+            ))
+        except Exception as e:  # noqa: BLE001
+            detail = getattr(e, "detail", None) or str(e)
+            return f"提交失败：{detail}"
+        head = "已提交" if is_new else "这个镜头已经在生成了（没有重复提交，不会重复计费）"
+        return f"{head}镜头 {target_id} 的视频生成。稍后可问我进度。"
 
     @tool
     def rerun_video(project_id: str, shot_id: str) -> str:

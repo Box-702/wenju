@@ -490,6 +490,18 @@ def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, boo
 
     # 先记下用户手挑的参考视频，再补自动锚——回填会把接力锚并进来，混在一起分不清意图。
     manual_reference_videos = list(payload.params.get("reference_videos") or [])
+    # 提交时临时挂的参考素材（Agent 在对话里点名要挂的那条，如「用白模当参考
+    # 出这一镜」）：与镜头自带的合并。只影响这一次提交，不改镜头方案——
+    # 参考素材是**输入**，不是提示词的一部分，不该动已批准的镜头内容。
+    extra_ids = [str(x).strip() for x in (payload.params.get("reference_asset_ids") or [])]
+    if extra_ids:
+        shot_refs = dict(shot)
+        shot_refs["reference_asset_ids"] = (
+            list(shot.get("reference_asset_ids") or []) + extra_ids
+        )
+        for url in _manual_reference_videos(project_id, shot_refs):
+            if url not in manual_reference_videos:
+                manual_reference_videos.append(url)
     _auto_references(project_id, payload.shot_id, payload.version_id, stored_params)
 
     # 用量摘要（D-53）：界面不再展示费用估算——预估与实付脱节只会伤信任

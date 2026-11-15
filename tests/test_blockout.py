@@ -294,3 +294,246 @@ def test_manager_失败路径报日志尾部(monkeypatch, tmp_path):
         rec = mgr.get("p1")
     assert rec["status"] == "failed"
     assert "bad args" in rec["error"] or "日志尾部" in rec["error"]
+
+
+# ---------- 身份色（2026-11-15：白模要能认人） ----------
+#
+# 白模渲出来是一堆几何体，用户要靠颜色认人——「把那个高的挪开」得先说得清是哪个。
+# 颜色只进白模渲染，绝不进最终视频提示词。
+
+
+def test_施工单接受颜色并拒绝非法色名():
+    from app.media.blockout import parse_sheet
+
+    sheet = """
+fps: 24
+resolution: 960x540
+duration_sec: 4
+engine: workbench
+
+## 对象
+- name=孔乙己  shape=box  pos=2,1,0.85  size=0.4,0.3,1.7  color=red
+- name=墙    shape=box  pos=0,0,0  size=0.3,3,4  color=gray
+
+## 镜头
+- shot=S1  start=0  end=4  cam_pos=4,2,3  cam_look=0,0,1
+"""
+    parsed, errors = parse_sheet(sheet)
+    assert parsed is not None, errors
+    assert errors == []
+    assert parsed["objects"][0]["color"] == "red"
+
+
+def test_非法色名会被挡下():
+    from app.media.blockout import parse_sheet
+
+    sheet = """
+fps: 24
+resolution: 960x540
+duration_sec: 4
+engine: workbench
+
+## 对象
+- name=孔乙己  shape=box  pos=2,1,0.85  size=0.4,0.3,1.7  color=chartreuse
+
+## 镜头
+- shot=S1  start=0  end=4  cam_pos=4,2,3  cam_look=0,0,1
+"""
+    parsed, errors = parse_sheet(sheet)
+    assert parsed is None
+    assert any("color" in e for e in errors)
+
+
+def test_中文色名也认():
+    from app.media.blockout import normalize_color
+
+    assert normalize_color("红") == "red"
+    assert normalize_color("RED") == "red"
+    assert normalize_color("青") == "cyan"
+    assert normalize_color("不存在") is None
+
+
+def test_同名永远同色():
+    """自动配色按名字哈希——颜色乱跳等于没有颜色，用户建不起心智模型。"""
+    from app.media.blockout import color_of
+
+    a = color_of({"name": "孔乙己"})
+    b = color_of({"name": "孔乙己"})
+    c = color_of({"name": "掌柜"})
+    assert a == b
+    assert a != c
+
+
+def test_显式颜色覆盖自动色():
+    from app.media.blockout import color_of
+
+    assert color_of({"name": "孔乙己", "color": "blue"}) == "blue"
+
+
+def test_图例给出颜色与对象的对照():
+    """没有图例，颜色就是密码：用户看到一堆彩色方块仍不知道哪个是谁。"""
+    from app.media.blockout import color_legend
+
+    legend = color_legend({"objects": [
+        {"name": "孔乙己", "color": "red"},
+        {"name": "墙"},
+    ]})
+    assert [x["name"] for x in legend] == ["孔乙己", "墙"]
+    assert legend[0]["color"] == "red"
+    assert len(legend[0]["rgb"]) == 3
+
+
+def test_构建脚本带上颜色():
+    """材质要真的用上颜色，而不是仍然一水的灰。"""
+    from app.media.blockout import build_script, parse_sheet
+
+    sheet = """
+fps: 24
+resolution: 960x540
+duration_sec: 4
+engine: workbench
+
+## 对象
+- name=孔乙己  shape=box  pos=2,1,0.85  size=0.4,0.3,1.7  color=red
+
+## 镜头
+- shot=S1  start=0  end=4  cam_pos=4,2,3  cam_look=0,0,1
+"""
+    parsed, errors = parse_sheet(sheet)
+    assert parsed is not None, errors
+    script = build_script(parsed, "out.mp4")
+    assert "Base Color" in script
+    assert "(0.85, 0.15, 0.15)" in script, "red 的 RGB 要写进材质"
+    assert "gray(tone)" not in script
+
+
+# ---------- S3 反哺：施工单的空间事实进组提示词（D-56） ----------
+
+
+SHEET = """
+label: 排钱
+scene_id: scene_001
+group_id: g1
+fps: 24
+resolution: 960x540
+duration_sec: 8
+engine: workbench
+
+## 对象
+- name=孔乙己  shape=box  pos=2,1,0.85  size=0.4,0.3,1.7  color=red
+- name=柜台    shape=box  pos=0,0,0.5    size=2,0.8,1
+
+## 镜头
+- shot=S1  start=0  end=4  cam_pos=4,2,3  cam_look=0,0,1
+- shot=S2  start=4  end=8  cam_pos=2,-3,1.5  target=孔乙己
+"""
+
+
+def _sheet():
+    from app.media.blockout import parse_sheet
+
+    parsed, errors = parse_sheet(SHEET)
+    assert parsed is not None, errors
+    return parsed
+
+
+def test_空间锚说的是方位与距离():
+    from app.media.blockout import spatial_anchor
+
+    anchor = spatial_anchor(_sheet())
+    assert anchor.startswith("空间锚：")
+    assert "S1" in anchor and "S2" in anchor
+    assert "孔乙己" in anchor
+    # 方位词：相对镜头看向的左右前后
+    assert any(w in anchor for w in ("右", "左", "正"))
+    assert "m" in anchor
+
+
+def test_空间锚是确定性的():
+    """同样的单子必须永远生成同样的锚——锚要能被逐字复用。"""
+    from app.media.blockout import spatial_anchor
+
+    assert spatial_anchor(_sheet()) == spatial_anchor(_sheet())
+
+
+def test_空间锚里没有颜色():
+    """颜色是给人看渲染的；写进提示词会让视频模型画红盒子。"""
+    from app.media.blockout import spatial_anchor
+
+    anchor = spatial_anchor(_sheet())
+    for word in ("红", "red", "蓝", "blue", "红色"):
+        assert word not in anchor
+
+
+def test_空间键要绑场次():
+    from app.media.blockout import spatial_key
+
+    sheet = _sheet()
+    assert spatial_key(sheet) == "scene_001::g1"
+    sheet["meta"].pop("scene_id")
+    assert spatial_key(sheet) == "", "没绑场次就不反哺"
+
+
+def test_保存施工单会落下空间事实(store, tmp_path, monkeypatch):
+    from app.media import blockout as blockout_mod
+
+    monkeypatch.setattr(blockout_mod, "blockout_dir", lambda pid: tmp_path / pid)
+    project = store.create_project(
+        title="排钱", raw_text="原文", adaptation_type="short_drama", language="zh-CN",
+    )
+    anchor = blockout_mod.save_spatial_facts(store, project.id, _sheet())
+    assert anchor.startswith("空间锚：")
+
+    style = store.get_video_style(project.id)
+    assert style["spatial_anchors"]["scene_001::g1"] == anchor
+    facts = style["blockout_spatial"]["scene_001::g1"]
+    assert [o["name"] for o in facts["objects"]] == ["孔乙己", "柜台"]
+    assert facts["objects"][0]["pos"] == [2.0, 1.0, 0.85]
+    assert len(facts["shots"]) == 2
+
+
+def test_组提示词把空间锚当第三个固定锚段():
+    """空间锚与 env / cast 锚同性质：确定性、逐字复用、模型不许改写。"""
+    from app.crew.dp import _fold_group_prompts
+    from app.domain import Shot
+
+    shots = [
+        Shot(id="shot_a_000", scene_id="scene_001", order=0, subject="客人",
+              shot_type="medium", group_id="g1", group_index=0, duration_sec=4),
+        Shot(id="shot_a_001", scene_id="scene_001", order=1, subject="掌柜",
+              shot_type="close_up", group_id="g1", group_index=1, duration_sec=3),
+    ]
+    parts = {
+        "shot_a_000": {"env": "环境锚：旧当铺。", "cast": "人物锚：客人。",
+                        "body": "排钱。", "style": "风格段。"},
+        "shot_a_001": {"env": "环境锚：旧当铺。", "cast": "人物锚：掌柜。",
+                        "body": "打量。", "style": "风格段。"},
+    }
+    anchor = "空间锚：S1 机位高 3m，孔乙己在镜头右前方 3.2m。"
+    _fold_group_prompts(
+        shots, parts, language="zh", provider="minimax",
+        spatial_anchors={"scene_001::g1": anchor},
+    )
+    gp = shots[0].group_prompt
+    assert gp is not None
+    assert anchor in gp
+    # 顺序：环境 → 人物 → 空间锚 → 机位正文 → 风格
+    assert gp.index("环境锚") < gp.index("人物锚") < gp.index("空间锚") < gp.index("[Shot 1]")
+
+
+def test_没有白模就不占提示词预算():
+    from app.crew.dp import _fold_group_prompts
+    from app.domain import Shot
+
+    shots = [
+        Shot(id="shot_a_000", scene_id="scene_001", order=0, subject="客人",
+              shot_type="medium", group_id="g1", group_index=0, duration_sec=4),
+        Shot(id="shot_a_001", scene_id="scene_001", order=1, subject="掌柜",
+              shot_type="close_up", group_id="g1", group_index=1, duration_sec=3),
+    ]
+    parts = {
+        "shot_a_000": {"env": "E", "cast": "C", "body": "b1", "style": "S"},
+        "shot_a_001": {"env": "E", "cast": "C", "body": "b2", "style": "S"},
+    }
+    _fold_group_prompts(shots, parts, language="zh", provider="minimax")
+    assert "空间锚" not in (shots[0].group_prompt or "")

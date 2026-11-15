@@ -21,17 +21,86 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 import shutil
 import subprocess
 import threading
 import time
+import zlib
 from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
 
 _SHAPES = {"box", "cylinder", "sphere", "plane"}
+
+# 身份色板（给人看，不给模型看）。
+# 白模渲出来是一堆几何体，用户要靠颜色认人——「把那个高的挪开」得先说得清
+# 是哪个。颜色是**白模渲染的观察辅助**，绝不写进最终视频提示词。
+_COLOR_PALETTE: dict[str, tuple[float, float, float]] = {
+    "red": (0.85, 0.15, 0.15),
+    "orange": (0.95, 0.55, 0.10),
+    "yellow": (0.95, 0.85, 0.20),
+    "green": (0.25, 0.70, 0.30),
+    "cyan": (0.20, 0.75, 0.80),
+    "blue": (0.25, 0.40, 0.90),
+    "purple": (0.55, 0.30, 0.80),
+    "pink": (0.95, 0.45, 0.65),
+    "gray": (0.70, 0.70, 0.70),
+    "white": (0.92, 0.92, 0.92),
+    "black": (0.12, 0.12, 0.12),
+}
+# 中文色名也认（施工单是人写的）
+_COLOR_ALIASES = {
+    "红": "red", "橙": "orange", "黄": "yellow", "绿": "green", "青": "cyan",
+    "蓝": "blue", "紫": "purple", "粉": "pink", "灰": "gray", "白": "white",
+    "黑": "black",
+}
+# 自动分配用的色板（不含中性色）：按对象名哈希取，**同名永远同色**——
+# 颜色乱跳等于没有颜色，用户建立不起心智模型。
+_AUTO_COLORS = ("red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink")
+
+
+def normalize_color(value: object) -> str | None:
+    """色名归一（中英文都认）；认不出来返回 None。"""
+    c = str(value or "").strip().lower()
+    if not c:
+        return None
+    if c in _COLOR_PALETTE:
+        return c
+    return _COLOR_ALIASES.get(c)
+
+
+def color_of(item: dict[str, Any]) -> str:
+    """这个对象渲成什么颜色：显式 color= > 按名字哈希取自动色板。
+
+    哈希用 crc32 而不是内置 hash()——内置 hash 对 str 带随机种子，
+    跨进程不稳定，那样「同名同色」就不成立了。
+    """
+    c = normalize_color(item.get("color"))
+    if c:
+        return c
+    name = str(item.get("name") or "").encode("utf-8")
+    return _AUTO_COLORS[zlib.crc32(name) % len(_AUTO_COLORS)]
+
+
+def color_legend(sheet: dict[str, Any]) -> list[dict[str, Any]]:
+    """颜色 → 对象名 的图例。
+
+    没有图例，颜色就是密码：用户看到一堆彩色方块，仍然不知道哪个是孔乙己。
+    界面上的「白模」面板直接渲染这份对照表。
+    """
+    out: list[dict[str, Any]] = []
+    for it in sheet.get("objects") or []:
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("name") or "")
+        if not name:
+            continue
+        c = color_of(it)
+        out.append({"name": name, "color": c, "rgb": list(_COLOR_PALETTE[c])})
+    return out
 _ENGINES = {"eevee", "workbench"}
 _AXES = {"x": 0, "y": 1, "z": 2}
 _VEC3 = re.compile(r"^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$")
@@ -56,6 +125,157 @@ def _frames(value: str, fps: float, duration: float) -> tuple[int, int] | None:
     if not (1 <= a < b <= int(fps * duration)):
         return None
     return (a, b)
+
+
+def _bearing(
+    cam: tuple[float, float, float],
+    obj: tuple[float, float, float],
+    look: tuple[float, float, float] | None,
+) -> tuple[str, float]:
+    """对象相对镜头的方位与距离。
+
+    方位按相机的看向算（cam_look 或 target）——「镜头右前方」比「x=2, y=1」
+    有用得多：坐标是白模的内部语言，方位是画面语言。
+    返回 (方位短语, 水平距离米)。
+    """
+    dx, dy = obj[0] - cam[0], obj[1] - cam[1]
+    dist = math.hypot(dx, dy)
+    if look is None or dist < 1e-6:
+        return ("", dist)
+    fx, fy = look[0] - cam[0], look[1] - cam[1]
+    flen = math.hypot(fx, fy)
+    if flen < 1e-6:
+        return ("", dist)
+    fx, fy = fx / flen, fy / flen
+    rx, ry = -fy, fx                      # 相机右手方向
+    along_f = dx * fx + dy * fy           # 前方为正
+    along_r = dx * rx + dy * ry           # 右方为正
+    depth = "前" if along_f >= 0 else "后"
+    if along_r > 0.3:
+        side = "右"
+    elif along_r < -0.3:
+        side = "左"
+    else:
+        side = "正"
+    return (f"{side}{depth}", dist)
+
+
+def spatial_anchor(sheet: dict[str, Any]) -> str:
+    """从施工单生成一段确定性的**空间锚文字**（组提示词的第三个固定锚段）。
+
+    只说空间关系：谁在谁的哪一侧、离镜头多远、镜头在哪多高。
+    **不说颜色**——颜色是给人看渲染的，写进提示词会让视频模型画红盒子。
+    纯算术、零 LLM：同样的单子永远生成同样的锚。
+    """
+    objs: dict[str, dict[str, Any]] = {}
+    for it in sheet.get("objects") or []:
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("name") or "")
+        pos = _vec3(it.get("pos", ""))
+        if name and pos is not None:
+            objs[name] = {"pos": pos, "size": _vec3(it.get("size", "")) or (0, 0, 0)}
+
+    chunks: list[str] = []
+    shots = [s for s in (sheet.get("shots") or []) if isinstance(s, dict)]
+    for sh in shots[:4]:
+        cam = _vec3(sh.get("cam_pos", ""))
+        if cam is None:
+            continue
+        look = _vec3(sh.get("cam_look", ""))
+        target = str(sh.get("target") or "")
+        if look is None and target in objs:
+            look = objs[target]["pos"]
+        sid = str(sh.get("shot") or "")
+        bits = [f"{sid} 机位高 {cam[2]:.1f}m"]
+        # 目标对象先说，其余按距离从近到远
+        ordered = sorted(
+            objs.items(),
+            key=lambda kv: (
+                0 if kv[0] == target else 1,
+                math.dist(kv[1]["pos"][:2], cam[:2]),
+            ),
+        )
+        for name, info in ordered[:5]:
+            where, dist = _bearing(cam, info["pos"], look)
+            dz = info["pos"][2] - cam[2]
+            height = ""
+            if dz > 0.6:
+                height = "、高于机位"
+            elif dz < -0.6:
+                height = "、低于机位"
+            bits.append(f"{name}在镜头{where}方 {dist:.1f}m{height}")
+        chunks.append("；".join(bits))
+    if not chunks:
+        return ""
+    return "空间锚：" + "。".join(chunks) + "。"
+
+
+def spatial_facts(sheet: dict[str, Any]) -> dict[str, Any]:
+    """施工单里的结构化空间事实（对象坐标 / 镜头机位 + 生成的锚文字）。"""
+    objects = []
+    for it in sheet.get("objects") or []:
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("name") or "")
+        pos = _vec3(it.get("pos", ""))
+        if not name or pos is None:
+            continue
+        objects.append({
+            "name": name, "shape": str(it.get("shape") or ""),
+            "pos": list(pos), "size": list(_vec3(it.get("size", "")) or (0, 0, 0)),
+            "color": color_of(it),
+        })
+    shots = []
+    for sh in sheet.get("shots") or []:
+        if not isinstance(sh, dict):
+            continue
+        cam = _vec3(sh.get("cam_pos", ""))
+        if cam is None:
+            continue
+        shots.append({
+            "shot": str(sh.get("shot") or ""),
+            "label": str(sh.get("label") or ""),
+            "start": sh.get("start"), "end": sh.get("end"),
+            "cam_pos": list(cam),
+            "cam_look": list(_vec3(sh.get("cam_look", "")) or (0, 0, 0)),
+            "target": str(sh.get("target") or ""),
+        })
+    return {"objects": objects, "shots": shots, "anchor": spatial_anchor(sheet)}
+
+
+def spatial_key(sheet: dict[str, Any]) -> str:
+    """白模挂靠的键：scene_id::group_id（没写 scene_id 就返回空 = 不反哺）。"""
+    meta = sheet.get("meta") or {}
+    scene_id = str(meta.get("scene_id") or "").strip()
+    if not scene_id:
+        return ""
+    return f"{scene_id}::{str(meta.get('group_id') or '').strip()}"
+
+
+def save_spatial_facts(store: Any, project_id: str, sheet: dict[str, Any]) -> str:
+    """把施工单的空间事实写进项目风格数据，供摄影指导取用。
+
+    写两处：
+      - ``spatial_anchors``：{scene_id::group_id: 空间锚文字} → 直接进组提示词
+      - ``blockout_spatial``：同键的结构化事实（坐标 / 机位）→ 留档可查
+    返回生成的空间锚文字（没绑 scene_id 时返回空串——不反哺）。
+    """
+    key = spatial_key(sheet)
+    if not key:
+        return ""
+    style = store.get_video_style(project_id) or {}
+    anchors = dict(style.get("spatial_anchors") or {})
+    facts = dict(style.get("blockout_spatial") or {})
+    anchor = spatial_anchor(sheet)
+    if anchor:
+        anchors[key] = anchor
+    facts[key] = spatial_facts(sheet)
+    store.merge_video_style(project_id, {
+        "spatial_anchors": anchors,
+        "blockout_spatial": facts,
+    })
+    return anchor
 
 
 def parse_sheet(text: str) -> tuple[dict[str, Any] | None, list[str]]:
@@ -86,7 +306,12 @@ def parse_sheet(text: str) -> tuple[dict[str, Any] | None, list[str]]:
             if ":" in line:
                 key, _, value = line.partition(":")
                 key, value = key.strip(), value.split("#")[0].strip()
-                if key in ("fps", "resolution", "duration_sec", "engine", "label"):
+                if key in (
+                    "fps", "resolution", "duration_sec", "engine", "label",
+                    # scene_id / group_id：白模挂在哪一场戏的哪一段戏上——
+                    # 反哺组提示词时靠它定位（键 = scene_id::group_id）
+                    "scene_id", "group_id",
+                ):
                     meta[key] = value
             continue
         if not line.startswith("- "):
@@ -147,6 +372,12 @@ def parse_sheet(text: str) -> tuple[dict[str, Any] | None, list[str]]:
                     raise ValueError
             except ValueError:
                 errors.append(f"对象「{name}」的 tone 在 0-1 之间（灰度）")
+        if it.get("color") and normalize_color(it["color"]) is None:
+            allowed = "/".join(sorted(_COLOR_PALETTE))
+            errors.append(
+                f"对象「{name}」的 color={it['color']} 不认识，可用：{allowed}"
+                "（中英文色名都认）"
+            )
 
     # ---- 镜头 ----
     shot_ids: set[str] = set()
@@ -204,6 +435,9 @@ def parse_sheet(text: str) -> tuple[dict[str, Any] | None, list[str]]:
             "duration_sec": duration,
             "engine": engine,
             "total_frames": total_frames,
+            # 白模挂在哪一场戏的哪一段上——反哺组提示词时靠它定位
+            "scene_id": str(meta.get("scene_id") or "").strip(),
+            "group_id": str(meta.get("group_id") or "").strip(),
         },
         "objects": objects,
         "shots": shots,
@@ -229,14 +463,17 @@ def build_script(sheet: dict[str, Any], out_mp4: str) -> str:
         "for o in list(bpy.data.objects):",
         "    bpy.data.objects.remove(o, do_unlink=True)",
         "",
-        "def gray(tone):",
-        "    m = bpy.data.materials.new('gray_%d' % int(tone * 100))",
+        # 材质带身份色：白模是给人看的空间草图，颜色用来认人。
+        # （颜色不进提示词——那是渲染的事，不是给模型的语义。）
+        "def mat(name, rgb):",
+        "    m = bpy.data.materials.new(name)",
         "    m.use_nodes = True",
         "    bsdf = next(n for n in m.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')",
-        "    bsdf.inputs['Base Color'].default_value = (tone, tone, tone, 1)",
+        "    bsdf.inputs['Base Color'].default_value = (rgb[0], rgb[1], rgb[2], 1)",
+        "    bsdf.inputs['Roughness'].default_value = 0.9",
         "    return m",
         "",
-        "def add_obj(name, shape, pos, size, tone):",
+        "def add_obj(name, shape, pos, size, rgb):",
         "    if shape in ('box', 'plane'):",
         "        bpy.ops.mesh.primitive_cube_add(location=pos)",
         "    elif shape == 'cylinder':",
@@ -250,18 +487,17 @@ def build_script(sheet: dict[str, Any], out_mp4: str) -> str:
         "        o.scale = (sx / 2, sy / 2, 0.01)",
         "    else:",
         "        o.scale = (sx / 2, sy / 2, sz / 2)",
-        "    o.data.materials.append(gray(tone))",
+        "    o.data.materials.append(mat('m_' + name.replace(' ', '_'), rgb))",
         "    return o",
         "",
     ]
 
-    tone_default = 0.75
     for it in sheet["objects"]:
         pos = _vec3(it["pos"])
         size = _vec3(it["size"])
-        tone = float(it.get("tone", tone_default))
+        rgb = _COLOR_PALETTE[color_of(it)]
         lines.append(
-            f"add_obj({it['name']!r}, {it['shape']!r}, {pos!r}, {size!r}, {tone})")
+            f"add_obj({it['name']!r}, {it['shape']!r}, {pos!r}, {size!r}, {rgb!r})")
 
     sc_lines = ["", "sc = bpy.context.scene"]
     for it in sheet["shots"]:
@@ -535,4 +771,6 @@ class BlockoutManager:
             "asset_id": asset_id, "video_url": url,
             "duration_sec": round(duration, 2),
             "sheet": str(sheet_path), "script": str(script_path),
+            # 颜色图例：用户靠颜色认人，渲完得告诉他哪个颜色是谁。
+            "legend": color_legend(sheet),
         }

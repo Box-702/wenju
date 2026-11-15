@@ -10,7 +10,9 @@
 // =====================================================================
 
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { store, sendMessage, clearHint, loadModelStatus, loadProviders, notify } from '../stores/app'
+import {
+  store, sendMessage, clearHint, loadModelStatus, loadProviders, notify, useSkill,
+} from '../stores/app'
 import { api, uploadChatImage } from '../api'
 import ComposerCard from './ComposerCard.vue'
 
@@ -92,6 +94,11 @@ function onPaste(e) {
 
 // ---- @ 引用的资产：随本轮消息一起发给 Agent ----
 const refs = ref([])
+/** 「/」面板选中技能：把技能的适用场景预填进输入框（与技能页同款行为）。 */
+function onSkillPicked(skill) {
+  useSkill(skill)
+}
+
 function onAssetPicked(item) {
   if (!item?.id) return
   if (refs.value.some((r) => r.id === item.id)) return
@@ -166,7 +173,9 @@ watch(() => store.draftSeq, () => {
       @open-skills="emit('open-skills')"
       @focus-input="clearHint"
       :assets="store.assetIndex"
+      :skills="store.skills"
       @asset-picked="onAssetPicked"
+      @skill-picked="onSkillPicked"
       @new-project="store.showNewProject = true"
     >
       <!-- 「＋」= 往这条消息里加什么：图片 / 资产引用。

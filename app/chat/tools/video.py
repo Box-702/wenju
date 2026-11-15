@@ -182,10 +182,6 @@ def build(ctx: ToolContext) -> list:
             return ("出片前需要确认这几样（直接决定成片长什么样，不替你定）："
                     + "、".join(missing)
                     + "。用户回答后带参数再调一次。")
-        if shot.get("prompt_status") != "approved":
-            return (f"镜头 {sid} 的提示词还没批准，出片前要先人工批准"
-                    "（可以说「批准全部提示词」）。")
-
         from ...video.service import (
             VideoJobCreate,
             generation_units,
@@ -198,7 +194,15 @@ def build(ctx: ToolContext) -> list:
             (u for u in generation_units(v.shots) if sid in set(u["member_ids"])), None,
         )
         target_id = unit["shot_id"] if unit else sid
-        prompt = unit_prompt(shot) if unit else str(shot.get("video_prompt") or "")
+        # 批准看**组头**（组是一条视频，批准的是整段）
+        head = next(
+            (s for s in v.shots if isinstance(s, dict) and s.get("id") == target_id), shot,
+        )
+        if head.get("prompt_status") != "approved":
+            return (f"镜头 {target_id} 的提示词还没批准，出片前要先人工批准"
+                    "（可以说「批准全部提示词」）。")
+        # 提示词取**组头**的：组提交的原文是折叠后的组提示词（unit_prompt 单一口径）
+        prompt = unit_prompt(head)
         params: dict[str, Any] = {}
         if (ratio or "").strip():
             params["aspect_ratio"] = ratio.strip()
@@ -427,6 +431,7 @@ def build(ctx: ToolContext) -> list:
         get_status,
         approve_video_prompts,
         submit_videos,
+        generate_video,
         rerun_video,
         edit_shot_prompt,
         cancel_video_job,

@@ -77,4 +77,5 @@ audience: main
 # 相关工具
 
 `get_status` · `approve_video_prompts` · `submit_videos` ·
+`generate_video`（单镜出片：要用户先定风格/比例/时长，缺了就问，不要替他定）·
 `edit_shot_prompt` · `rerun_video` · `cancel_video_job` · `finalize_film`

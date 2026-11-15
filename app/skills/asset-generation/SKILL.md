@@ -81,4 +81,8 @@ audience: main
 
 # 相关工具
 
-`generate_reference_assets` · `clone_voice` · `list_assets` · `get_status` · `load_skill`
+`generate_reference_assets` · `clone_voice` · `list_assets` ·
+`search_assets`（按名字/类型搜素材，返回带 id 的条目）·
+`save_asset`（把某个图片素材存成某个角色/场景的定妆照/场景图）·
+`attach_asset`（把素材挂到镜头上，当参考锚）·
+`get_status` · `load_skill`

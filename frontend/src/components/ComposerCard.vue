@@ -34,10 +34,13 @@ const props = defineProps({
   busy: { type: Boolean, default: false },
   /** 可被 @ 引用的资产 [{ kind, id, name, sub }] */
   assets: { type: Array, default: () => [] },
+  /** 可用技能（打「/」呼出）[{ name, description, when_to_use }] */
+  skills: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits([
   'send', 'pick-menu', 'open-settings', 'open-skills', 'asset-picked', 'new-project',
+  'skill-picked',
 ])
 
 /** 让外层（比如「＋」菜单）能直接打开 @ 候选。 */
@@ -403,10 +406,71 @@ function autoSize(e) {
   el.style.height = Math.min(200, el.scrollHeight) + 'px'
 }
 
-/** 输入时：既调高度，也判断是不是正打在 @ 上 */
+// ---- / 呼出技能（M2-4b）：打「/」弹技能清单，选中即把场景预填进输入框 ----
+const slashOpen = ref(false)
+const slashQuery = ref('')
+const slashIndex = ref(0)
+
+const slashItems = computed(() => {
+  const q = slashQuery.value.trim().toLowerCase()
+  const list = props.skills || []
+  if (!q) return list.slice(0, 12)
+  return list.filter((s) => (
+    (s.name || '').toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q)
+  )).slice(0, 12)
+})
+
+/** 光标前是不是正打在「/」上（斜杠后面还没空格） */
+function slashContext() {
+  const el = textEl.value
+  if (!el) return null
+  const upto = (el.value || '').slice(0, el.selectionStart || 0)
+  const m = upto.match(/^\/([^\s/]*)$/)
+  return m ? m[1] : null
+}
+
+function syncSlash() {
+  const q = slashContext()
+  if (q === null) { slashOpen.value = false; return }
+  slashQuery.value = q
+  slashIndex.value = 0
+  slashOpen.value = true
+}
+
+/** 选中技能：把「/xxx」换成技能的场景描述（交给外层 useSkill 填） */
+function pickSlash(item) {
+  slashOpen.value = false
+  const el = textEl.value
+  if (el) {
+    const pos = el.selectionStart || 0
+    const before = (el.value || '').slice(0, pos)
+    const m = before.match(/^\/[^\s/]*$/)
+    const start = m ? pos - m[0].length : pos
+    el.value = (el.value || '').slice(0, start) + (el.value || '').slice(pos)
+    text.value = el.value
+  }
+  emit('skill-picked', item)
+  nextTick(() => el?.focus())
+}
+
+function onSlashKey(e) {
+  if (!slashOpen.value) return
+  const n = slashItems.value.length
+  if (e.key === 'ArrowDown') { e.preventDefault(); slashIndex.value = n ? (slashIndex.value + 1) % n : 0; return }
+  if (e.key === 'ArrowUp') { e.preventDefault(); slashIndex.value = n ? (slashIndex.value - 1 + n) % n : 0; return }
+  if (e.key === 'Enter' || e.key === 'Tab') {
+    e.preventDefault()
+    const it = slashItems.value[slashIndex.value]
+    if (it) pickSlash(it)
+  }
+  if (e.key === 'Escape') { slashOpen.value = false }
+}
+
+/** 输入时：既调高度，也判断是不是正打在 @ 或 / 上 */
 function onInput(e) {
   autoSize(e)
   syncMention()
+  syncSlash()
 }
 </script>
 
@@ -446,6 +510,26 @@ function onInput(e) {
             @blur="mentionOpen = false"
           ></textarea>
           <slot name="attachments" />
+
+          <!-- / 候选：打 / 弹出技能清单 -->
+          <Transition name="ccpop">
+            <div v-if="slashOpen && slashItems.length" class="cc-mention" role="listbox">
+              <div class="cc-mention-head">技能</div>
+              <button
+                v-for="(it, i) in slashItems"
+                :key="it.name"
+                :class="['menu-item', { on: i === slashIndex }]"
+                type="button"
+                role="option"
+                :aria-selected="i === slashIndex"
+                @mousedown.prevent="pickSlash(it)"
+                @mouseenter="slashIndex = i"
+              >
+                <span class="mi-name">{{ it.name }}</span>
+                <span class="mi-sub">{{ it.when_to_use || it.description }}</span>
+              </button>
+            </div>
+          </Transition>
 
           <!-- @ 候选：打 @ 弹出资产库里的角色 / 场景 / 成片 -->
           <Transition name="ccpop">

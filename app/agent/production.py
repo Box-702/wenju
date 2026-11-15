@@ -47,6 +47,7 @@ class ProductionState(TypedDict, total=False):
     """生产工作流状态：只存 id 与计数，重活都在节点里落库。"""
 
     project_id: str
+    limit: int                     # 只拆前 N 场戏（0 = 全部）
     stage: str                     # 当前完成的阶段
     error: str | None
     script_version_id: str | None
@@ -125,8 +126,11 @@ def build_production_graph(
         from ..crew.director import run_director
 
         style = store.get_video_style(p.id) or {}
+        # 限场续跑：只拆前 N 场（对齐 N2D --shot-limit）
+        limit = int(state.get("limit") or 0)
+        scene_ids = [s.id for s in script.scenes[:limit]] if limit > 0 else None
         result = run_director(
-            llm, script, scene_ids=None,
+            llm, script, scene_ids=scene_ids,
             adaptation_type=p.adaptation_type,
             visual_style=style.get("visual_style"),
         )
@@ -300,16 +304,121 @@ def build_production_graph(
     return graph.compile()
 
 
+def estimate_production(store: Store, project_id: str) -> dict[str, Any]:
+    """跑这条流水线要动多少资源（动手之前就说清）。
+
+    报的是**确定的事实**，不是报价（D-53：界面不显示费用预估，因为预估与
+    实付会脱节；这里报的是资源量——复用哪些阶段、要补几张图、之后出片
+    要生成多少秒，这些在动手前就是确定的）。
+    """
+    out: dict[str, Any] = {
+        "project_id": project_id,
+        "stages": [],        # [{key, label, action: reuse|run, detail}]
+        "images_to_make": 0,
+        "shots": 0,
+        "film_units": 0,
+        "film_seconds": 0.0,
+    }
+    p = store.get_project(project_id)
+    if p is None:
+        return out
+
+    version = store.latest_version(p)
+    if version is not None:
+        out["stages"].append({
+            "key": "script", "label": "剧本", "action": "reuse",
+            "detail": f"复用现有版本（{len(version.script.scenes)} 场）",
+        })
+    else:
+        out["stages"].append({
+            "key": "script", "label": "剧本", "action": "run",
+            "detail": "新生成初稿（一次模型调用）",
+        })
+
+    breakdown = store.get_version_breakdown(version.id) if version is not None else []
+    if breakdown:
+        out["shots"] = sum(len(bd.get("shots") or []) for bd in breakdown)
+        out["stages"].append({
+            "key": "director", "label": "导演拆解", "action": "reuse",
+            "detail": f"复用现有方案（{len(breakdown)} 场 / {out['shots']} 个机位）",
+        })
+    else:
+        out["stages"].append({
+            "key": "director", "label": "导演拆解", "action": "run",
+            "detail": "新拆镜（一次模型调用）",
+        })
+
+    style = store.get_video_style(project_id) or {}
+    has_anchors = bool(style.get("character_appearances")) and bool(
+        style.get("environment_descriptions"))
+    if has_anchors:
+        out["stages"].append({
+            "key": "style", "label": "视觉风格", "action": "reuse",
+            "detail": "复用现有风格锚",
+        })
+    else:
+        out["stages"].append({
+            "key": "style", "label": "视觉风格", "action": "run",
+            "detail": "新建风格指南（一次模型调用）",
+        })
+
+    existing_refs = style.get("reference_images") or {}
+    if version is not None:
+        want = len(version.script.characters) + len(version.script.locations)
+        out["images_to_make"] = max(0, want - len(existing_refs))
+    if existing_refs:
+        out["stages"].append({
+            "key": "refs", "label": "参考图", "action": "reuse",
+            "detail": f"复用现有 {len(existing_refs)} 张",
+        })
+    elif version is not None:
+        out["stages"].append({
+            "key": "refs", "label": "参考图", "action": "run",
+            "detail": f"生成 {out['images_to_make']} 张定妆照 / 场景图（逐张生图）",
+        })
+    else:
+        # 还没有剧本：角色与场景的个数都不知道，不能编一个数字出来。
+        out["stages"].append({
+            "key": "refs", "label": "参考图", "action": "run",
+            "detail": "生成每个角色 1 张定妆照 + 每个场景 1 张场景图（数量待初稿完成后才知道）",
+        })
+
+    out["stages"].append({
+        "key": "prompts", "label": "视频提示词", "action": "run",
+        "detail": "逐镜写提示词（一次模型调用）",
+    })
+
+    # 出片资源量：已知镜头方案时能报准（生成单元数 + 总秒数）
+    video_version = None
+    if p.current_video_version_id:
+        video_version = store.get_video_version(p.current_video_version_id)
+    if video_version is not None and video_version.shots:
+        from ..video.service import generation_units
+
+        units = generation_units(video_version.shots)
+        out["film_units"] = len(units)
+        out["film_seconds"] = sum(
+            max(0.0, float(s.get("duration_sec") or 0))
+            for s in video_version.shots if isinstance(s, dict)
+        )
+    return out
+
+
 def run_production(
     store: Store,
     llm: LLM,
     settings: Settings,
     project_id: str,
     on_progress: Callable[[str, str], None] | None = None,
+    limit: int = 0,
 ) -> dict[str, Any]:
-    """同步跑完整条生产工作流（调用方自己决定放不放进后台线程）。"""
+    """同步跑完整条生产工作流（调用方自己决定放不放进后台线程）。
+
+    limit > 0 时只拆前 N 场戏（限场续跑，对齐 N2D 的 --shot-limit 语义：
+    这一轮只做这么多，剩下的留着下次接着做）。其余阶段照旧复用已有产物。
+    """
     graph = build_production_graph(store, llm, settings, on_progress=on_progress)
-    final: ProductionState = graph.invoke({"project_id": project_id})
+    final: ProductionState = graph.invoke({"project_id": project_id, "limit": int(limit or 0)})
     return {
         "project_id": project_id,
         "script_version_id": final.get("script_version_id"),

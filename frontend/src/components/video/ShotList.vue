@@ -33,12 +33,26 @@
           <span class="shot-count">{{ group.length }} 镜</span>
         </div>
         <div v-if="expanded[sceneId]" class="scene-shots">
-          <div
-            v-for="shot in group"
-            :key="shot.id"
-            :class="['shot-card', { selected: selectedShot === shot.id }]"
-            @click="$emit('select-shot', shot)"
-          >
+          <template v-for="shot in group" :key="shot.id">
+            <!-- 镜头组头：多机位组折叠成一行（组 = 一条视频 = 一次生成） -->
+            <div
+              v-if="isGroupHead(shot)"
+              class="shot-group-head"
+              @click.stop="toggleGroup(groupKeyOf(shot))"
+            >
+              <span class="expand-icon" :class="{ open: groupOpen[groupKeyOf(shot)] }">
+                <AppIcon name="chevron-right" />
+              </span>
+              <span class="sg-title">{{ groupTitle(shot) }}</span>
+              <span class="shot-count">{{ groupMembers(shot).length }} 机位 · {{ groupDuration(shot) }}s</span>
+              <span v-if="groupNeedsRevision(shot)" class="sg-warn">有机位需修改</span>
+              <span :class="['video-status', videoStatusClass(shot)]">{{ videoStatusLabel(shot) }}</span>
+            </div>
+            <div
+              v-if="!isGroupMember(shot) || groupOpen[groupKeyOf(shot)]"
+              :class="['shot-card', { selected: selectedShot === shot.id }]"
+              @click="$emit('select-shot', shot)"
+            >
             <div class="shot-top">
               <input
                 v-if="shownPrompt(shot)"
@@ -135,7 +149,8 @@
                 @click.stop="$emit('edit-prompt', shot)"
               >编辑提示词</button>
             </div>
-          </div>
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -164,6 +179,53 @@ const expanded = reactive({})
 const openShot = reactive({})
 const selectedIds = ref([])
 
+// ---- 镜头组（S4）：多机位组折叠成一行 ----
+// 组 = 一条视频 = 一次生成（app/video/service.py:generation_units 同口径）。
+// 组键按 (scene_id, group_id) 认——两个场景复用同名组键绝不能并成一段。
+const groupOpen = reactive({})
+
+function groupKeyOf(shot) {
+  if (!shot || !shot.group_id) return ''
+  return `${shot.scene_id || ''}::${shot.group_id}`
+}
+
+function groupMembers(shot) {
+  const key = groupKeyOf(shot)
+  if (!key) return []
+  return props.shots.filter((s) => groupKeyOf(s) === key)
+}
+
+function isGroupHead(shot) {
+  const members = groupMembers(shot)
+  return members.length >= 2 && members[0].id === shot.id
+}
+
+function isGroupMember(shot) {
+  const members = groupMembers(shot)
+  return members.length >= 2 && members[0].id !== shot.id
+}
+
+function groupTitle(shot) {
+  const subs = groupMembers(shot).map((m) => m.subject).filter(Boolean)
+  if (!subs.length) return shot.subject || '镜头组'
+  return subs.slice(0, 3).join(' → ') + (subs.length > 3 ? ' …' : '')
+}
+
+function groupDuration(shot) {
+  return groupMembers(shot)
+    .reduce((n, m) => n + Number(m.duration_sec || 0), 0)
+    .toFixed(1)
+}
+
+function groupNeedsRevision(shot) {
+  return groupMembers(shot).some((m) => m.prompt_status === 'needs_revision')
+}
+
+function toggleGroup(key) {
+  if (!key) return
+  groupOpen[key] = !groupOpen[key]
+}
+
 const groupedShots = computed(() => {
   const groups = {}
   for (const shot of props.shots) {
@@ -178,7 +240,7 @@ const groupedShots = computed(() => {
   return groups
 })
 const pendingShots = computed(() => props.shots.filter(
-  shot => shownPrompt(shot) && shot.prompt_status !== 'approved',
+  shot => shownPrompt(shot) && shot.prompt_status !== 'approved' && !isGroupMember(shot),
 ))
 const allPendingSelected = computed(() => (
   pendingShots.value.length > 0 &&
@@ -201,9 +263,15 @@ _initExpanded()
 function toggleScene(id) { expanded[id] = !expanded[id] }
 
 function toggleSelected(id, selected) {
+  // 勾组头 = 勾整组：组是一条视频，批准要批准整段
+  const shot = props.shots.find((s) => s.id === id)
+  const ids = [id]
+  if (shot && isGroupHead(shot)) {
+    ids.push(...groupMembers(shot).map((m) => m.id).filter((x) => x !== id))
+  }
   selectedIds.value = selected
-    ? [...new Set([...selectedIds.value, id])]
-    : selectedIds.value.filter(item => item !== id)
+    ? [...new Set([...selectedIds.value, ...ids])]
+    : selectedIds.value.filter((item) => !ids.includes(item))
 }
 
 function selectAllPending() {
@@ -401,4 +469,23 @@ function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + '...' : s }
 .detail-line { margin: 0 0 3px; font-size: var(--fs-xs); line-height: 1.6; color: var(--muted); }
 
 .shot-actions-row { display: flex; gap: 4px; }
+/* 镜头组头（S4）：多机位组折叠成一行 */
+.shot-group-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; margin-bottom: 6px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: color-mix(in oklch, var(--cyan) 6%, transparent);
+  cursor: pointer;
+}
+.shot-group-head:hover { border-color: var(--line-strong); }
+.shot-group-head .expand-icon {
+  display: inline-flex; font-size: 10px; color: var(--muted);
+  transition: transform 130ms var(--ease);
+}
+.shot-group-head .expand-icon.open { transform: rotate(90deg); }
+.sg-title {
+  font-size: 12px; font-weight: 600; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sg-warn { font-size: 10.5px; color: var(--warn, #d6a419); flex: none; }
 </style>

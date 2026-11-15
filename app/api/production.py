@@ -21,8 +21,8 @@ router = APIRouter()
 log = logging.getLogger(__name__)
 
 
-@router.post("/projects/{project_id}/production")
-def start_production(project_id: str) -> dict[str, object]:
+def _start_pipeline(project_id: str, limit: int = 0) -> dict[str, object]:
+    """起一条后台生产流水线（确认卡与 REST 入口共用）。"""
     store = deps.store()
     if store.get_project(project_id) is None:
         raise HTTPException(status_code=404, detail=f"项目不存在：{project_id}")
@@ -34,6 +34,7 @@ def start_production(project_id: str) -> dict[str, object]:
         result = run_production(
             store, deps.llm(), deps.settings(), project_id,
             on_progress=lambda stage, msg: runner.update_step(task.id, msg, "running"),
+            limit=int(limit or 0),
         )
         return "；".join(result.get("notes") or [])
 
@@ -42,6 +43,40 @@ def start_production(project_id: str) -> dict[str, object]:
         "task_id": task_id,
         "stages": [{"key": k, "label": v} for k, v in STAGE_LABELS.items()],
     }
+
+
+@router.post("/projects/{project_id}/production")
+def start_production(project_id: str, limit: int = 0) -> dict[str, object]:
+    """启动生产流水线（后台）。limit > 0 时只拆前 N 场戏（限场续跑）。"""
+    return _start_pipeline(project_id, limit)
+
+
+@router.post("/production/approvals/{approval_id}/confirm")
+def confirm_production(approval_id: str) -> dict[str, object]:
+    """确认并启动生产流水线（预算闸门的确认动作）。
+
+    生产流水线要花钱（模型调用 + 逐张生图），所以 Agent 只能**发起**
+    （start_production 工具），真正开跑由用户点确认卡触发——服务端硬闸门，
+    模型伪造不了（同 D-43 的出片批准）。
+    """
+    store = deps.store()
+    approval = store.get_pending_approval(approval_id)
+    if approval is None:
+        raise HTTPException(404, "确认请求不存在或已过期")
+    if approval.status != "pending":
+        raise HTTPException(409, f"这条确认请求已经是「{approval.status}」了")
+    if not str(approval.note or "").startswith("production"):
+        raise HTTPException(400, "这不是生产流水线的确认请求")
+    limit = 0
+    for item in approval.shot_ids:
+        if str(item).startswith("limit="):
+            try:
+                limit = int(str(item).split("=", 1)[1])
+            except ValueError:
+                limit = 0
+    store.resolve_pending_approval(approval_id, "confirmed")
+    started = _start_pipeline(approval.project_id, limit)
+    return {"ok": True, "approval_id": approval_id, **started}
 
 
 @router.post("/projects/{project_id}/reference-assets")
@@ -80,14 +115,19 @@ def start_reference_assets(project_id: str) -> dict[str, object]:
 
 @router.get("/projects/{project_id}/production")
 def production_status(project_id: str) -> dict[str, object]:
-    """最近一次生产任务的状态。
+    """最近一次生产任务的状态 + 这次再跑要动多少资源（预估）。
 
     按 project_id 过滤：任务面板是全局的，但生产任务是**作品级**的——
     不按作品过滤的话，A 作品会读到 B 作品刚跑的那次生产流水线结果
     （此前此函数忽略 project_id，返回全局最近一次）。
     """
+    from ..agent.production import estimate_production
+
     runner = deps.subagent_runner()
+    status: dict[str, object] = {"task_id": None, "status": "idle", "result": None}
     for t in runner.list_tasks(project_id=project_id):
         if t.name.startswith("生产流水线"):
-            return {"task_id": t.id, "status": t.status, "result": t.result}
-    return {"task_id": None, "status": "idle", "result": None}
+            status = {"task_id": t.id, "status": t.status, "result": t.result}
+            break
+    status["estimate"] = estimate_production(deps.store(), project_id)
+    return status

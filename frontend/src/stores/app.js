@@ -976,6 +976,19 @@ export async function submitVideoJob(shot) {
   }
 }
 
+/** 确认并启动生产流水线（预算闸门的确认动作）。 */
+export async function confirmProduction(approvalId) {
+  if (!approvalId) return null
+  try {
+    const r = await api(`/production/approvals/${approvalId}/confirm`, 'POST')
+    notify('生产流水线已启动，完成后提示词进入待审状态', 'ok')
+    return r
+  } catch (e) {
+    notify(`启动失败：${e.message}`, 'error')
+    return null
+  }
+}
+
 /** 设置视频版本里程碑（终稿标记）。剧本版本有「定为终稿」，视频版本此前没有。 */
 export async function setVideoVersionMilestone(versionId, milestone = 'final') {
   if (!versionId) return

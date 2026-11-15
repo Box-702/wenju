@@ -15,6 +15,7 @@ import VersionCard from './VersionCard.vue'
 import TaskCard from './TaskCard.vue'
 import ApprovalCard from './ApprovalCard.vue'
 import BatchStartedCard from './BatchStartedCard.vue'
+import ProductionBudgetCard from './ProductionBudgetCard.vue'
 import { mdToHtml, esc } from '../utils/markdown'
 import { STAGE_LABELS } from '../stores/app'
 
@@ -227,6 +228,7 @@ onUnmounted(() => clearTimeout(copiedTimer))
         <TaskCard v-else-if="p.type === 'sub_agent_started'" :payload="p" />
         <ApprovalCard v-else-if="p.type === 'prompt_approval'" :payload="p" />
         <BatchStartedCard v-else-if="p.type === 'batch_started'" :payload="p" />
+        <ProductionBudgetCard v-else-if="p.type === 'production_budget'" :payload="p" />
       </template>
     </template>
   </div>

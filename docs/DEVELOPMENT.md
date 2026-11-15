@@ -2541,6 +2541,37 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   `app/video/service.py`、`frontend/src/components/{ComposerCard,ChatComposer}.vue`；
   `tests/test_new_tools.py`（新增 19 条）。
 
+### 5.67 一键制作要过闸门：先说清这次要动多少资源（PLAN-shot-group S4，2026-11-15）
+
+- **症状**：`start_production` 是「一键」——点一下就跑五个阶段（剧本 / 拆镜 /
+  风格 / 逐张生图 / 逐镜写提示词），中间要花钱，**但用户事前不知道这次要
+  动多少**。而 S4 计划里的三条——「报预算」「确认卡」「续跑语义」——一条都没做。
+- **根因**：这条链是「模型工具直接开跑」的老路（D-43 的批准闸门只管了**出片**，
+  没管**生产流水线**本身）；「一键」这个词把花钱藏在了按钮后面。
+- **解法**：
+  1. **预算闸门**：`start_production` 工具改为**只发起**——算好预估、登记一条
+     pending 确认请求（服务端留痕）、发一张 `production_budget` 载荷卡，
+     **不直接开跑**。用户点卡上的「开始制作」才真的跑
+     （`POST /api/production/approvals/{id}/confirm`）。同 D-43：模型只能发起，
+     开跑的决定权在用户，服务端硬闸门模型伪造不了。
+  2. **报的是确定的事实，不是报价**：预估报「复用哪些阶段、要补几张图、之后
+     出片几段多少秒」——这些在动手前就是确定的；钱不是（D-53 已定界面不显示
+     费用预估，因为预估与实付会脱节：¥3.6 vs ¥27.7）。没有剧本初稿时，
+     图片数量**如实说不知道**，不编一个数字出来。
+  3. **限场续跑**：`start_production(project_id, limit=N)` 只拆前 N 场戏
+     （对齐 N2D 的 `--shot-limit` 语义），其余阶段照旧复用已有产物——
+     已完成的阶段自动复用本来就是流水线的既有行为（每个节点都先查
+     有没有现成产物）。
+- **顺带**：镜头卡按**镜头组**折叠（S4 的另一半）：组 = 一条视频 = 一次生成，
+  界面上一组折叠成一行（「组 N · X 机位 · Ys」+ 状态 + 展开/收起），
+  勾组头 = 勾整组，组内有机位被标「需修改」时组头亮出来。
+- **涉及文件**：`app/agent/production.py`（`estimate_production` / `limit`）、
+  `app/api/production.py`（预估 + 确认端点）、`app/chat/tools/production.py`、
+  `frontend/src/components/ProductionBudgetCard.vue`（新增）、
+  `frontend/src/components/MessageItem.vue`、`frontend/src/stores/app.js`、
+  `frontend/src/components/video/ShotList.vue`；
+  `tests/test_production_gate.py`（新增 7 条）。
+
 ## 六、排查手册（症状 → 先查什么）
 
 | 症状 | 先查 |
@@ -2926,3 +2957,25 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   改完提示词要跑 `python -m evals.run`——**本轮零花费未跑**，列为待办；
   ③ `search_history` 目前只搜正文关键词，没做语义检索（按项目定位，检索只做
   关键词，D-02）。
+
+### T-16 空缺全量修复 · 第八批：S4 组折叠 + 预算闸门 + 限场续跑（2026-11-15，完成，零花费）
+
+- **假设**：闸门可以用现有机制拼出来（pending_approvals 表 + 卡片载荷 +
+  一个确认端点），不必另造一套审批系统；限场只需把 scene_ids 传到导演节点。
+- **过程**：写 `estimate_production`（复用/新建各阶段、图片数、出片资源量）
+  → 工具改为只发起 + 发确认卡 → 确认端点（校验类型/状态/限场数 → 确认 → 起
+  流水线）→ ShotList 按组折叠（组键同后端口径 scene_id::group_id）
+  → 新增 7 条断言 → 全量回归 + 前端构建。
+- **发现的问题**：① 「同（作品, 会话）只保留一条 pending」这条既有规则
+  （`create_pending_approval` 会把旧的置 expired）让测试里先建的那条确认
+  请求直接过期——**同一件作品上只能有一条待确认**，这是设计不是 bug，但
+  写测试时必须按「后建的生效」来排；② 没有剧本初稿时，参考图数量是未知
+  的，预估里不能填 0 当成「不用生成」——改成明说「待初稿完成后才知道」；
+  ③ 限场数原本无处安放，临时借 `shot_ids_json` 存 `limit=N`（审批表没有
+  专门的字段）——能跑，但属于权宜之计，已在代码注释里说明。
+- **效果**：675 passed（基线 668，+7 新增 tests/test_production_gate.py）；
+  前端构建通过；ruff 致命子集 0、全量 494。
+- **遗留**：① 闸门的**真机体验未验证**（用户在对话里说「开始制作」→ 看到确认
+  卡 → 点「开始制作」→ 流水线跑起来），留待人工过一遍；② 限场数借用了
+  `shot_ids_json`，若以后审批表加字段应迁过去；③ 组折叠的默认状态是**展开**
+  （不先藏内容），收起靠用户点——避免一上来就看不见东西。

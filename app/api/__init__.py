@@ -7,10 +7,11 @@
 #   system.py      运行状态 / 后台任务 / 工作目录
 #   projects.py    项目生命周期、初稿生成、导入、落盘、笔记、文件浏览
 #   versions.py    剧本版本（含导出）
-#   agent_runs.py  改编智能体的运行与审阅
-#   chat.py        对话式 Agent 与会话管理
+#   chat.py        对话式 Agent 与会话管理（改编审阅也走这里，见 D-59）
 #   video.py       Provider / 模型偏好 / 视频版本 / 生成任务
 #   cast.py        资产库（角色形象 / 声音 / 图片 / 场景）与试听
+#   blockout.py    白模施工单与渲染状态（D-54）
+#   memory.py      记忆管理（列表 / 启停 / 删除）
 #   production.py  生产工作流（小说 → 提示词 整条流水线的启动与状态）
 #
 #   common.py      共享的序列化与落盘辅助
@@ -22,11 +23,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import agent_runs, assets, cast, chat, production, projects, system, versions, video
+from . import assets, blockout, cast, chat, memory, production, projects, system, versions, video
 
 router = APIRouter(prefix="/api")
 
-for _sub in (system, projects, versions, agent_runs, chat, video, assets, cast, production):
+for _sub in (
+    system, projects, versions, chat, video, assets, cast,
+    blockout, memory, production,
+):
     router.include_router(_sub.router)
 
 __all__ = ["router"]

@@ -51,6 +51,17 @@ async function onFileChosen(e) {
   importOpen.value = true
 }
 
+async function removeSkill(s) {
+  if (!confirm(`删除技能「${s.name}」？`)) return
+  try {
+    await api(`/skills/${encodeURIComponent(s.name)}`, 'DELETE')
+    notify(`已删除技能「${s.name}」`, 'ok')
+    await loadSkills()
+  } catch (e) {
+    notify(`删除失败：${e.message}`)
+  }
+}
+
 async function submitImport() {
   const text = importText.value.trim()
   if (!text) {
@@ -109,11 +120,23 @@ async function submitImport() {
       </p>
 
       <div class="skill-list">
-        <button v-for="s in skills" :key="s.name" class="skill-card" type="button" @click="pick(s)">
-          <div class="skill-title">{{ s.name }}</div>
-          <div class="skill-desc">{{ s.description }}</div>
-          <div v-if="s.when_to_use" class="skill-when">适用：{{ s.when_to_use }}</div>
-        </button>
+        <div v-for="s in skills" :key="s.name" class="skill-card-wrap">
+          <button class="skill-card" type="button" @click="pick(s)">
+            <div class="skill-title">
+              {{ s.name }}
+              <span v-if="s.user" class="skill-tag">我导入的</span>
+            </div>
+            <div class="skill-desc">{{ s.description }}</div>
+            <div v-if="s.when_to_use" class="skill-when">适用：{{ s.when_to_use }}</div>
+          </button>
+          <button
+            v-if="s.user"
+            class="skill-del"
+            type="button"
+            title="删除这个技能"
+            @click="removeSkill(s)"
+          ><AppIcon name="close" /></button>
+        </div>
         <div v-if="!skills.length" class="empty">还没有技能。导入一个 .md 开始。</div>
       </div>
 
@@ -216,5 +239,20 @@ async function submitImport() {
   background: rgba(0, 0, 0, .32); border: 1px solid var(--line); border-radius: var(--radius-md);
   padding: 10px 12px; color: var(--ink); font-family: var(--mono); font-size: 12px;
   resize: vertical;
+}
+/* 可删除的技能：用户导入的那些 */
+.skill-card-wrap { position: relative; }
+.skill-del {
+  position: absolute; top: 10px; right: 10px;
+  width: 24px; height: 24px; display: grid; place-items: center;
+  border-radius: var(--radius-sm); border: 1px solid var(--line);
+  background: transparent; color: var(--dim); cursor: pointer;
+}
+.skill-del:hover { color: var(--ink); border-color: var(--line-strong); }
+.skill-del .app-ic { width: 12px; height: 12px; }
+.skill-tag {
+  margin-left: 6px; padding: 1px 5px; border-radius: 3px;
+  font-size: 10.5px; font-family: var(--sans, inherit); font-weight: 400;
+  color: var(--dim); border: 1px solid var(--line);
 }
 </style>

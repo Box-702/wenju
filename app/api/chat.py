@@ -108,6 +108,12 @@ def list_skills_api(audience: str = "main") -> dict[str, Any]:
     from ..skills import list_skills
 
     metas = list_skills(audience=audience or None)
+    # 标出哪些是用户导入的：内置技能随代码走，删不掉；用户导入的可以删
+    # （DELETE /skills/{name} 此前有接口，但界面上没有入口）。
+    try:
+        user_names = {r["name"] for r in deps.store().list_user_skills()}
+    except Exception:  # noqa: BLE001
+        user_names = set()
     return {
         "skills": [
             {
@@ -115,6 +121,7 @@ def list_skills_api(audience: str = "main") -> dict[str, Any]:
                 "description": m.description,
                 "when_to_use": m.when_to_use,
                 "audience": m.audience,
+                "user": m.name in user_names,
             }
             for m in metas
         ]

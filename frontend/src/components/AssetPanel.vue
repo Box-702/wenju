@@ -60,6 +60,15 @@
           <button class="small ghost" :disabled="importing" @click="importInput?.click()" title="导入图片/视频">
             <AppIcon name="upload" /> {{ importing ? '导入中…' : '导入' }}
           </button>
+          <button
+            class="small ghost"
+            type="button"
+            title="用生图模型给角色和场景补齐定妆照与场景图"
+            :disabled="generatingAssets"
+            @click="onGenerateAssets"
+          >
+            <AppIcon name="image" /> {{ generatingAssets ? '生成中…' : '生成资产图' }}
+          </button>
           <button class="small ghost" type="button" title="查询并勾选可用音色" @click="voiceLibOpen = true">
             <AppIcon name="sound" /> 声音库
           </button>
@@ -97,6 +106,32 @@
             <span class="lm-title">{{ lib.project_title || '当前作品' }}</span>
             <span v-if="visualStyleLabel" class="lm-sub">画风 · {{ visualStyleLabel }}</span>
             <span v-if="missingCount > 0" class="lm-sub warn">{{ missingCount }} 项缺图</span>
+          </div>
+
+          <!-- 风格指南：下游提示词逐字复用的视觉锚，此前只在库里，界面看不到 -->
+          <div v-if="styleGuide" class="style-guide">
+            <div class="sg-head">
+              <span class="sg-title">风格指南</span>
+              <span class="sg-hint">每个镜头的提示词都逐字复用这里的锚</span>
+            </div>
+            <div v-if="styleGuide.color_palette?.length" class="sg-palette">
+              <span
+                v-for="c in styleGuide.color_palette"
+                :key="c"
+                class="sg-color"
+                :style="{ background: c }"
+                :title="c"
+              ></span>
+            </div>
+            <div v-if="styleGuide.lighting_style" class="sg-line">光线 · {{ styleGuide.lighting_style }}</div>
+            <div v-if="styleGuide.camera_style" class="sg-line">运镜 · {{ styleGuide.camera_style }}</div>
+            <div v-if="styleGuideEntries.length" class="sg-anchors">
+              <div v-for="e in styleGuideEntries" :key="e.id" class="sg-anchor">
+                <span class="sg-anchor-name">{{ e.name }}</span>
+                <span class="sg-anchor-text">{{ e.text }}</span>
+              </div>
+            </div>
+            <div v-else class="sg-empty">还没有生成风格指南（在对话里说「生成风格指南」）。</div>
           </div>
 
           <div v-if="typeTab === 'character'" class="asset-grid">
@@ -203,6 +238,25 @@
                 <div class="asset-line">
                   <span class="asset-badge">{{ a.source === 'shot' ? '单镜' : '整片' }}</span>
                   <span class="asset-badge">{{ sourceZh(a.source) }}</span>
+                </div>
+                <a class="asset-dl" :href="a.url" :download="a.name || true" target="_blank" rel="noopener">
+                  <AppIcon name="download" /> 下载
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <div v-else-if="typeTab === 'blockout'" class="asset-grid">
+            <div v-for="a in blockoutOf(assets)" :key="a.id" class="asset-card clickable" @click="previewAsset(a)">
+              <div class="asset-pic scene">
+                <video v-if="a.url" :src="a.url" muted playsinline preload="metadata"></video>
+                <div v-else class="asset-placeholder">白模</div>
+              </div>
+              <div class="asset-meta">
+                <div class="asset-line"><span class="asset-name" :title="a.name">{{ a.name || '白模' }}</span></div>
+                <div class="asset-line">
+                  <span class="asset-badge">白模</span>
+                  <span v-if="a.duration_sec" class="asset-badge">{{ a.duration_sec.toFixed(1) }}s</span>
                 </div>
                 <a class="asset-dl" :href="a.url" :download="a.name || true" target="_blank" rel="noopener">
                   <AppIcon name="download" /> 下载
@@ -343,7 +397,7 @@
 // 对话里引用的每个人物白模 / 场景图都能在这里按编号找到原图。
 // =====================================================================
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { store, selectProject, notify, loadShots } from '../stores/app.js'
+import { store, selectProject, notify, loadShots, generateAssetImages } from '../stores/app.js'
 
 /** 打开预览浮层：卡片点一下就播/看大图，不用先下载再本地打开。 */
 function previewAsset(a) {
@@ -395,6 +449,7 @@ const TYPE_TABS = [
   { key: 'character', label: '角色' },
   { key: 'location', label: '场景' },
   { key: 'clip', label: '成片' },
+  { key: 'blockout', label: '白模' },
   { key: 'material', label: '参考素材' },
 ]
 const scope = ref('current')
@@ -402,7 +457,10 @@ const typeTab = ref('character')
 
 const ASSET_KIND_ZH = { video: '视频', image: '图片', audio: '音频' }
 const kindZh = (k) => ASSET_KIND_ZH[k] || '素材'
-const SOURCE_ZH = { upload: '手动导入', finalize: '流水线产出', url: '外部链接', shot: '逐镜生成' }
+const SOURCE_ZH = {
+  upload: '手动导入', finalize: '流水线产出', url: '外部链接',
+  shot: '逐镜生成', blockout: '白模渲染',
+}
 const sourceZh = (s) => SOURCE_ZH[s] || ''
 
 const visualStyleZh = (v) => VISUAL_STYLE_ZH[v] || v || ''
@@ -412,7 +470,12 @@ const visualStyleZh = (v) => VISUAL_STYLE_ZH[v] || v || ''
    - 素材 = source=upload/url：用户导入 / 登记的参考素材（是输入，给生成当参考）
    之前按 kind 分会把「用户上传的参考视频」也算成成片，混淆了产出与输入。 */
 const clipsOf = (list) => (list || []).filter((a) => a.source === 'finalize' || a.source === 'shot')
-const materialOf = (list) => (list || []).filter((a) => a.source !== 'finalize' && a.source !== 'shot')
+// 白模（D-54）有自己的位置：它是「空间关系的草图」，不是给模型当参考的素材，
+// 混进「参考素材」里用户根本认不出那是自己做的白模。
+const blockoutOf = (list) => (list || []).filter((a) => a.source === 'blockout')
+const materialOf = (list) => (list || []).filter(
+  (a) => a.source !== 'finalize' && a.source !== 'shot' && a.source !== 'blockout',
+)
 
 /** 页签角标：当前范围下各类型的数量。 */
 const counts = computed(() => {
@@ -421,6 +484,7 @@ const counts = computed(() => {
       character: lib.characters.length,
       location: lib.locations.length,
       clip: clipsOf(assets.value).length,
+      blockout: blockoutOf(assets.value).length,
       material: materialOf(assets.value).length,
     }
   }
@@ -428,11 +492,14 @@ const counts = computed(() => {
     ...(all.assets || []).filter((a) => a.source === 'finalize' || a.source === 'shot'),
     ...(all.projects || []).flatMap((p) => p.clips || []),
   ]
-  const allMaterials = (all.assets || []).filter((a) => a.source !== 'finalize' && a.source !== 'shot')
+  const allMaterials = (all.assets || []).filter(
+    (a) => a.source !== 'finalize' && a.source !== 'shot' && a.source !== 'blockout',
+  )
   return {
     character: all.projects.reduce((n, p) => n + (p.characters || []).length, 0),
     location: all.projects.reduce((n, p) => n + (p.locations || []).length, 0),
     clip: allClips.length,
+    blockout: (all.assets || []).filter((a) => a.source === 'blockout').length,
     material: allMaterials.length,
   }
 })
@@ -585,6 +652,37 @@ const VISUAL_STYLE_ZH = {
   ink: '水墨国风',
 }
 const visualStyleLabel = computed(() => VISUAL_STYLE_ZH[lib.visual_style] || lib.visual_style || '')
+
+/* 风格指南正文（后端 /library 已返回）：色板、光线、运镜风格，以及每个角色
+   的外貌锚与每个场景的环境锚——这些正是下游提示词逐字复用的东西。 */
+const styleGuide = computed(() => lib.style_guide || null)
+const styleGuideEntries = computed(() => {
+  const sg = styleGuide.value
+  if (!sg) return []
+  const out = []
+  for (const [cid, text] of Object.entries(sg.character_appearances || {})) {
+    const c = (lib.characters || []).find((x) => x.char_id === cid)
+    out.push({ id: cid, name: c ? c.name : cid, text })
+  }
+  for (const [lid, text] of Object.entries(sg.environment_descriptions || {})) {
+    const l = (lib.locations || []).find((x) => x.loc_id === lid)
+    out.push({ id: lid, name: l ? l.name : lid, text })
+  }
+  return out
+})
+
+/* 「生成资产图」：此前 store 里有这个动作但界面上没有入口（只在输入框的
+   「＋」菜单里塞了一句触发语）。用户要的是「点一下就把资产补齐」。 */
+const generatingAssets = ref(false)
+async function onGenerateAssets() {
+  generatingAssets.value = true
+  try {
+    await generateAssetImages()
+    await loadLibrary()
+  } finally {
+    generatingAssets.value = false
+  }
+}
 
 const GENDER_ZH = { male: '男', female: '女' }
 function genderZh(g) {
@@ -914,4 +1012,24 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 .asset-dl .app-ic { width: 12px; height: 12px; }
 
 .lib-empty { padding: 8px 14px; font-size: var(--fs-xs); color: var(--dim); line-height: 1.7; }
+/* 风格指南卡：色板 / 光线 / 运镜 / 逐字锚 */
+.style-guide {
+  margin: 8px 0 12px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: var(--panel);
+}
+.sg-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.sg-title { font-size: var(--fs-sm); font-weight: 600; color: var(--ink); }
+.sg-hint { font-size: 11px; color: var(--dim); }
+.sg-palette { display: flex; gap: 4px; margin-bottom: 6px; }
+.sg-color {
+  width: 16px; height: 16px; border-radius: 3px;
+  border: 1px solid var(--line); display: inline-block;
+}
+.sg-line { font-size: 11.5px; color: var(--muted); line-height: 1.7; }
+.sg-anchors { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.sg-anchor { display: flex; gap: 8px; font-size: 11.5px; line-height: 1.6; }
+.sg-anchor-name { flex: none; min-width: 64px; color: var(--ink); font-weight: 600; }
+.sg-anchor-text { color: var(--muted); word-break: break-word; }
+.sg-empty { font-size: 11.5px; color: var(--dim); }
 </style>

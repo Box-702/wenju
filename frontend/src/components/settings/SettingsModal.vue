@@ -254,18 +254,30 @@
             </div>
           </div>
 
-          <!-- 视频生成 -->
+          <!-- 视频生成：多厂商（此前写死 MiniMax，后端其实注册了 Seedance） -->
           <div v-if="tab === 'video'" class="section">
-            <h4>视频生成（MiniMax 海螺）</h4>
+            <h4>视频生成</h4>
+            <div class="form-row">
+              <label>厂商</label>
+              <div class="provider-pills">
+                <button
+                  v-for="p in VIDEO_PROVIDERS"
+                  :key="p.name"
+                  :class="['pill', { on: videoForm.provider === p.name }]"
+                  type="button"
+                  @click="selectVideoProvider(p.name)"
+                >{{ p.label }}</button>
+              </div>
+            </div>
             <div class="active-line">
-              <template v-if="minimaxRow">
-                <span :class="['status-dot', minimaxRow.configured ? 'on' : 'off']"></span>
-                已配置 <strong>MiniMax</strong>
-                · 模型 <strong>{{ minimaxModelLabel }}</strong>
-                <span class="active-src">用自己的 Key，费用直接走你的 MiniMax 账户</span>
+              <template v-if="videoRow">
+                <span :class="['status-dot', videoRow.configured ? 'on' : 'off']"></span>
+                已配置 <strong>{{ videoRow.label || videoForm.provider }}</strong>
+                · 模型 <strong>{{ videoModelLabel }}</strong>
+                <span class="active-src">用自己的 Key，费用直接走你的账户</span>
               </template>
               <template v-else>
-                填入你的 MiniMax API Key 后即可生成视频
+                填入 API Key 后即可生成视频
               </template>
             </div>
             <div class="form-row">
@@ -275,7 +287,7 @@
                   :type="showVideoKey ? 'text' : 'password'"
                   v-model="videoForm.apiKey"
                   class="modal-input"
-                  :placeholder="minimaxRow?.configured ? '留空 = 保持不变' : 'MiniMax 开放平台 API Key'"
+                  :placeholder="videoRow?.configured ? '留空 = 保持不变' : 'API Key'"
                 />
                 <button class="small" @click="showVideoKey = !showVideoKey">{{ showVideoKey ? '隐藏' : '显示' }}</button>
               </div>
@@ -283,23 +295,67 @@
             <div class="form-row">
               <label>模型</label>
               <select v-model="videoForm.model" class="modal-select">
-                <option v-for="opt in VIDEO_MODEL_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                <option v-for="opt in videoModelOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                 <option value="custom">自定义…</option>
               </select>
             </div>
             <div v-if="videoForm.model === 'custom'" class="form-row">
               <label>自定义模型名</label>
-              <input v-model.trim="videoForm.customModel" class="modal-input" placeholder="例如 MiniMax-H3" />
+              <input v-model.trim="videoForm.customModel" class="modal-input" placeholder="模型名" />
             </div>
             <div class="form-row">
               <label>Base URL（可选）</label>
-              <input v-model.trim="videoForm.baseUrl" class="modal-input" placeholder="默认 https://api.minimax.cn" />
+              <input v-model.trim="videoForm.baseUrl" class="modal-input" placeholder="留空用官方地址" />
             </div>
             <p class="pref-hint">
-              海外账户填 https://api.minimaxi.com；Key 与模型只存在本机数据库，不经过任何第三方。
+              Key 与模型只存在本机数据库，不经过任何第三方。MiniMax 海外账户填 https://api.minimaxi.com。
             </p>
             <div class="form-actions">
-              <button class="primary" @click="saveMinimax">保存</button>
+              <button class="primary" @click="saveVideoProvider">保存</button>
+            </div>
+          </div>
+
+          <!-- 语音合成（配音）：此前只有后端支持，界面上根本建不了 TTS 厂商 -->
+          <div v-if="tab === 'tts'" class="section">
+            <h4>语音合成（配音）</h4>
+            <div class="active-line">
+              <template v-if="ttsRow">
+                <span :class="['status-dot', ttsRow.configured ? 'on' : 'off']"></span>
+                已配置 <strong>{{ ttsRow.label || 'MiniMax' }}</strong>
+                · 模型 <strong>{{ ttsForm.model }}</strong>
+              </template>
+              <template v-else>
+                填入 MiniMax API Key 后可用配音（成片默认走原生音轨，配音是可选）
+              </template>
+            </div>
+            <div class="form-row">
+              <label>API Key</label>
+              <div class="key-row">
+                <input
+                  :type="showTtsKey ? 'text' : 'password'"
+                  v-model="ttsForm.apiKey"
+                  class="modal-input"
+                  :placeholder="ttsRow?.configured ? '留空 = 保持不变' : 'MiniMax 开放平台 API Key'"
+                />
+                <button class="small" @click="showTtsKey = !showTtsKey">{{ showTtsKey ? '隐藏' : '显示' }}</button>
+              </div>
+            </div>
+            <div class="form-row">
+              <label>模型</label>
+              <select v-model="ttsForm.model" class="modal-select">
+                <option v-for="opt in TTS_MODEL_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                <option value="custom">自定义…</option>
+              </select>
+            </div>
+            <div v-if="ttsForm.model === 'custom'" class="form-row">
+              <label>自定义模型名</label>
+              <input v-model.trim="ttsForm.customModel" class="modal-input" placeholder="例如 speech-02-hd" />
+            </div>
+            <p class="pref-hint">
+              同一个 MiniMax Key 可以同时用于对话、视频与配音——在设置里各填一次即可（都存在本机数据库）。
+            </p>
+            <div class="form-actions">
+              <button class="primary" @click="saveTtsProvider">保存</button>
             </div>
           </div>
 
@@ -410,15 +466,81 @@
             <div v-else class="llm-detail"><div class="pop-empty">左边选一个厂商。</div></div>
           </div>
 
-          <!-- 模型偏好 -->
+          <!-- 模型偏好：五类任务各一个（此前只暴露了对话任务） -->
           <div v-if="tab === 'prefs'" class="section">
             <h4>任务模型偏好</h4>
-            <div class="active-line">
-              对话任务：<strong>{{ chatPrefLabel }}</strong>
-              <span class="active-src">{{ chatPref ? '界面指定' : '未指定' }}</span>
+            <div v-for="task in PREF_TASKS" :key="task.key" class="pref-row">
+              <span class="pref-task">{{ task.label }}</span>
+              <select
+                class="modal-select pref-select"
+                :value="prefProviderId(task.key)"
+                @change="setPref(task.key, $event.target.value)"
+              >
+                <option value="">未指定（用默认）</option>
+                <option v-for="p in providersForTask(task.key)" :key="p.id" :value="p.id">
+                  {{ p.label || p.name }}{{ p.config?.model ? ' · ' + p.config.model : '' }}
+                </option>
+              </select>
+              <button
+                v-if="prefProviderId(task.key)"
+                class="small ghost"
+                @click="clearPref(task.key)"
+              >清除</button>
             </div>
             <p class="pref-hint">
-              在「对话模型」里选中厂商后点「设为默认」即可切换。模型配置只走这里（自带 Key），不读环境变量。
+              每类任务都可以单独指定厂商与模型；留空则用默认。模型配置只走这里（自带 Key），不读环境变量。
+            </p>
+          </div>
+
+          <!-- 记忆管理：此前只有对话工具能写，用户看不到自己让 Agent 记住了什么 -->
+          <div v-if="tab === 'memory'" class="section">
+            <h4>记忆</h4>
+            <p class="pref-hint">
+              Agent 记住的偏好、决定与反馈都在这里，可以停用或删除。停用的记忆不再影响后续对话。
+            </p>
+            <div v-if="!memories.length" class="pop-empty">还没有记忆。</div>
+            <div v-for="m in memories" :key="m.id" class="memory-row">
+              <div class="mem-main">
+                <div class="mem-text">{{ m.content }}</div>
+                <div class="mem-meta">
+                  <span class="mono">{{ scopeLabel(m.scope) }}</span>
+                  <span class="mono">{{ kindLabel(m.kind) }}</span>
+                  <span v-if="m.source === 'auto'" class="mono">自动沉淀</span>
+                </div>
+              </div>
+              <div class="mem-actions">
+                <button class="small ghost" @click="toggleMemory(m)">
+                  {{ m.active ? '停用' : '启用' }}
+                </button>
+                <button class="small ghost" @click="removeMemory(m)">删除</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 工作目录：此前后端有配置接口，界面上没有入口（未配置时那些按钮是死路） -->
+          <div v-if="tab === 'workspace'" class="section">
+            <h4>工作目录</h4>
+            <div class="active-line">
+              当前：<strong>{{ workspaceRoot || '未设置' }}</strong>
+              <span class="active-src">{{ workspacePersist ? '剧本与成片会落盘到这里' : '仅应用内，不落盘' }}</span>
+            </div>
+            <div class="form-row">
+              <label>目录路径</label>
+              <input v-model.trim="workspaceRootInput" class="modal-input" placeholder="例如 D:\短剧项目" />
+            </div>
+            <div class="form-row">
+              <label>落盘</label>
+              <div class="key-row">
+                <input type="checkbox" v-model="workspacePersist" />
+                <span class="pref-hint">把剧本、导出与成片写成真实文件</span>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button class="ghost" @click="pickWorkspaceDir">选择文件夹…</button>
+              <button class="primary" @click="saveWorkspace">保存</button>
+            </div>
+            <p class="pref-hint">
+              选文件夹会弹出系统窗口（服务端就是本机）。也可以直接填路径。
             </p>
           </div>
         </div>
@@ -430,6 +552,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { api } from '../../api.js'
+import { selectWorkspaceDirectory, setWorkspace, store } from '../../stores/app.js'
 import AppIcon from '../AppIcon.vue'
 
 const props = defineProps({ open: Boolean })
@@ -440,7 +563,10 @@ const tabs = [
   { key: 'llm', label: '对话模型' },
   { key: 'image', label: '生图模型' },
   { key: 'video', label: '视频生成' },
+  { key: 'tts', label: '语音合成' },
   { key: 'prefs', label: '模型偏好' },
+  { key: 'memory', label: '记忆' },
+  { key: 'workspace', label: '工作目录' },
 ]
 
 // ---- 可选模型清单（value=custom 时用自定义输入框） ----
@@ -452,6 +578,22 @@ const VIDEO_MODEL_OPTIONS = [
   { value: 'MiniMax-H3-Lite', label: 'MiniMax-H3-Lite（默认，¥0.16-0.26/s，批量试错）' },
   { value: 'MiniMax-H3-Highspeed', label: 'MiniMax-H3-Highspeed（¥0.26-0.40/s，质量速度均衡）' },
   { value: 'MiniMax-H3', label: 'MiniMax-H3（¥0.50-0.80/s，画质优先·成片评审用）' },
+]
+
+// 视频厂商表：后端注册了两个（app/video/registry.py），此前界面只露 MiniMax。
+const VIDEO_PROVIDERS = [
+  { name: 'minimax', label: 'MiniMax 海螺' },
+  { name: 'seedance', label: '火山方舟 Seedance' },
+]
+const SEEDANCE_MODEL_OPTIONS = [
+  { value: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0 标准档' },
+  { value: 'doubao-seedance-2-0-fast-260128', label: 'Seedance 2.0 快速档' },
+  { value: 'doubao-seedance-2-0-mini-260615', label: 'Seedance 2.0 mini 档' },
+]
+// 配音模型：MiniMax T2A。
+const TTS_MODEL_OPTIONS = [
+  { value: 'speech-02-hd', label: 'speech-02-hd（清晰度优先）' },
+  { value: 'speech-02-turbo', label: 'speech-02-turbo（速度优先）' },
 ]
 
 // ---- 对话模型：内置目录 + 一步流（D-42）----
@@ -899,9 +1041,19 @@ async function deleteLlm(p) {
 // ---- 视频 Provider（MiniMax，用户自带 Key 与模型）----
 const videoProviders = ref([])
 const showVideoKey = ref(false)
-const videoForm = reactive({ apiKey: '', model: 'MiniMax-H3-Lite', customModel: '', baseUrl: '' })
-const minimaxRow = computed(() => videoProviders.value.find(p => p.name === 'minimax'))
-const minimaxModelLabel = computed(() => minimaxRow.value?.config?.model || 'MiniMax-H3-Lite')
+const videoForm = reactive({
+  provider: 'minimax', apiKey: '', model: 'MiniMax-H3-Lite', customModel: '', baseUrl: '',
+})
+const videoRow = computed(() => videoProviders.value.find(p => p.name === videoForm.provider) || null)
+const videoModelOptions = computed(
+  () => (videoForm.provider === 'seedance' ? SEEDANCE_MODEL_OPTIONS : VIDEO_MODEL_OPTIONS),
+)
+const videoModelLabel = computed(() => {
+  const cur = videoRow.value?.config?.model || ''
+  if (!cur) return '未设置'
+  const opt = videoModelOptions.value.find(o => o.value === cur)
+  return opt ? opt.label.split('（')[0] : cur
+})
 
 // ---- 生图模型：厂商列表 + 模型清单（2026-11-13 与对话模型同构，用户指正）----
 const imageInfo = ref({ available: false, provider: '', label: '', model: '', source: 'none' })
@@ -1022,35 +1174,47 @@ async function loadProviders() {
     const all = await api('/providers')
     videoProviders.value = all.filter(p => p.kind === 'video')
     imageProviders.value = all.filter(p => p.kind === 'image')
+    // TTS 此前被这一行直接丢掉——kind='tts' 的厂商在界面上根本建不出来，
+    // 配音只能吃环境变量里的 key（D-48 之后那条路已经退役）。
+    ttsProviders.value = all.filter(p => p.kind === 'tts')
     llmProviders.value = all.filter(p => p.kind === 'llm').map(p => ({ ...p, testing: false, testResult: null }))
   } catch {}
   syncVideoForm()
+  syncTtsForm()
 }
 
-/** 用已保存的 MiniMax 配置回填表单（Key 永远留空，表示「保持不变」）。 */
+/** 切换视频厂商：回填该厂商已保存的配置（Key 永远留空，表示「保持不变」）。 */
+function selectVideoProvider(name) {
+  videoForm.provider = name
+  syncVideoForm()
+}
+
+/** 用已保存的配置回填表单（Key 永远留空）。 */
 function syncVideoForm() {
   videoForm.apiKey = ''
-  const current = minimaxRow.value?.config?.model || 'MiniMax-H3-Lite'
-  if (!VIDEO_MODEL_OPTIONS.some((o) => o.value === current) && !videoForm.customModel) {
+  const opts = videoModelOptions.value
+  const current = videoRow.value?.config?.model || opts[0]?.value || ''
+  if (!opts.some((o) => o.value === current) && !videoForm.customModel) {
     videoForm.model = 'custom'
     videoForm.customModel = current
-  } else if (VIDEO_MODEL_OPTIONS.some((o) => o.value === current)) {
+  } else {
     videoForm.model = current
   }
-  videoForm.baseUrl = minimaxRow.value?.base_url || ''
+  videoForm.baseUrl = videoRow.value?.base_url || ''
 }
 
-async function saveMinimax() {
+async function saveVideoProvider() {
   const key = videoForm.apiKey.trim()
   const model = videoForm.model === 'custom' ? videoForm.customModel.trim() : videoForm.model
-  if (!minimaxRow.value && !key) {
-    alert('请先填入 MiniMax API Key')
+  const spec = VIDEO_PROVIDERS.find(p => p.name === videoForm.provider)
+  if (!videoRow.value && !key) {
+    alert(`请先填入 ${spec?.label || videoForm.provider} 的 API Key`)
     return
   }
   try {
     const config = model ? { model } : {}
-    if (minimaxRow.value) {
-      await api(`/providers/${minimaxRow.value.id}`, 'PATCH', {
+    if (videoRow.value) {
+      await api(`/providers/${videoRow.value.id}`, 'PATCH', {
         api_key: key || undefined,
         base_url: videoForm.baseUrl,
         config,
@@ -1058,14 +1222,196 @@ async function saveMinimax() {
     } else {
       await api('/providers', 'POST', {
         kind: 'video',
-        name: 'minimax',
-        label: 'MiniMax 海螺',
+        name: videoForm.provider,
+        label: spec?.label || videoForm.provider,
         api_key: key,
         base_url: videoForm.baseUrl,
         config,
       })
     }
     await loadProviders()
+  } catch (e) {
+    alert(`保存失败：${e.message}`)
+  }
+}
+
+// ---- 语音合成（配音）----
+const ttsProviders = ref([])
+const showTtsKey = ref(false)
+const ttsForm = reactive({ apiKey: '', model: 'speech-02-hd', customModel: '' })
+const ttsRow = computed(() => ttsProviders.value.find(p => p.name === 'minimax') || null)
+
+function syncTtsForm() {
+  ttsForm.apiKey = ''
+  const current = ttsRow.value?.config?.model || TTS_MODEL_OPTIONS[0].value
+  if (!TTS_MODEL_OPTIONS.some(o => o.value === current) && !ttsForm.customModel) {
+    ttsForm.model = 'custom'
+    ttsForm.customModel = current
+  } else {
+    ttsForm.model = current
+  }
+}
+
+async function saveTtsProvider() {
+  const key = ttsForm.apiKey.trim()
+  const model = ttsForm.model === 'custom' ? ttsForm.customModel.trim() : ttsForm.model
+  if (!ttsRow.value && !key) {
+    alert('请先填入 MiniMax API Key')
+    return
+  }
+  try {
+    const config = model ? { model } : {}
+    if (ttsRow.value) {
+      await api(`/providers/${ttsRow.value.id}`, 'PATCH', {
+        api_key: key || undefined,
+        config,
+      })
+    } else {
+      await api('/providers', 'POST', {
+        kind: 'tts',
+        name: 'minimax',
+        label: 'MiniMax 配音',
+        api_key: key,
+        config,
+        enabled: true,
+      })
+    }
+    await loadProviders()
+  } catch (e) {
+    alert(`保存失败：${e.message}`)
+  }
+}
+
+// ---- 模型偏好（五类任务）----
+const PREF_TASKS = [
+  { key: 'chat', label: '对话', kind: 'llm' },
+  { key: 'screenplay', label: '剧本生成', kind: 'llm' },
+  { key: 'shot_design', label: '镜头设计', kind: 'llm' },
+  { key: 'video_gen', label: '视频生成', kind: 'video' },
+  { key: 'image_gen', label: '图片生成', kind: 'image' },
+  { key: 'tts', label: '语音合成', kind: 'tts' },
+]
+const prefs = ref([])
+
+function allProviderRows() {
+  return [
+    ...llmProviders.value,
+    ...imageProviders.value,
+    ...videoProviders.value,
+    ...ttsProviders.value,
+  ]
+}
+
+function providersForTask(task) {
+  const kind = (PREF_TASKS.find(t => t.key === task) || {}).kind
+  return allProviderRows().filter(p => p.kind === kind)
+}
+
+function prefProviderId(task) {
+  const p = prefs.value.find(x => x.task_type === task && x.provider_id)
+  return p ? p.provider_id : ''
+}
+
+async function loadPrefs() {
+  try {
+    prefs.value = await api('/models/preferences')
+  } catch { prefs.value = [] }
+}
+
+async function setPref(task, providerId) {
+  if (!providerId) return clearPref(task)
+  const p = allProviderRows().find(x => x.id === providerId)
+  try {
+    await api('/models/preferences', 'PUT', {
+      task_type: task,
+      provider_id: providerId,
+      model_name: p?.config?.model || '',
+      is_default: true,
+    })
+    await loadPrefs()
+  } catch (e) {
+    alert(`设置失败：${e.message}`)
+  }
+}
+
+async function clearPref(task) {
+  try {
+    await api(`/models/preferences/${task}`, 'DELETE')
+    await loadPrefs()
+  } catch (e) {
+    alert(`清除失败：${e.message}`)
+  }
+}
+
+// ---- 记忆管理 ----
+const memories = ref([])
+
+async function loadMemories() {
+  try {
+    const q = store.pid ? `?project_id=${encodeURIComponent(store.pid)}` : ''
+    const r = await api('/memories' + q)
+    memories.value = r.memories || []
+  } catch { memories.value = [] }
+}
+
+async function toggleMemory(m) {
+  try {
+    await api(`/memories/${m.id}?active=${!m.active}`, 'PUT')
+    await loadMemories()
+  } catch (e) {
+    alert(`操作失败：${e.message}`)
+  }
+}
+
+async function removeMemory(m) {
+  try {
+    await api(`/memories/${m.id}`, 'DELETE')
+    await loadMemories()
+  } catch (e) {
+    alert(`删除失败：${e.message}`)
+  }
+}
+
+function scopeLabel(s) {
+  return { global: '全局', project: '本作品', conversation: '本次对话' }[s] || s
+}
+
+function kindLabel(k) {
+  return { preference: '偏好', decision: '决定', feedback: '反馈' }[k] || k
+}
+
+// ---- 工作目录 ----
+const workspaceRoot = ref('')
+const workspaceRootInput = ref('')
+const workspacePersist = ref(true)
+
+async function loadWorkspaceInfo() {
+  try {
+    const ws = await api('/workspace')
+    workspaceRoot.value = ws.root || ''
+    workspaceRootInput.value = ws.root || ''
+    workspacePersist.value = ws.persist !== false
+  } catch { /* 保持占位 */ }
+}
+
+async function pickWorkspaceDir() {
+  try {
+    const path = await selectWorkspaceDirectory()
+    if (path) {
+      workspaceRootInput.value = path
+      workspaceRoot.value = path
+      workspacePersist.value = true
+    }
+  } catch (e) {
+    alert(`选文件夹失败：${e.message}`)
+  }
+}
+
+async function saveWorkspace() {
+  try {
+    await setWorkspace(workspaceRootInput.value, workspacePersist.value)
+    await loadWorkspaceInfo()
+    alert('工作目录已保存')
   } catch (e) {
     alert(`保存失败：${e.message}`)
   }
@@ -1079,6 +1425,9 @@ watch(() => props.open, (v) => {
     loadChatPref()
     loadImagePrefs()
     loadImageInfo()
+    loadPrefs()
+    loadMemories()
+    loadWorkspaceInfo()
   }
 })
 
@@ -1284,4 +1633,27 @@ onMounted(() => {
 .disc-row input[type='checkbox'] { accent-color: #fff; flex: none; }
 .dr-model { font-family: var(--mono); font-size: 12px; }
 .dr-have { margin-left: auto; font-size: 10.5px; color: var(--dim); flex: none; }
+
+/* 视频厂商切换（多厂商） */
+.provider-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.pill {
+  padding: 5px 12px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--line); background: transparent; color: var(--muted);
+}
+.pill.on { border-color: var(--line-strong); color: var(--ink); background: rgba(255, 255, 255, .05); }
+
+/* 模型偏好：五类任务一行 */
+.pref-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.pref-task { min-width: 84px; font-size: var(--fs-sm); color: var(--ink); }
+.pref-select { flex: 1; min-width: 0; }
+
+/* 记忆列表 */
+.memory-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--line);
+}
+.mem-main { flex: 1; min-width: 0; }
+.mem-text { font-size: var(--fs-sm); line-height: 1.6; color: var(--ink); word-break: break-word; }
+.mem-meta { display: flex; gap: 8px; margin-top: 3px; font-size: 11px; color: var(--dim); }
+.mem-actions { display: flex; gap: 6px; flex: none; }
 </style>

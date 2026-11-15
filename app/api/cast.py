@@ -117,17 +117,30 @@ def get_library(project_id: str, version_id: str | None = None) -> dict[str, Any
     project = common.get_project(project_id)
     style = store.get_video_style(project_id) or {}
     script = _script_of(store, project, version_id, required=False)
+    # 风格指南正文此前只在库里，界面上只露出一个 visual_style 标签——
+    # 色板、灯光、运镜风格、每个角色的外貌锚、每个场景的环境锚全都看不见，
+    # 而这些正是下游提示词逐字复用的锚。
+    style_guide = {
+        "visual_style": normalize_visual_style(style.get("visual_style")),
+        "color_palette": style.get("color_palette") or [],
+        "lighting_style": style.get("lighting_style") or "",
+        "camera_style": style.get("camera_style") or "",
+        "character_appearances": style.get("character_appearances") or {},
+        "environment_descriptions": style.get("environment_descriptions") or {},
+    }
     if script is None:
         return {
             "characters": [],
             "locations": [],
             "warnings": [],
-            "visual_style": normalize_visual_style(style.get("visual_style")),
+            "visual_style": style_guide["visual_style"],
+            "style_guide": style_guide,
             "clips": _shot_clips(store, project_id),
         }
     lib = build_library(script, style, visual_style=style.get("visual_style"),
                         voice_pool=_voice_pool(store, style.get("visual_style")))
     lib["clips"] = _shot_clips(store, project_id)
+    lib["style_guide"] = style_guide
     return lib
 
 

@@ -1377,14 +1377,18 @@ class Store:
         project_id: str | None = None,
         conversation_id: str | None = None,
         kinds: list[str] | None = None,
+        include_inactive: bool = False,
     ) -> list[Memory]:
         """列出对当前上下文可见的记忆：全局全给；项目/对话记忆按归属过滤。
 
         顺序（注入提示词时的优先级）：global → project → conversation，
-        同层内新的在前。
+        同层内新的在前。include_inactive=True 时连停用的一起给——界面上的
+        记忆管理要能看见「停用过什么」，注入提示词时不看停用的。
         """
         with self.session() as s:
-            q = s.query(Memory).filter(Memory.active.is_(True))
+            q = s.query(Memory)
+            if not include_inactive:
+                q = q.filter(Memory.active.is_(True))
             if kinds:
                 q = q.filter(Memory.kind.in_(kinds))
             rows = q.order_by(Memory.created_at.desc()).all()
@@ -1405,6 +1409,17 @@ class Store:
             s.delete(m)
             s.commit()
             return True
+
+    def set_memory_active(self, memory_id: str, active: bool) -> Memory | None:
+        """启用 / 停用一条记忆。停用后不再注入提示词，但留着可回查。"""
+        with self.session() as s:
+            m = s.get(Memory, memory_id)
+            if not m:
+                return None
+            m.active = bool(active)
+            s.commit()
+            s.refresh(m)
+            return m
 
     # =====================================================================
     # v3.0 视频制作相关 CRUD

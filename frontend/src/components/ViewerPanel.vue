@@ -10,6 +10,7 @@
 // =====================================================================
 
 import { computed, ref, onUnmounted, watch } from 'vue'
+import { api } from '../api.js'
 import ScreenplayEditor from './ScreenplayEditor.vue'
 import FolderTree from './FolderTree.vue'
 import VideoWorkbench from './video/VideoWorkbench.vue'
@@ -20,7 +21,44 @@ const TABS = [
   { key: 'editor', label: '剧本', icon: '01' },
   { key: 'scene', label: '场景', icon: '02' },
   { key: 'video', label: '视频', icon: '03' },
+  { key: 'notes', label: '设定', icon: '04' },
 ]
+
+// 设定（编剧圣经）：后端一直在写（对话里改设定会落到 projects.notes），
+// 但界面上没有入口——用户改了却看不到自己改了什么。
+const notesText = ref('')
+const notesSaving = ref(false)
+
+async function loadNotes() {
+  if (!store.pid) { notesText.value = ''; return }
+  try {
+    const r = await api(`/projects/${store.pid}/notes`)
+    notesText.value = r.notes || ''
+  } catch {
+    notesText.value = ''
+  }
+}
+
+async function saveNotes() {
+  if (!store.pid) return
+  notesSaving.value = true
+  try {
+    await api(`/projects/${store.pid}/notes`, 'PUT', { notes: notesText.value })
+    notify('设定已保存', 'ok')
+  } catch (e) {
+    notify(`保存失败：${e.message}`, 'error')
+  } finally {
+    notesSaving.value = false
+  }
+}
+
+watch(
+  () => [store.view, store.pid],
+  ([view, pid]) => {
+    if (view === 'notes' && pid) loadNotes()
+  },
+  { immediate: true },
+)
 
 // 聚焦场景数据
 const focusedScene = computed(() => {
@@ -297,6 +335,29 @@ function onSceneDragEnd() {
     </div>
 
     <!-- 视频工作台：模式切换 / 批量生成 / 审批预览 / 镜头列表 -->
+    <!-- 设定（编剧圣经）：人写、Agent 也读 -->
+    <div v-else-if="store.view === 'notes'" class="v-body">
+      <div class="notes-head">
+        <span>设定 / 编剧圣经</span>
+        <div class="notes-actions">
+          <button class="small ghost" type="button" @click="loadNotes">重新读取</button>
+          <button class="small ok" type="button" :disabled="notesSaving" @click="saveNotes">
+            {{ notesSaving ? '保存中…' : '保存' }}
+          </button>
+        </div>
+      </div>
+      <p class="notes-hint">
+        人物关系、世界观、前史、禁改项写在这里。对话里的 Agent 会读到这段设定，
+        也会把对话中确定的设定写回这里。
+      </p>
+      <textarea
+        v-model="notesText"
+        class="notes-text"
+        rows="18"
+        placeholder="例如：&#10;- 林然：男，34岁，货车司机，左手有旧伤&#10;- 时间线：现代，滨江路旧改区&#10;- 禁改：不要让女主提前知道火灾真相"
+      ></textarea>
+    </div>
+
     <div v-else-if="store.view === 'video'" class="v-body v-body-video">
       <VideoWorkbench />
     </div>
@@ -429,4 +490,17 @@ function onSceneDragEnd() {
 .sf-beat-emotion { font-size: 11px; color: var(--dim); font-style: italic; flex: none; }
 .sf-dialogue .sf-beat-text { color: var(--ink); }
 .sf-cue .sf-beat-text { color: var(--dim); font-style: italic; }
+/* 设定（编剧圣经） */
+.notes-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+  font-size: 13px; color: var(--ink);
+}
+.notes-actions { margin-left: auto; display: flex; gap: 6px; }
+.notes-hint { margin: 0 0 10px; font-size: var(--fs-xs); color: var(--muted); line-height: 1.7; }
+.notes-text {
+  width: 100%; padding: 10px 12px; resize: vertical;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--radius-md); color: var(--ink);
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+}
 </style>

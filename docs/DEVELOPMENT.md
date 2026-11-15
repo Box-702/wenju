@@ -2399,6 +2399,51 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   `app/api/system.py`；删 `frontend/src/components/{WorkspaceTree,LogoMark}.vue`；
   `tests/test_api.py`。
 
+### 5.63 「后端有、界面上没有」的一批能力：给它们各开一个口（2026-11-15）
+
+- **症状**：审计扫出 27 个后端接口前端从不调用。逐个看下来不是「接口写错了」，
+  而是**能力做完了、界面没给入口**——用户根本不知道自己有这些本事：
+  ① 白模（D-54）三个工具只能在对话里用，界面上看不到施工单、看不到渲出来的片子；
+  ② 美术指导生成的风��指南（色板 / 光线 / 运镜 / 逐字锚）只在库里，界面只露出
+     一个画风标签；
+  ③ 记忆只有对话工具能写，用户看不到自己让 Agent 记住了什么；
+  ④ 设置页的「模型偏好」只暴露了对话任务，另外四类（剧本生成 / 镜头设计 /
+     视频生成 / 图片生成 / 语音合成）设不了；
+  ⑤ 语音合成（配音）后端支持、界面建不了厂商行——`loadProviders` 按 kind 分流
+     时把 `kind='tts'` 的行直接丢掉了；
+  ⑥ 视频厂商后端注册了 MiniMax 与 Seedance 两个，设置页写死 MiniMax；
+  ⑦ 视频版本没有里程碑（剧本版本有「定为终稿」）；
+  ⑧ 单条出片任务不能取消 / 重试（只有批次级）；
+  ⑨ 编剧圣经（projects.notes）一直在写，界面上没有入口；
+  ⑩ 工作目录没有设置入口——「同步到工作目录」「打开文件夹」在未配置时是死路；
+  ⑪ 导入的技能删不掉（`DELETE /skills/{name}` 有接口，界面没按钮）。
+- **根因**：每一条都是同一个模式——**能力是在「后端 + 对话工具」这条路上长出来的，
+  界面是另一条路，两边没有对账机制**。于是「后端做完」不等于「用户能用」，
+  而代码里没有任何东西会告诉你这件事（没有报错、没有告警、测试照样全绿）。
+- **解法**：逐条开入口，别新造架构：
+  - 后端新增两个小模块：`app/api/memory.py`（列表 / 启停 / 删除）、
+    `app/api/blockout.py`（施工单原文 + 渲染状态 + 产物）；
+    `GET /projects/{id}/library` 增加 `style_guide` 字段；
+    `GET /api/skills` 增加 `user` 标记（哪些是用户导入的、可以删）。
+  - 界面：设置弹窗从 4 个页签扩到 7 个（新增语音合成 / 记忆 / 工作目录），
+    模型偏好页签渲染五类任务；视频页签改成多厂商；资产面板加「风格指南」卡与
+    「生成资产图」按钮，白模从「参考素材」里分出来单独一页签；侧栏加「白模」
+    视图；视频工作台加版本里程碑与出片任务清单（取消 / 重试）；产出页加「设定」
+    页；技能页给用户导入的技能加删除按钮。
+  - 删掉 `app/api/agent_runs.py` 的 6 条 REST：改编审阅的唯一入口是
+    `/api/chat` 的 `meta.intent='resume'`（D-43 批准闸门也走 chat），
+    运行历史本来就出现在 `GET /projects/{id}` 里——那 6 条是同一能力的重复通道。
+- **顺带**：前端 store 导出 75 个函数，**死导出降到 0**（此前 17 个）。
+- **涉及文件**：`app/api/{memory,blockout,cast,chat}.py`、`app/api/__init__.py`、
+  `app/store.py`、`frontend/src/stores/app.js`、
+  `frontend/src/components/settings/SettingsModal.vue`、
+  `frontend/src/components/AssetPanel.vue`、
+  `frontend/src/components/ContextPanel.vue`、
+  `frontend/src/components/video/VideoWorkbench.vue`、
+  `frontend/src/components/ViewerPanel.vue`、
+  `frontend/src/components/SkillsPage.vue`；
+  删 `app/api/agent_runs.py`；`tests/test_backend_visible.py`（新增 8 条）。
+
 ## 六、排查手册（症状 → 先查什么）
 
 | 症状 | 先查 |
@@ -2699,3 +2744,27 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **遗留**：① 工作目录「设置」入口与「生成资产图」按钮属批次 4（后端能力
   前端可见），本批只把 store 函数留着；② 音色克隆的修复**未做真机验证**
   （需要用户自己的音频样本），留待人工过一遍；③ 白模面板属批次 4。
+
+### T-12 空缺全量修复 · 第四批：后端能力前端可见（2026-11-15，完成，零花费）
+
+- **假设**：这批「后端有、界面无」的接口本身是对的（审计时逐个读过实现），
+  缺的只是入口；补入口不需要动后端语义。
+- **过程**：27 个未被调用的接口逐个分类 → 接 UI（11 项）/ 删重复通道（1 项）
+  → 后端补三个小接口（memories / blockout / library.style_guide）与一个字段
+  （skills.user）→ 前端加 7 个设置页签能力、侧栏白模视图、风格指南卡、
+  版本里程碑、任务清单、设定页、技能删除 → 新增 8 条接口断言 → 全量回归 +
+  前端构建。
+- **发现的问题**：① 「写死的 4 个目录」和「写死的 4 个页签」是同一类病：
+  **前端把后端的清单又抄了一遍**，后端加一项前端就少一项（这次是 7 个目录只
+  显示 4 个）——改成读后端清单后，这类漂移就不存在了；
+  ② 测试里用户导入的技能读不到，根因是技能加载器直接读 `app.deps.store()`
+  （全项目单例），而测试只替换了 `app.api.deps.store`——两处名字独立，
+  必须都替换（与 `tests/test_video_idempotency.py` 里已有的注释一致）；
+  ③ 技能的 `audience` 取自 frontmatter（加载时重新解析正文），不是库里那一列——
+  写测试时按库里那一列填会得到「导入成功但列表里没有」。
+- **效果**：626 passed（基线 618，+8 新增 tests/test_backend_visible.py）；
+  前端构建通过；前端 store 死导出 17 → 0；ruff 致命子集 0、全量 490。
+- **遗留**：① 白模面板只展示状态与施工单，**不提供「在界面上改施工单」**——
+  调整仍走对话（D-54 的口径就是「调整全走对话」，此处不越界）；
+  ② 记忆管理只能逐条停用/删除，没有「批量清理」；③ TTS 厂商目前只有 MiniMax
+  一个实现，界面按通用形态写，加第二个厂商不用改界面。

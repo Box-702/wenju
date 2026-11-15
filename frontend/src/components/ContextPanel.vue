@@ -15,6 +15,7 @@
 // =====================================================================
 
 import { computed, ref, watch, onMounted } from 'vue'
+import { api } from '../api.js'
 import {
   store, loadShots, loadVideoJobs, loadAssets, loadOverview,
   submitVideoJob, playVideo, bulkReviewPrompts, startVideoBatch,
@@ -41,9 +42,32 @@ const views = computed(() => {
   if (hasScript.value) list.push({ key: 'outline', label: '大纲' })
   list.push({ key: 'shots', label: '镜头' })
   list.push({ key: 'assets', label: '资产' })
+  list.push({ key: 'blockout', label: '白模' })
   list.push({ key: 'skills', label: '技能' })
   return list
 })
+
+/* 白模（D-54）：此前白模只在对话里存在——Agent 起草施工单、后台渲染，
+   用户在界面上既看不到施工单、也看不到渲出来的那条片子。 */
+const blockout = ref(null)
+const blockoutStatusZh = computed(() => {
+  const st = blockout.value?.render?.status || 'idle'
+  return {
+    idle: '还没渲染过', running: '渲染中', succeeded: '已渲染', failed: '渲染失败',
+  }[st] || st
+})
+
+async function loadBlockout() {
+  if (!store.pid) { blockout.value = null; return }
+  try {
+    blockout.value = await api(`/projects/${store.pid}/blockout`)
+  } catch {
+    blockout.value = null
+  }
+}
+
+watch(() => store.sideView, (v) => { if (v === 'blockout') loadBlockout() })
+watch(() => store.pid, () => { if (store.sideView === 'blockout') loadBlockout() })
 
 // 当前视图失效时（比如剧本还没生成就切到了大纲）自动落到可用视图
 watch(views, (list) => {
@@ -386,6 +410,37 @@ watch(() => store.assetRefreshSeq, refresh)
           <span class="sk-desc">{{ sk.description }}</span>
         </button>
       </div>
+    </div>
+
+    <!-- 白模：施工单原文 + 渲染状态 + 白模成片（D-54） -->
+    <div v-else-if="store.sideView === 'blockout'" class="cp-body">
+      <div class="cp-subtitle-row">
+        <span class="cp-subtitle">白模</span>
+        <button class="cp-link" type="button" @click="loadBlockout">刷新</button>
+      </div>
+      <div v-if="!blockout" class="cp-empty">读取中…</div>
+      <template v-else>
+        <div class="cp-subtitle-row">
+          <span class="cp-subtitle">{{ blockoutStatusZh }}</span>
+          <span v-if="blockout.render?.duration_sec" class="cp-subtitle">
+            {{ blockout.render.duration_sec.toFixed(1) }}s
+          </span>
+        </div>
+        <p class="cp-note">
+          白模是空间关系的草图。在对话里说「做白模」起草施工单，改完再渲染；
+          渲好的白模可在镜头提示词编辑器里挑为参考素材。
+        </p>
+        <video
+          v-if="blockout.render?.video_url"
+          class="cp-video"
+          :src="blockout.render.video_url"
+          controls
+          preload="metadata"
+        ></video>
+        <div v-if="blockout.render?.error" class="cp-error">{{ blockout.render.error }}</div>
+        <pre v-if="blockout.sheet" class="cp-sheet">{{ blockout.sheet }}</pre>
+        <div v-else class="cp-empty">还没有施工单。在对话里说「做白模」起草一份。</div>
+      </template>
     </div>
 
     <!-- 资产：从资产库调出任何东西 -->

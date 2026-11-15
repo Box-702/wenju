@@ -16,6 +16,7 @@ import {
   closePromptEditor, loadPromptHistory, saveShotPrompt, bulkReviewPrompts,
   setVideoMode, setVideoResolution, setVideoAspect, setVideoSubtitle, setVideoAudioMode, startVideoBatch,
   pollVideoBatch, ensureBatchPolling, batchCommand,
+  setVideoVersionMilestone, cancelVideoJob, retryVideoJob,
   startFinalize, pollFinalize, ensureFinalizePolling, openWorkspaceFolder,
 } from '../../stores/app'
 
@@ -56,6 +57,31 @@ const promptCount = computed(() => {
     pending: prompts.filter((shot) => shot.prompt_status !== 'approved').length,
   }
 })
+const MILESTONE_ZH = { draft: '草稿', candidate: '候选', final: '终稿' }
+
+// 出片任务清单：在途 / 失败 / 已取消的任务（批次级的操作之外，用户还需要
+// 单独停掉某一条、或把失败的那条重跑）。
+const ACTIVE_JOB_STATUSES = ['pending', 'submitting', 'queued', 'generating']
+const JOB_STATUS_ZH = {
+  pending: '排队中', submitting: '提交中', queued: '排队中', generating: '生成中',
+  succeeded: '已出片', failed: '失败', cancelled: '已取消',
+}
+const jobRows = computed(() =>
+  (store.videoJobs || [])
+    .slice()
+    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+    .slice(0, 12),
+)
+function isActiveJob(j) { return ACTIVE_JOB_STATUSES.includes(j.status) }
+function jobStatusZh(s) { return JOB_STATUS_ZH[s] || s }
+function shotLabel(shotId) {
+  const s = (store.shots || []).find((x) => x.id === shotId)
+  return s ? (s.subject || s.id) : (shotId || '')
+}
+async function markVersionFinal(id) { await setVideoVersionMilestone(id, 'final') }
+async function cancelJob(j) { await cancelVideoJob(j.id) }
+async function retryJob(j) { await retryVideoJob(j.id) }
+
 const versionStatusLabels = {
   empty: '无提示词',
   approved: '全部已批准',
@@ -314,8 +340,34 @@ function formatVersionTime(value) {
           <span class="version-count">
             {{ version.prompt_summary?.approved_count || 0 }}/{{ version.prompt_summary?.prompt_count || 0 }} 已批准
           </span>
+          <span v-if="version.milestone" class="version-mile">{{ MILESTONE_ZH[version.milestone] }}</span>
+          <button
+            v-if="version.milestone !== 'final'"
+            class="version-mile-btn"
+            type="button"
+            @click="markVersionFinal(version.id)"
+          >◆ 定为终稿</button>
           <span class="version-time">{{ formatVersionTime(version.created_at) }}</span>
         </div>
+      </div>
+    </div>
+
+    <!-- 出片任务：单条任务可取消 / 重试（此前只有批次级的操作） -->
+    <div v-if="jobRows.length" class="job-list">
+      <div class="job-list-head">
+        <strong>出片任务</strong>
+        <span>{{ jobRows.length }} 条</span>
+      </div>
+      <div v-for="j in jobRows" :key="j.id" class="job-row">
+        <span class="job-shot">{{ shotLabel(j.shot_id) }}</span>
+        <span class="job-status" :class="j.status">{{ jobStatusZh(j.status) }}</span>
+        <button v-if="isActiveJob(j)" class="small ghost" type="button" @click="cancelJob(j)">取消</button>
+        <button
+          v-if="j.status === 'failed' || j.status === 'cancelled'"
+          class="small ghost"
+          type="button"
+          @click="retryJob(j)"
+        >重试</button>
       </div>
     </div>
 
@@ -473,4 +525,32 @@ function formatVersionTime(value) {
   .version-row { grid-template-columns: 1fr auto; }
   .version-count, .version-time { display: none; }
 }
+/* 视频版本里程碑 + 任务清单 */
+.version-mile {
+  font-size: 10.5px; padding: 1px 5px; border-radius: 3px;
+  color: var(--gold, #d6a419); border: 1px solid var(--line); flex: none;
+}
+.version-mile-btn {
+  font-size: 10.5px; padding: 1px 6px; border-radius: 3px; cursor: pointer;
+  border: 1px solid var(--line); background: transparent; color: var(--muted); flex: none;
+}
+.version-mile-btn:hover { color: var(--ink); border-color: var(--line-strong); }
+.job-list { margin-top: 10px; }
+.job-list-head {
+  display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px;
+  font-size: 12px; color: var(--ink);
+}
+.job-list-head span { font-size: 11px; color: var(--dim); }
+.job-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 12px;
+}
+.job-shot {
+  flex: 1; min-width: 0; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.job-status { font-size: 11px; color: var(--muted); flex: none; }
+.job-status.failed { color: var(--bad, #e94560); }
+.job-status.generating { color: var(--gold, #d6a419); }
+.job-status.succeeded { color: var(--ok, #22c55e); }
 </style>

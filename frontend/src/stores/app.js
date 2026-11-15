@@ -976,6 +976,47 @@ export async function submitVideoJob(shot) {
   }
 }
 
+/** 设置视频版本里程碑（终稿标记）。剧本版本有「定为终稿」，视频版本此前没有。 */
+export async function setVideoVersionMilestone(versionId, milestone = 'final') {
+  if (!versionId) return
+  try {
+    await api(
+      `/video-versions/${versionId}/milestone?milestone=${encodeURIComponent(milestone)}`,
+      'POST',
+    )
+    await loadShots()
+    notify(milestone === 'final' ? '已标记为终稿' : '已更新标记', 'ok')
+  } catch (e) {
+    notify(`标记失败：${e.message}`, 'error')
+  }
+}
+
+/** 取消在途的视频生成任务。
+ *  远端不一定真能取消（MiniMax V2 没有取消端点）——服务端会把这件事
+ *  写进 note，这里照原话转给用户，别让「已取消」被理解成「不花钱了」。 */
+export async function cancelVideoJob(jobId) {
+  try {
+    const r = await api(`/video/jobs/${jobId}/cancel`, 'POST')
+    await loadVideoJobs()
+    notify(r.note || '已取消', r.remote_cancelled ? 'ok' : 'info')
+    return r
+  } catch (e) {
+    notify(`取消失败：${e.message}`, 'error')
+    return null
+  }
+}
+
+/** 重试失败 / 已取消的视频生成任务。 */
+export async function retryVideoJob(jobId) {
+  try {
+    await api(`/video/jobs/${jobId}/retry`, 'POST')
+    await loadVideoJobs()
+    notify('已重新提交', 'ok')
+  } catch (e) {
+    notify(`重试失败：${e.message}`, 'error')
+  }
+}
+
 /** 设置生成模式（持久化到本地，下次进入记住选择）。 */
 export function setVideoMode(mode) {
   store.videoMode = mode

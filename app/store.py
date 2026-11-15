@@ -446,6 +446,31 @@ class VoicePool(Base):
     created_at: Mapped[datetime] = mapped_column(default=_now)
 
 
+class CastProfile(Base):
+    """演员库条目：作品外稳定的角色身份（D-64）。
+
+    为什么需要它：角色 id（char_001）是**作品内序号**——同一个演员在两部
+    剧里必然撞号（D-34 早就把这个限制记下了）。演员库给角色一个作品外的
+    稳定身份：外貌锚 + 音色 + 定妆照，跨作品复用。
+
+    「资产是项目的属性」那条决策（D-22）在这里**故意不开例外**：定妆图本体
+    仍然属于项目（media_assets.project_id 是必填），演员库只存**指向它的
+    引用**——跨作品复用时按引用再落一份到目标项目。
+    """
+
+    __tablename__ = "cast_profiles"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(index=True)           # 演员名
+    gender: Mapped[str] = mapped_column(default="unknown")   # male|female|other|unknown
+    appearance: Mapped[str] = mapped_column(default="")      # 外貌锚（逐字复用的那段文字）
+    voice_id: Mapped[str] = mapped_column(default="")        # 音色 id（voice_pool 的 id）
+    image_asset_id: Mapped[str] = mapped_column(default="")  # 定妆图素材 id（media_assets.id）
+    notes: Mapped[str] = mapped_column(default="")
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_now)
+
+
 class UserSkill(Base):
     """用户导入的技能（一份带 frontmatter 的 Markdown）。
 
@@ -1400,6 +1425,55 @@ class Store:
                 or (m.scope == "conversation" and m.conversation_id and m.conversation_id == conversation_id)
             ]
             return sorted(visible, key=lambda m: (scope_order[m.scope], m.created_at), reverse=False)
+
+    # ---- 演员库（跨项目角色身份，D-64）----
+
+    def list_cast_profiles(self) -> list[CastProfile]:
+        """列出演员库（按名字排序）。"""
+        with self.session() as s:
+            rows = s.query(CastProfile).order_by(CastProfile.name).all()
+            return list(rows)
+
+    def get_cast_profile(self, profile_id: str) -> CastProfile | None:
+        with self.session() as s:
+            return s.get(CastProfile, profile_id)
+
+    def save_cast_profile(
+        self,
+        *,
+        name: str,
+        gender: str = "unknown",
+        appearance: str = "",
+        voice_id: str = "",
+        image_asset_id: str = "",
+        notes: str = "",
+        profile_id: str | None = None,
+    ) -> CastProfile:
+        """新建或更新一条演员库条目（按 id 更新；不给 id 就新建）。"""
+        with self.session() as s:
+            row = s.get(CastProfile, profile_id) if profile_id else None
+            if row is None:
+                row = CastProfile(id=gen_id("cast"), name=name)
+                s.add(row)
+            row.name = name
+            row.gender = gender or "unknown"
+            row.appearance = appearance or ""
+            row.voice_id = voice_id or ""
+            row.image_asset_id = image_asset_id or ""
+            row.notes = notes or ""
+            row.updated_at = _now()
+            s.commit()
+            s.refresh(row)
+            return row
+
+    def delete_cast_profile(self, profile_id: str) -> bool:
+        with self.session() as s:
+            row = s.get(CastProfile, profile_id)
+            if row is None:
+                return False
+            s.delete(row)
+            s.commit()
+            return True
 
     def delete_memory(self, memory_id: str) -> bool:
         with self.session() as s:

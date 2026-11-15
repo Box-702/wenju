@@ -620,6 +620,7 @@ class DirectorAgent(CrewAgent):
                 )
                 if notes:
                     summary += "；" + "；".join(notes)
+                assign_episodes(gated, script)
                 return CrewTaskResult(data=gated, summary=summary)
 
         # 迭代用完仍不合格：批评可以不理，预算不能不理——钱是硬约束。
@@ -634,6 +635,7 @@ class DirectorAgent(CrewAgent):
             summary += "；" + "；".join(notes)
         if critique:
             summary += f"，但连续性校验仍待完善：{critique[0]}"
+        assign_episodes(gated, script)
         return CrewTaskResult(data=gated, summary=summary, errors=critique)
 
     def _design_batch(
@@ -1105,10 +1107,37 @@ class DirectorAgent(CrewAgent):
             )
             breakdowns.append(breakdown)
 
+        assign_episodes(breakdowns, script)
         return CrewTaskResult(
             data=breakdowns,
             summary=f"（无模型）为 {len(breakdowns)} 个场景生成默认镜头方案",
         )
+
+
+def assign_episodes(breakdowns: list[SceneBreakdown], script: Script) -> None:
+    """给每个镜头标上「它属于第几集」（D-63 集-镜两级结构）。
+
+    集 = 小说的一章：场景本来就带着 chapter_refs（来自原著章节），
+    那一章就是它所属的集。短剧常常只有一章——那全片就是一集；连载改编时
+    一章一集，进度百分比、导出分集都按它算。
+
+    就地写（与 group 归一同样的做法）：不新增一张表，不改镜头方案的结构，
+    只在镜头上多两个字段。
+    """
+    order: dict[str, int] = {}
+    for i, ch in enumerate(script.source.chapter_ids or []):
+        order.setdefault(ch, i)
+    scene_ep: dict[str, tuple[str, int]] = {}
+    for sc in script.scenes:
+        ch = sc.chapter_refs[0] if sc.chapter_refs else sc.id
+        if ch not in order:
+            order[ch] = len(order)
+        scene_ep[sc.id] = (ch, order[ch])
+    for bd in breakdowns:
+        ep_id, ep_idx = scene_ep.get(bd.scene_id, (bd.scene_id, 0))
+        for s in bd.shots:
+            s.episode_id = ep_id
+            s.episode_index = ep_idx
 
 
 def run_director(

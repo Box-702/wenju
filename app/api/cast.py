@@ -51,6 +51,24 @@ class LibraryPatch(BaseModel):
     locations: dict[str, LocationChange] = Field(default_factory=dict)
 
 
+class CastProfileIn(BaseModel):
+    """演员库条目。"""
+
+    name: str = Field(min_length=1)
+    gender: str = "unknown"
+    appearance: str = ""
+    voice_id: str = ""
+    image_asset_id: str = ""
+    notes: str = ""
+
+
+class ApplyCastProfile(BaseModel):
+    """把演员库的一条应用到本作的某个角色。"""
+
+    profile_id: str = Field(min_length=1)
+    entity: str = Field(min_length=1)   # 角色名或 id
+
+
 class VoicePreview(BaseModel):
     voice_id: str = Field(min_length=1)
     text: str = ""
@@ -142,6 +160,89 @@ def get_library(project_id: str, version_id: str | None = None) -> dict[str, Any
     lib["clips"] = _shot_clips(store, project_id)
     lib["style_guide"] = style_guide
     return lib
+
+
+def _profile_dict(p: Any) -> dict[str, Any]:
+    return {
+        "id": p.id, "name": p.name, "gender": p.gender,
+        "appearance": p.appearance, "voice_id": p.voice_id,
+        "image_asset_id": p.image_asset_id, "notes": p.notes,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+    }
+
+
+@router.get("/cast-profiles")
+def list_cast_profiles() -> list[dict[str, Any]]:
+    """演员库（跨项目复用的角色身份）。"""
+    return [_profile_dict(p) for p in deps.store().list_cast_profiles()]
+
+
+@router.post("/cast-profiles")
+def create_cast_profile(payload: CastProfileIn) -> dict[str, Any]:
+    """新建 / 更新演员库条目（带 id 则更新那条）。"""
+    store = deps.store()
+    p = store.save_cast_profile(
+        name=payload.name.strip(), gender=payload.gender,
+        appearance=payload.appearance, voice_id=payload.voice_id,
+        image_asset_id=payload.image_asset_id, notes=payload.notes,
+    )
+    return _profile_dict(p)
+
+
+@router.delete("/cast-profiles/{profile_id}")
+def delete_cast_profile(profile_id: str) -> dict[str, Any]:
+    """删除演员库条目。"""
+    if not deps.store().delete_cast_profile(profile_id):
+        raise HTTPException(404, "演员库条目不存在")
+    return {"id": profile_id, "deleted": True}
+
+
+@router.post("/projects/{project_id}/library/apply-profile")
+def apply_cast_profile(project_id: str, payload: ApplyCastProfile) -> dict[str, Any]:
+    """把演员库里的一条应用到本作的某个角色（外貌锚 / 音色 / 定妆照）。
+
+    角色 id 仍是作品内序号（char_001）——跨作品身份由演员库承担，
+    应用只是把锚与图按引用落进这个作品（D-64）。
+    """
+    from ..media.assets import build_index
+    from ..media.library import apply_library_patch
+
+    store = deps.store()
+    project = common.get_project(project_id)
+    profile = store.get_cast_profile(payload.profile_id)
+    if profile is None:
+        raise HTTPException(404, "演员库条目不存在")
+    version = store.latest_version(project)
+    if version is None:
+        raise HTTPException(400, "还没有剧本版本，先在对话里生成初稿")
+    script = version.script
+    idx = build_index(script)
+    entity_id = idx.resolve(payload.entity)
+    if not entity_id:
+        raise HTTPException(404, f"剧本里没有「{payload.entity}」这个角色")
+    char_ids = {c.id for c in script.characters}
+    if entity_id not in char_ids:
+        raise HTTPException(400, f"「{payload.entity}」不是角色（不能套演员库）")
+
+    change: dict[str, Any] = {}
+    if profile.appearance:
+        change["appearance"] = profile.appearance
+    if profile.voice_id:
+        change["voice_id"] = profile.voice_id
+    if profile.gender and profile.gender != "unknown":
+        change["gender"] = profile.gender
+    if profile.image_asset_id:
+        asset = store.get_asset(profile.image_asset_id)
+        if asset is None:
+            raise HTTPException(404, "演员库引用的定妆图素材不存在")
+        change["image"] = asset.url
+    if not change:
+        raise HTTPException(400, "这条演员库条目是空的，没什么可应用")
+
+    style = store.get_video_style(project_id) or {}
+    merged = apply_library_patch(style, {"characters": {payload.entity: change}}, script)
+    store.set_video_style(project_id, merged)
+    return {"ok": True, "entity_id": entity_id, "applied": sorted(change)}
 
 
 @router.get("/library/all")

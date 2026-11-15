@@ -10,10 +10,12 @@
 from __future__ import annotations
 
 import difflib
+import json
 import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from ..crew.dramaturgy import refresh_prompt_audits
@@ -696,6 +698,61 @@ def video_prompt_history(
     if not history:
         raise HTTPException(404, "镜头不存在或没有 Prompt 审阅历史")
     return {"shot_id": shot_id, "version_id": version_id, "history": history}
+
+
+@router.get("/video-versions/{version_id}/export-prompt-pack")
+def export_prompt_pack(version_id: str, fmt: str = "md") -> Response:
+    """导出提示词包（POSITIONING P0）。
+
+    fmt=md    人读的一份：分镜字段 + 逐字提示词 + 一致性约束 + 首帧图提示词
+    fmt=json  工具读的一份（同一个结构的 JSON）
+    fmt=jianying  剪映草稿（draft_content.json 的内容 + 素材清单）
+    """
+    from ..domain import StyleGuide
+    from ..pipeline.prompt_pack import (
+        build_prompt_pack,
+        render_jianying,
+        render_json,
+        render_markdown,
+    )
+
+    store = deps.store()
+    v = store.get_video_version(version_id)
+    if not v:
+        raise HTTPException(404, "视频版本不存在")
+    fmt = (fmt or "md").lower()
+    if fmt not in ("md", "json", "jianying"):
+        raise HTTPException(400, "提示词包只支持 md / json / jianying")
+
+    project = store.get_project(v.project_id)
+    style_raw = store.get_video_style(v.project_id) or {}
+    guide = StyleGuide.model_validate(style_raw) if style_raw else None
+    pack = build_prompt_pack(
+        list(v.shots or []), guide,
+        project_title=(project.title if project else ""),
+        visual_style=str(style_raw.get("visual_style") or ""),
+    )
+
+    if fmt == "md":
+        data = render_markdown(pack).encode("utf-8")
+        ext, mime = ".md", "text/markdown; charset=utf-8"
+    elif fmt == "json":
+        data = render_json(pack).encode("utf-8")
+        ext, mime = ".json", "application/json; charset=utf-8"
+    else:
+        data = json.dumps(render_jianying(pack), ensure_ascii=False, indent=2).encode("utf-8")
+        ext, mime = ".json", "application/json; charset=utf-8"
+
+    base = f"提示词包_{(project.title if project else v.id)}_{version_id}"
+    headers = common.content_disposition(base + ext)
+
+    ws = common.workspace()
+    if ws.configured and project is not None:
+        try:
+            ws.save_export(project.title, base, data, ext)
+        except Exception:  # noqa: BLE001
+            pass
+    return Response(content=data, media_type=mime, headers=headers)
 
 
 @router.post("/video-versions/{version_id}/milestone")

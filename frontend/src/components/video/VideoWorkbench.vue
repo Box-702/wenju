@@ -16,7 +16,7 @@ import {
   closePromptEditor, loadPromptHistory, saveShotPrompt, bulkReviewPrompts,
   setVideoMode, setVideoResolution, setVideoAspect, setVideoSubtitle, setVideoAudioMode, startVideoBatch,
   pollVideoBatch, ensureBatchPolling, batchCommand,
-  setVideoVersionMilestone, cancelVideoJob, retryVideoJob,
+  setVideoVersionMilestone, cancelVideoJob, retryVideoJob, exportPromptPack,
   startFinalize, pollFinalize, ensureFinalizePolling, openWorkspaceFolder,
 } from '../../stores/app'
 
@@ -324,6 +324,14 @@ function formatVersionTime(value) {
       </div>
     </div>
 
+    <!-- 导出提示词包（POSITIONING P0）：分镜字段 + 逐字提示词 + 一致性约束 -->
+    <div class="pack-bar">
+      <span class="pack-label">提示词包</span>
+      <button class="small ghost" type="button" @click="exportPromptPack('md')">Markdown</button>
+      <button class="small ghost" type="button" @click="exportPromptPack('json')">JSON</button>
+      <button class="small ghost" type="button" @click="exportPromptPack('jianying')">剪映草稿</button>
+    </div>
+
     <div v-if="store.videoVersions.length" class="version-strip">
       <div class="version-strip-head">
         <strong>提示词版本</strong>
@@ -555,4 +563,11 @@ function formatVersionTime(value) {
 .job-status.failed { color: var(--bad, #e94560); }
 .job-status.generating { color: var(--gold, #d6a419); }
 .job-status.succeeded { color: var(--ok, #22c55e); }
+/* 提示词包导出条 */
+.pack-bar {
+  display: flex; align-items: center; gap: 6px;
+  margin: 8px 0; padding: 6px 10px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+}
+.pack-label { font-size: 11.5px; color: var(--muted); margin-right: 4px; }
 </style>

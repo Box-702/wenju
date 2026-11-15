@@ -156,13 +156,35 @@ def project_overview(project: Any) -> dict[str, Any]:
     except Exception:  # noqa: BLE001  合成模块不可用不该拖垮概览
         pass
 
+    # 集-镜两级结构（D-63）：集 = 小说的一章（场景的 chapter_refs）。
+    episodes = sorted({str(s.get("episode_id") or "") for s in shots if s.get("episode_id")})
+
+    # 生产进度：四段各占 25%——剧本 / 拆镜 / 提示词批准 / 出片。
+    # 每段都能从已落库的数据判定，不猜、不估算。
+    stages = [
+        {"key": "script", "label": "剧本", "done": bool(script)},
+        {"key": "breakdown", "label": "拆镜", "done": bool(shots)},
+        {
+            "key": "prompts", "label": "提示词",
+            "done": bool(shots) and shots_approved >= len(shots),
+        },
+        {
+            "key": "film", "label": "出片",
+            "done": bool(shots) and shots_done >= len(shots),
+        },
+    ]
+    progress_pct = round(100 * sum(1 for s in stages if s["done"]) / len(stages))
+
     return {
         "scenes": len(script.scenes) if script else 0,
         "characters": len(script.characters) if script else 0,
+        "episodes": len(episodes),
         "shots": len(shots),
         "shots_approved": shots_approved,
         "shots_done": shots_done,
         "shots_failed": shots_failed,
+        "progress_pct": progress_pct,
+        "progress_stages": stages,
         "reference_images": len(set(ref_images)),
         "voices": len(set(voices)),
         "video_submissions": len(submitted),

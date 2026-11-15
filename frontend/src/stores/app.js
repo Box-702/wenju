@@ -5,7 +5,7 @@
 // 组件只负责渲染与交互，所有数据请求/流转都收敛到本文件的导出函数。
 // =====================================================================
 
-import { reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import { api, importProject, streamChat } from '../api'
 
 // ---------------------------------------------------------------------
@@ -526,6 +526,84 @@ export async function exportVersion(versionId, fmt) {
   a.remove()
   URL.revokeObjectURL(url)
   await loadWorkspace() // 导出后工作目录里多了 03_导出 文件
+}
+
+/** 导出提示词包（POSITIONING P0）：md 人读 / json 给工具 / jianying 剪映草稿。 */
+export async function exportPromptPack(fmt = 'md') {
+  if (!store.videoVersionId) { notify('还没有镜头方案', 'info'); return }
+  try {
+    const res = await fetch(
+      `/api/video-versions/${store.videoVersionId}/export-prompt-pack?fmt=${fmt}`)
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}))
+      throw new Error(j.detail || res.statusText)
+    }
+    const disp = res.headers.get('Content-Disposition') || ''
+    let filename = `提示词包.${fmt === 'jianying' ? 'json' : fmt}`
+    const star = disp.match(/filename\*=UTF-8''([^;]+)/i)
+    if (star) {
+      try { filename = decodeURIComponent(star[1]) } catch { filename = star[1] }
+    } else {
+      const m = disp.match(/filename="?([^";]+)"?/)
+      if (m) filename = m[1]
+    }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    notify('提示词包已导出', 'ok')
+  } catch (e) {
+    notify(`导出失败：${e.message}`, 'error')
+  }
+}
+
+/* ---- 演员库（跨项目复用的角色身份，D-64）---- */
+export const castProfiles = ref([])
+
+export async function loadCastProfiles() {
+  try { castProfiles.value = await api('/cast-profiles') } catch { castProfiles.value = [] }
+}
+
+export async function saveCastProfile(payload) {
+  try {
+    await api('/cast-profiles', 'POST', payload)
+    await loadCastProfiles()
+    notify('已存进演员库', 'ok')
+    return true
+  } catch (e) {
+    notify(`保存失败：${e.message}`, 'error')
+    return false
+  }
+}
+
+export async function deleteCastProfile(id) {
+  try {
+    await api(`/cast-profiles/${id}`, 'DELETE')
+    await loadCastProfiles()
+    notify('已从演员库删除', 'ok')
+  } catch (e) {
+    notify(`删除失败：${e.message}`, 'error')
+  }
+}
+
+/** 把演员库里的一条应用到本作的某个角色（外貌锚 / 音色 / 定妆照一起落）。 */
+export async function applyCastProfile(projectId, profileId, entity) {
+  try {
+    await api(`/projects/${projectId}/library/apply-profile`, 'POST', {
+      profile_id: profileId, entity,
+    })
+    await loadAssetIndex()
+    notify(`已把演员库里的「${entity}」套用到这个角色`, 'ok')
+    return true
+  } catch (e) {
+    notify(`套用失败：${e.message}`, 'error')
+    return false
+  }
 }
 
 /** 拉取当前工作目录配置。 */

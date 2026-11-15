@@ -44,6 +44,47 @@
       </div>
     </div>
 
+    <!-- 演员库：跨作品复用的角色身份（D-64）-->
+    <div v-if="store.pid && (section === 'all' || section === 'assets')" class="panel-section">
+      <div class="section-head">
+        <span class="section-title">演员库</span>
+        <span class="head-tools">
+          <button class="small ghost" @click="loadCastProfiles">刷新</button>
+          <button class="small ok" @click="openProfileForm">{{ profileFormOpen ? '收起' : '＋ 存入' }}</button>
+        </span>
+      </div>
+      <p class="cast-hint">
+        同一个演员在几部剧里复用：外貌锚、音色、定妆照存在这里，套到哪个角色都行。
+      </p>
+
+      <div v-if="profileFormOpen" class="cast-form">
+        <input v-model.trim="profileDraft.name" class="modal-input" placeholder="演员名" />
+        <input v-model.trim="profileDraft.appearance" class="modal-input" placeholder="外貌锚，如：短发，灰色风衣，左腿微跛" />
+        <input v-model.trim="profileDraft.voice_id" class="modal-input" placeholder="音色 id（可空）" />
+        <button class="small ok" :disabled="!profileDraft.name" @click="submitProfile">保存</button>
+      </div>
+
+      <div v-if="!castProfiles.length" class="proj-empty">
+        <p>演员库还是空的。选一个角色调好外形后点「＋ 存入」，下次直接套用。</p>
+      </div>
+      <div v-for="p in castProfiles" :key="p.id" class="cast-row">
+        <div class="cast-main">
+          <div class="cast-name">{{ p.name }}</div>
+          <div class="cast-appear">{{ p.appearance || '（没写外貌锚）' }}</div>
+        </div>
+        <select v-model="castTargets[p.id]" class="modal-select cast-target">
+          <option value="">选一个角色…</option>
+          <option v-for="c in lib.characters" :key="c.char_id" :value="c.name">{{ c.name }}</option>
+        </select>
+        <button
+          class="small ok"
+          :disabled="!castTargets[p.id]"
+          @click="applyProfile(p)"
+        >套用</button>
+        <button class="small ghost" @click="removeProfile(p)">删除</button>
+      </div>
+    </div>
+
     <!-- 资产库：两级导航 —— 范围（哪部作品 / 全部作品）+ 类型（角色 / 场景 / 成片 / 参考素材） -->
     <div v-if="store.pid && (section === 'all' || section === 'assets')" class="panel-section library-section">
       <div class="section-head">
@@ -397,7 +438,10 @@
 // 对话里引用的每个人物白模 / 场景图都能在这里按编号找到原图。
 // =====================================================================
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { store, selectProject, notify, loadShots, generateAssetImages } from '../stores/app.js'
+import {
+  store, selectProject, notify, loadShots, generateAssetImages,
+  castProfiles, loadCastProfiles, saveCastProfile, deleteCastProfile, applyCastProfile,
+} from '../stores/app.js'
 
 /** 打开预览浮层：卡片点一下就播/看大图，不用先下载再本地打开。 */
 function previewAsset(a) {
@@ -454,6 +498,40 @@ const TYPE_TABS = [
 ]
 const scope = ref('current')
 const typeTab = ref('character')
+
+/* 演员库（跨项目复用的角色身份，D-64）*/
+const profileFormOpen = ref(false)
+const profileDraft = reactive({ name: '', appearance: '', voice_id: '' })
+const castTargets = reactive({})
+
+function openProfileForm() {
+  profileFormOpen.value = !profileFormOpen.value
+  if (profileFormOpen.value) {
+    profileDraft.name = ''
+    profileDraft.appearance = ''
+    profileDraft.voice_id = ''
+  }
+}
+
+async function submitProfile() {
+  const ok = await saveCastProfile({ ...profileDraft })
+  if (ok) {
+    profileFormOpen.value = false
+    profileDraft.name = ''
+    profileDraft.appearance = ''
+    profileDraft.voice_id = ''
+  }
+}
+
+async function applyProfile(p) {
+  const target = castTargets[p.id]
+  if (!target) return
+  await applyCastProfile(store.pid, p.id, target)
+}
+
+async function removeProfile(p) {
+  await deleteCastProfile(p.id)
+}
 
 const ASSET_KIND_ZH = { video: '视频', image: '图片', audio: '音频' }
 const kindZh = (k) => ASSET_KIND_ZH[k] || '素材'
@@ -760,7 +838,9 @@ async function loadLibrary() {
 // 进入新作品 / 资产可能被流水线更新 → 重新拉资产库
 onMounted(() => { loadSkills() })
 
-watch(() => store.pid, (pid) => { if (pid) loadLibrary() }, { immediate: true })
+watch(() => store.pid, (pid) => {
+  if (pid) { loadLibrary(); loadCastProfiles() }
+}, { immediate: true })
 // 切到「全部作品」时按需拉一次
 watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 </script>
@@ -1032,4 +1112,18 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 .sg-anchor-name { flex: none; min-width: 64px; color: var(--ink); font-weight: 600; }
 .sg-anchor-text { color: var(--muted); word-break: break-word; }
 .sg-empty { font-size: 11.5px; color: var(--dim); }
+/* 演员库（D-64） */
+.cast-hint { margin: 2px 0 8px; font-size: 11.5px; color: var(--muted); line-height: 1.7; }
+.cast-form { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.cast-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 0; border-bottom: 1px solid var(--line);
+}
+.cast-main { flex: 1; min-width: 0; }
+.cast-name { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.cast-appear {
+  font-size: 11px; color: var(--muted); line-height: 1.6;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cast-target { width: 110px; flex: none; font-size: 11.5px; }
 </style>

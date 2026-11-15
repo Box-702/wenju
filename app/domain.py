@@ -514,6 +514,11 @@ class Shot(BaseModel):
     group_index: int = Field(default=0, ge=0, le=15)  # 组内机位序号（0 起，合法组≤4，宽松收）
     group_prompt: str | None = None    # 组提示词（仅组头镜头持有）：提交生成时用它，
                                        # 单镜 video_prompt 仍逐镜保留供审阅/审计/单镜重出片
+    # ---- 集（Episode）：集-镜两级结构（D-63）----
+    # 集 = 小说的一章（场景的 chapter_refs）。短剧常常只有一章——那全片就是
+    # 一集；连载改编时一章一集，进度百分比与导出分集都按它算。
+    episode_id: str = ""            # 所属集 id（章 id，如 ch_003）
+    episode_index: int = Field(default=0, ge=0)  # 集序号（0 起）
     # ---- 一致性锚定（多模态输入，对接 VideoJobParams）----
     reference_images: list[str] = Field(default_factory=list)  # 共享环境/人物参考图 URL
     reference_videos: list[str] = Field(default_factory=list)  # 参考上一镜成片 URL，锁风格/运镜/光影

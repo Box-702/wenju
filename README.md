@@ -55,9 +55,9 @@
 
 ### 工具集
 
-**对话 Conductor 工具（31 个）**：剧本侧 `create_project`（超长原文主动提示）/ `map_novel` / `propose_arcs` / `generate_script` / `run_adaptation` / `read_script`（读作品的台本 / 目录 / 镜头 / 视觉资产）/ `ask`；原文侧 `read_source` / `search_source`；剧组 `breakdown_scenes` / `generate_style_guide` / `generate_video_prompts` / `generate_reference_assets` / `clone_voice`；出片 `approve_video_prompts` / `submit_videos` / `rerun_video` / `finalize_film`；生产 `start_production` / `import_storyboard`（成品分镜直出，D-47）；查询只有一个 `get_status`（五合一，别再拆）；记忆 `remember` / `recall`；技能 `load_skill`；白模 `blockout_sheet_save` / `blockout_build` / `blockout_check`（施工单对话调整，D-54）。从导入小说到出片的全流程都能在对话里完成；每轮的工具轨迹压缩后进入历史上下文，多轮不丢事实。
+**对话 Conductor 工具（36 个）**：剧本侧 `create_project`（超长原文主动提示）/ `map_novel` / `propose_arcs` / `generate_script` / `run_adaptation` / `read_script`（读作品的台本 / 目录 / 镜头 / 视觉资产）/ `ask`；原文侧 `read_source` / `search_source`；剧组 `breakdown_scenes` / `generate_style_guide` / `generate_video_prompts` / `generate_reference_assets` / `clone_voice`；出片 `approve_video_prompts` / `submit_videos` / `generate_video`（单镜出片，缺风格/比例先问用户）/ `rerun_video` / `cancel_video_job` / `finalize_film`；生产 `start_production`（先报预算、用户确认才跑，D-62）/ `import_storyboard`（成品分镜直出，D-47）；查询只有一个 `get_status`（五合一，别再拆）；记忆 `remember` / `recall` / `forget` / `search_history`（带 id 的历史条目，可引用）；资产 `list_assets` / `search_assets` / `save_asset`（存成定妆照）/ `attach_asset`（挂到镜头上）；技能 `load_skill`（能读技能的附属文件）；白模 `blockout_sheet_save` / `blockout_build` / `blockout_check`（施工单对话调整，D-54）。从导入小说到出片的全流程都能在对话里完成；每轮的工具轨迹压缩后进入历史上下文，多轮不丢事实。
 
-**主 Agent 按需加载技能**：系统提示只放「触发 → 动作」的路由表 + 六个技能的目录，真正怎么做（步骤顺序、硬门槛、失败处理）在 `app/skills/{novel-serial,crew-pipeline,production-delivery,script-review}/SKILL.md` 里，进入该领域时由 `load_skill` 按需拉取。实测（每例连跑 3 次）：长篇直接要初稿 3/3 会先加载细则并拒绝整本生成，改编 3/3、出片 3/3 在动手前加载，「拆好了吗」3/3 不多花一次往返。改流程只动 `.md`，不碰代码。
+**主 Agent 按需加载技能**：系统提示只放「触发 → 动作」的路由表 + 六个主技能的目录（另有四个剧组技能由代码 `render_skill` 加载），真正怎么做（步骤顺序、硬门槛、失败处理）在 `app/skills/{novel-serial,crew-pipeline,production-delivery,script-review,asset-generation,blockout}/SKILL.md` 里，进入该领域时由 `load_skill` 按需拉取。实测（每例连跑 3 次）：长篇直接要初稿 3/3 会先加载细则并拒绝整本生成，改编 3/3、出片 3/3 在动手前加载，「拆好了吗」3/3 不多花一次往返。改流程只动 `.md`，不碰代码。
 
 **长篇小说改编**：单次剧本生成的原文容量约 1.2 万字，超长文本不再静默砍头——`create_project` 会如实提示规模；先 `map_novel`（后台 map-reduce 逐章摘要+出场人物，存 `projects.novel_map_json`）建章节地图，再 `propose_arcs` 提 2-3 个候选故事弧（清单带每章字数，单弧约束在 1.2 万字生成容量内，大弧自动拆上下部）；用户选定后 `generate_script(from_chapter, to_chapter)` 按章生成，「继续改编下一段」直接按容量从进度续接；连载推进时自动携带已改编章节的「前情提要」保持人物与情节衔接（进度锚 `projects.adapted_until`，项目 API 已暴露地图与进度）。**可靠性护栏**（deepseek 实测驱动）：模型摘要/剧本输出不守格式时结构化容错解析而非整体回退；回复声称了「已生成/已建成」但本轮没有真实工具返回时，系统自动更正并带纠错指令重跑一次，杜绝凭对话历史编造版本号。
 
@@ -96,13 +96,13 @@
 分层（依赖单向向下，见 `docs/ARCHITECTURE.md`）：
 
 - `app/llm/`：**统一模型接入层**。门面 `LLM` + 厂商表 + 配置解析（`.env` / DB），覆盖 chat / vision / image 三个能力维度。
-- `app/pipeline/`：**内容生产线**。导入解析、两阶段生成、patch 与校验、题材识别、评审、导出；不依赖 LangGraph，也不感知 HTTP。
+- `app/pipeline/`：**内容生产线**。导入解析、两阶段生成、patch 与校验、题材识别、评审、导出（剧本台本 + 提示词包）、长篇建图；不依赖 LangGraph，也不感知 HTTP。
 - `app/agent/`：**改编智能体**。`graph` / `nodes` / `tools` / `state` 是 LangGraph 状态图，`runner` 是薄服务层，`skills` 是后台任务运行器（剧组任务）。
 - `app/chat/`：**对话式编排**（ChatConductor），绑定工具理解意图，底层复用 `app/agent` 的审阅工作流。
 - `app/crew/`：**剧组 Agent**（导演 / 美术指导 / 摄影指导）。
-- `app/media/`：**参考资产流水线**（定妆图 → 视觉质检 → 注册 → 回填镜头）。
+- `app/media/`：**参考资产流水线**（定妆图 → 视觉质检 → 注册 → 回填镜头）+ 白模施工（施工单 → 确定性构建 → 空间锚反哺提示词）。
 - `app/video/`：视频 Provider 抽象层 + 异步任务队列 + 连续性解析 + FFmpeg 拼接。
-- `app/api/`：**REST 路由包**，按域拆分为 system / projects / versions / agent_runs / chat / video；统一经 `api/deps.py` 取依赖。
+- `app/api/`：**REST 路由包**，按域拆分为 system / projects / versions / chat / video / cast / memory / blockout / production；统一经 `api/deps.py` 取依赖。
 - `app/store.py`：业务持久化（SQLAlchemy，Postgres / SQLite）。
 - `frontend/`：Vue 3 + Vite 单页，三栏布局（聊天 + 创作区 + Inspector）。
 
@@ -253,7 +253,7 @@ Wenju/
 │   │
 │   ├── chat/
 │   │   ├── conductor.py      # 对话编排：系统提示 + 对话图 + 轮次服务
-│   │   └── tools/            	# 28 个工具的实现，按域拆分（screenplay/source/script_reader/crew/video/production…）
+│   │   └── tools/            	# 36 个工具的实现，按域拆分（screenplay/source/script_reader/crew/video/production…）
 │   ├── media/
 │   │   └── refs.py           # 参考资产流水线（定妆图 → 质检 → 回填）
 │   ├── crew/                 # 剧组 Agent
@@ -274,29 +274,35 @@ Wenju/
 │       ├── App.vue           # 三栏布局
 │       ├── stores/app.js     # 全局状态
 │       └── components/
-│           ├── ChatList.vue          # 聊天列表
-│           ├── WorkspaceTree.vue     # 工作区文件树
-│           ├── SettingsModal.vue     # 模型/Provider 设置
-│           ├── ShotList.vue          # 镜头列表
-│           ├── VideoPlayer.vue       # 视频播放器
+│           ├── AssetPanel.vue        # 资产库（角色 / 场景 / 成片 / 白模 / 演员库）
+│           ├── SettingsModal.vue     # 模型 / Provider / 偏好 / 记忆 / 工作目录设置
+│           ├── ShotList.vue          # 镜头列表（按镜头组折叠）
+│           ├── VideoWorkbench.vue    # 视频工作台（批次 / 任务 / 提示词包导出）
+│           ├── ContextPanel.vue      # 右侧上下文栏（大纲 / 镜头 / 资产 / 白模 / 技能）
+│           ├── ApprovalCard.vue      # 批准镜头提示词的确认卡（D-43 硬闸门）
+│           ├── ProductionBudgetCard.vue # 生产流水线的预算确认卡（D-62）
 │           └── ...
 │
 ├── docs/                     # ★ 文档
 │   ├── README.md             #   文档索引（先读这个）
 │   ├── ARCHITECTURE.md       #   分层结构 / 模型接入 / Agent 清单 / 核心链路
-│   ├── DEVELOPMENT.md         #   开发指引 + 踩坑记录 + 排查手册
+│   ├── DEVELOPMENT.md         #   开发指引 + 踩坑记录 + 排查手册 + 测试账本
 │   ├── DECISIONS.md          #   技术选型记录（为什么用这个）
-│   └── DRAMATURGY.md         #   「先戏剧后语法」方法论
+│   ├── DRAMATURGY.md         #   「先戏剧后语法」方法论
+│   ├── PLAN-shot-group.md    #   镜头组架构 + 白模约束层（S1-S4 已落地）
+│   ├── PLAN-mediago-reference.md # 对标 mediago 的强弱表与待办
+│   ├── PLAN-agent-rebuild.md #   对话内核重建计划
+│   └── POSITIONING-2026-11.md #   产品定位判定与 P0 清单（D-66 已裁决）
 │
 ├── evals/                    # ★ 提示词质量 eval（改提示词后跑这个）
 │   ├── README.md             #   怎么跑、怎么加 case、判定标准
 │   ├── rubric.md             #   五维评分量表
 │   ├── assertions.py         #   确定性断言库
-│   ├── cases.py              #   10 条 golden case
+│   ├── cases.py              #   11 条 golden case
 │   ├── runner.py             #   引擎
 │   └── fixtures/             #   录制的真实产出（离线回归用）
 │
-└── tests/                    # 测试套件（582 tests，45 个测试文件）
+└── tests/                    # 测试套件（685 tests，53 个测试文件）
 ```
 
 ## 环境变量
@@ -334,7 +340,7 @@ Wenju/
 
 ```bash
 python -m pytest tests -q
-# 548 passed
+# 685 passed
 ```
 
 ## 提示词质量 eval
@@ -343,9 +349,11 @@ python -m pytest tests -q
 只有 eval 能提前告诉你这次改动是不是把质量拉垮了。
 
 ```bash
-python -m evals.run              # 跑 10 条 golden case（需要对话模型）
+python -m evals.run              # 跑 11 条 golden case（**需要对话模型，要花钱**）
 python -m evals.run --judge      # 额外跑 LLM judge 打分（看质量趋势）
-pytest evals -q                  # 离线层：不需要 key
+pytest evals -q                  # ⚠️ 含**在线层**（L1/L2）：有 key 就真跑、真花钱；
+                                  #   只要离线层用 -k "not deterministic_assertions
+                                  #   and not judge_scores and not report_renders"
 
 python -m evals.skill_eval --ablate --repeat 3   # 技能加载 eval（消融对比）
 ```

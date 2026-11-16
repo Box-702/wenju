@@ -21,6 +21,9 @@
 - 改代码前看 `ARCHITECTURE.md` 分层规则（依赖方向不能反）。
 - 提新方案前查 `DECISIONS.md`（别推翻已有决策、别重复调研）。
 - 改任何提示词/SKILL.md 后跑 `python -m evals.run`（判定标准变了改 `evals/rubric.md`）。
+  ⚠️ `evals.run` 与 `pytest evals` 的 **L1/L2 在线层都要真调模型、要花钱**；
+  只想要离线层用
+  `pytest evals -q -k "not deterministic_assertions and not judge_scores and not report_renders"`。
 - 报错先查 `DEVELOPMENT.md` 第六节排查手册。
 
 ## 运行与结构速查
@@ -38,6 +41,10 @@
 
 MiniMax 按秒计费且接口非幂等（超时也计费）。任何会触发视频/图片生成的
 调试，先估算并告知用户单价；批量提交必须走 `--shot-limit` 或分批。
+
+**对话模型也算钱**：提示词 eval 的在线层（L1 真实链路 / L2 judge）每条
+case 都要真调模型，11 条 case 跑两轮就是几十次调用；改完提示词先跟用户
+说清要花多少再跑。
 
 ## 边界
 

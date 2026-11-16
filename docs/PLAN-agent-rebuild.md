@@ -11,11 +11,11 @@
 | **M1** | 1. 自研 AgentLoop + provider 层 | ✅ **已完成**（`app/chat/loop.py`，见 D-29）。transport 仍用 ChatOpenAI，`_to_lc_messages()` 是唯一切换点 |
 | | 2. Session 落库与恢复（含图片引用） | ✅ 图片落库 + 常驻上下文已完成（D-26）；工具消息尚未单独落角色 |
 | | 3. novel-to-drama 技能 → 交用户审阅 | ⚠️ 技能已存在但拆成了 4 个（`novel-serial` / `crew-pipeline` / `script-review` / `production-delivery`），**命名与 plan 不同**，待确认是否合并成一个 |
-| **M2** | 4. SKILL.md 解析 / `/` 面板 / 导入 | ⚠️ 解析 + `load_skill` + 自动选择已有；**`/` 呼出面板与用户导入尚未做** |
-| | 5. 其余内置技能 | ✅ 四个领域技能已落地（命名与 plan 不同，见上） |
-| | 6. 资产工具化 + CastLibrary 移除 | ⚠️ 资产上传/入库已完成（D-23）；`search_assets` / `save_asset` / `attach_asset` 三个工具**尚未建** |
-| **M3** | 7. 沟通协议写入提示 | ❌ 未开始 |
-| | 8. `generate_video` 工具化（强制参数校验） | ⚠️ `submit_videos` 已有，但没做「风格/比例/时长」的强制确认 |
+| **M2** | 4. SKILL.md 解析 / `/` 面板 / 导入 | ✅ 解析 + `load_skill` + 自动选择已有；**2026-11-15 补齐**：`/` 呼出技能面板（输入框打「/」，ComposerCard）与用户导入（`POST /api/skills`） |
+| | 5. 其余内置技能 | ✅ 四个领域技能已落地（命名与 plan 不同，见上）；另加 asset-generation / blockout 两个主技能 |
+| | 6. 资产工具化 + CastLibrary 移除 | ✅ **2026-11-15 补齐**：`search_assets` / `save_asset` / `attach_asset` 三个工具（D-61）。CastLibrary 仍在用（未移除） |
+| **M3** | 7. 沟通协议写入提示 | ✅ **2026-11-15 补齐**：系统提示新增【沟通协议】段（D-60）——分段推进 / 生成前必问风格·比例·时长 / 决策点确认 / 用户说「直接生成」则跳过并记住；**只管生成前的追问，不动 D-43 批准闸门** |
+| | 8. `generate_video` 工具化（强制参数校验） | ✅ **2026-11-15 补齐**：`generate_video(shot_id, style, ratio, duration)`，缺风格/比例时**先问用户**不替他定（D-61） |
 | **M4** | 9. 新布局 + 灰黑主题 | ⚠️ 工作区化 + 品牌首页已完成（`ca8329b` / `a9b92e5`），与 plan 的 iMini 布局**不完全一致**，待确认 |
 | | 10. 全链路回归 | ⚠️ 待 M1-M3 收口后再做 |
 
@@ -218,7 +218,7 @@ when_to_use: 用户上传小说/要求把文字作品转成短剧时
 落到我们的架构：
 
 ```
-主 Agent（一个内核，D-28）
+主 Agent（一个内核，D-29）
  ├─ 工具（单步动作）：read_script / get_status / remember …
  ├─ 技能（领域知识，SKILL.md 按需加载）：crew-pipeline / production-delivery …
  └─ 工作流（多阶段长任务，有预算、有断点、有产物）：

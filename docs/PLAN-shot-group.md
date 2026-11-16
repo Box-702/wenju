@@ -46,7 +46,7 @@ group_index: int = 0      # 组内序号（0 起），决定时间轴顺序
 |---|---|---|
 | 导演 | `crew/director.py` | 输出后按叙事高点分组建组（规则在 SKILL.md 已写：对峙/揭示/关键道具才成组）；`enforce_duration_budget` 的删镜改为**按组删**（整组一起删，防删半个戏） |
 | DP | `crew/dp.py` | 组装时同组镜头的 prompt_body 拼成 `[Shot N] At 00:XX, cuts to…` 一条 video_prompt（时间戳由组内 duration 累加算出，**代码算不让模型算**——Seedance 官方明说精确时间模型不稳，我们只喂 MiniMax，它母语就是这个格式）；`strip_spoken_quotes` 白名单已就位 |
-| 落库 | `store.py` | `VideoVersion.shots` 里带组字段即可（JSON 列，无 schema 迁移）；新增 `group_key(shot_dicts)` 辅助：把 shots 折叠成生成单元列表 |
+| 落库 | `store.py` | `VideoVersion.shots` 里带组字段即可（JSON 列，无 schema 迁移）；**实现在 `app/video/service.py:generation_units`**（不是 `store.py` 的 `group_key()`——辅助函数最终落在服务层，因为折叠要按组算时长与提交单位，存储层不该知道这些） |
 | 提交 | `video/service.py` | `VideoJobCreate.shot_id` → 语义改为 **unit_id**（组 id 或单镜 id，字段名不动，claim key 的 intent 加 group 成员与各自时长）；`_auto_references` 的接力锚按组取（上一**组**尾镜成片）；`generate_batch` 的 `shot_ids` 换成 unit 列表 |
 | 批次 | `video/batch.py` | 推进单位 = 组；`results` 键 = unit_id；UI 进度文案「镜」→「段」 |
 | 质检 | `video/qa.py` | 抽帧数按组时长放大（15s 组抽 7-9 帧）；FAIL 时重 roll 整组；降级改写函数输入是**组提示词**，缺陷定位到机位段（「第 2 机位手指畸变」→ 只降级那一段的描写） |
@@ -85,9 +85,9 @@ group_index: int = 0      # 组内序号（0 起），决定时间轴顺序
 | 期 | 内容 | 验收 | 花钱 |
 |---|---|---|---|
 | S1 | ✅ **已完成（2026-11-12）**：domain 三字段 + `_normalize_groups` 归一化 + 校验器组自洽 + 闸门按组删 + `_fold_group_prompts` 组拼装（时间戳代码算）+ evals「排钱戏」case + 7 新测试，526 passed | 单测锁时间戳累加/整组删/去重 | ¥0 |
-| S2 | 提交/批次/claim/QA 改组单位 + finalize 配音时间轴 | `--shot-limit 3` 小样（3 组 ≈ 30s 素材，约 ¥6）：看组内切镜是否如预期不漂移、配音是否对位 | 少量 |
-| S3 | Blender previz POC：单组（排钱戏）白模→关键帧→反哺提示词，对比有无 previz 的两版同组生成 | 同组双跑 ¥4 + 人眼对比；evals/judge 加「空间关系一致性」维度 | 少量 |
-| S4 | UI 组折叠 + 对话工作流入口（start_production 报预算/确认卡/续跑语义，PLAN-agent-rebuild 10.1 的 P4） | 全片 v5（约 10 组 ≈ ¥15-20） | 中 |
+| S2 | 提交/批次/claim/QA 改组单位 + finalize 配音时间轴 | ✅ **已完成（2026-11-15）**：提交单位统一为生成单元（`generation_units`，D-55）、配音时间轴按成员展开、QA 抽帧密度按片长放大 + 缺陷定位到机位段 | ¥0 |
+| S3 | Blender previz POC：单组（排钱戏）白模→关键帧→反哺提示词 | ✅ **已完成（2026-11-15，D-59）**：白模施工单认 `scene_id`/`group_id`，坐标翻译成空间锚（**只说方位，不说坐标**）作为组提示词的第三个固定锚段；另加身份色（**只进渲染，不进提示词**）。**未做**：evals/judge 的「空间关系一致性」维度（要真片才验得了，留待花钱轮） | ¥0 |
+| S4 | UI 组折叠 + 对话工作流入口（start_production 报预算/确认卡/续跑语义） | ✅ **已完成（2026-11-15，D-62）**：镜头卡按组折叠、组头=批准单位；start_production 改为「先报预算、用户点确认卡才跑」（服务端硬闸门）+ `limit=N` 限场续跑 | ¥0 |
 
 **回退策略**：每期改动都保持"单镜自成一组"的兼容路径；S2 若发现组模式
 良率反而下降（组一崩崩 15 秒），导演规则收紧成"只有戏剧高点成组"即可，

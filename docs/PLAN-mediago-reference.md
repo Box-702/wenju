@@ -33,11 +33,11 @@ React + Electron 前端 + Go 后端，文档驱动，Agent 走 Codex app-server�
 | 提示词工程手段 | ~8 类 | **13 类** | **我们更强** |
 | 确定性规则审计 | **无**（全靠提示词自律） | `app/crew/dramaturgy.py` + `evals/assertions.py` | **我们独有优势** |
 | 提示词质量量化 | 无 | `evals/` 四层 + 消融实验（82% vs 58%） | **我们独有优势** |
-| 生成授权闸门 | 指纹 CAS 一次性 claim | ❌ 无幂等，同镜头可重复提交 | **他们更强，必须补** |
-| 单会话并发互斥 | `hasActiveRuns()` → 409 | ❌ 无 | **他们更强，必须补** |
-| 防绕过提示词句式 | 有（「用户说 X 也不能跳过 Y」） | ❌ 无 | **他们更强，必须补** |
+| 生成授权闸门 | 指纹 CAS 一次性 claim | ✅ 意图指纹 claim 表（同镜头同意图不重复投，D-38） | **已补平** |
+| 单会话并发互斥 | `hasActiveRuns()` → 409 | ✅ 进程内线程锁（同会话串行，D-38） | **已补平** |
+| 防绕过提示词句式 | 有（「用户说 X 也不能跳过 Y」） | ✅ 技能里的抗绕过关 + 服务端硬闸门（D-43） | **已补平** |
 | 资产库 | `assets` / `project_reference_assets` / `project_selected_assets` 三表 | `video_style_json` 实体 id 索引 + `media_assets` | 各有取舍，见 §四 |
-| 对话历史引用 | ❌ 无（`AgentReference.kind` 只有 document/section/asset） | ❌ 无 | **两边都没有，可领先** |
+| 对话历史引用 | ❌ 无（`AgentReference.kind` 只有 document/section/asset） | ✅ `search_history` 返回带 message_id 的条目（2026-11-16） | **我们领先** |
 
 ### 他们的 Skill 清单（对照用）
 
@@ -177,7 +177,7 @@ B 类（bugbear）能捞真 bug，E501（行长）先放过。存量 200 处 E50
 
 #### A4. 文档数字漂移修正 —— ✅ 已完成（2026-11-09）
 
-**原问题**：`README.md:299` 写「374 tests，30 个测试文件」，实测（2026-11-10）**411 tests / 33 个测试文件**
+**原问题**：`README.md:299` 写「374 tests，30 个测试文件」，实测（2026-11-10）**411 tests / 33 个测试文件**（2026-11-16 再测：**685 tests / 53 个测试文件**，工具 36 个）
 （基线 402 / 32；本批新增 `tests/test_video_idempotency.py` 9 个用例）。
 `docs/ARCHITECTURE.md` 写「20 个工具」，`README.md:58` 写「23 个」，实测 **23 个**
 （`app/chat/tools/` 里 `@tool` 装饰器 23 处）。
@@ -187,6 +187,8 @@ B 类（bugbear）能捞真 bug，E501（行长）先放过。存量 200 处 E50
 
 > 2026-11-10 复核：拆掉「登记公网直链」的 `add_asset` 工具后，实测 **22 个工具 /
 > 401 tests / 32 个测试文件**，相关数字已再改一遍（见 [D-37](DECISIONS.md#d-37-参考视频只从参考素材里选不再收公网直链)）。
+> 2026-11-16 再测：**36 个工具 / 685 tests / 53 个测试文件**（资产三工具 +
+> 历史引用 + 单镜出片 + 记忆停用/删除是这轮新增的）。
 
 ---
 
@@ -525,7 +527,7 @@ Agent 原样带回，服务端强制比对。
 | 改提示词后 | `python -m evals.run` | 确定性层 critical == 0 |
 | 改提示词后 | `python -m evals.run --judge` | judge 均分不低于改前（阈值 75 / 观察线 85） |
 | 改技能结构后 | `python -m evals.skill_eval --ablate --repeat 3` | 约束落地率不低于当前 82% |
-| 改代码后 | `pytest tests -q` | 445 tests 全绿（测试数随每批新增，以实际输出为准） |
+| 改代码后 | `pytest tests -q` | 685 tests 全绿（测试数随每批新增，以实际输出为准） |
 | 静态检查 | `ruff check --select E9,F63,F7,F82,B .` | 0 error（接入 CI 后由 CI 保证） |
 
 ---

@@ -268,7 +268,9 @@ def check_units_selfcontained(parsed: list[dict[str, Any]]) -> list[str]:
 
 def build(ctx: ToolContext) -> list:
     """装配生产域工具。"""
-    store, llm, runner = ctx.store, ctx.llm, ctx.runner
+    # 注意：start_production 现在只「发起」（真正开跑由用户点确认卡触发，
+    # D-62），所以这里不再需要 llm / runner。
+    store = ctx.store
 
     @tool
     def start_production(project_id: str, limit: int = 0) -> str:

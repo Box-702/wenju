@@ -13,7 +13,9 @@ from __future__ import annotations
 
 from app.crew.dramaturgy import (
     audit_breakdowns,
+    audit_screen_sides,
     audit_video_prompt,
+    extract_screen_sides,
     find_camera_moves,
     find_negations,
     find_slop_words,
@@ -188,6 +190,134 @@ def test_find_camera_moves_requires_camera_context():
     assert find_camera_moves("在靠门地面拉出一道冷光带") == []
     assert find_camera_moves("镜头极缓慢地向桌面推近") == ["推近"]
     assert set(find_camera_moves("镜头先推近再横移")) == {"推近", "横移"}
+
+
+# ---------- 运镜检测分级（2026-11-17）：强/弱动词 + 语境作用域 ----------
+
+
+def test_find_camera_moves_detects_move_far_from_camera_words():
+    """机位词与运镜动词隔得远也必须命中——这是我们自己 SKILL.md 教的句式。
+
+    旧实现用固定 14 字语境窗口，于是这句（机位词距「推进」22 字）检不出「推进」，
+    审计器对它零告警，「一镜多运镜」也就零感知。
+    """
+    text = (
+        "机位在苏砚左前方约两米五，齐腰高度略仰，沿通道中轴向前缓慢推进约六十厘米，"
+        "由中景收至中近景，推进到位的最后半米减速停稳。"
+    )
+    assert "推进" in find_camera_moves(text)
+
+
+def test_find_camera_moves_weak_verb_needs_clause_context():
+    """弱动词（拉近/推入/后拉）只在同一分句有镜头语境词时才算运镜。"""
+    assert find_camera_moves("两人之间的距离慢慢拉近") == []
+    assert find_camera_moves("镜头向他的脸拉近") == ["拉近"]
+
+
+def test_audit_video_prompt_flags_handheld_conflict_with_declared_move():
+    """手持是独立机位类型——本镜已声明运镜又写手持晃动 = 一镜两种运动。"""
+    prompt = (
+        "镜头沿通道中轴缓慢向前推进约六十厘米，由中景收至中近景，末段减速停稳。"
+        "机身带极轻的手持晃动，幅度小于一指宽。"
+    )
+    issues = audit_video_prompt({"video_prompt": prompt})
+    assert "手持" in " ".join(issues)
+
+
+def test_audit_video_prompt_allows_handheld_in_static_shot():
+    """纯静止镜写手持晃动不报——规则 12 允许把它当真实感写。"""
+    prompt = (
+        "机位在老周右前方约两米，齐眼高度，中景，全程不移动；"
+        "机身带极轻的手持晃动，焦点在他脸上短暂游移后重新合焦。"
+    )
+    assert audit_video_prompt({"video_prompt": prompt}) == []
+
+
+def test_find_negations_grammar_layer_catches_synonyms():
+    """词表之外的否定改写也要抓：没碰 / 未拿 / 别看。"""
+    assert "没碰" in find_negations("他没碰那只碗")
+    assert "未拿" in find_negations("她未拿杯子")
+    assert "别看" in find_negations("别看镜头")
+    # 正向表述不误伤：「脚步不停」是规则 8 自己推荐的写法。
+    assert find_negations("低头快走掠过，脚步不停，衣角翻飞") == []
+
+
+# ---------- 跨镜屏幕方位（轴线）----------
+
+
+def test_extract_screen_sides_reads_name_and_side():
+    sides = extract_screen_sides("苏砚在画面左侧，老周在画面右侧，两人相距三米。")
+    assert sides.get("苏砚") == {"左"}
+    assert sides.get("老周") == {"右"}
+
+
+def test_extract_screen_sides_ignores_location_words():
+    """「站在画面右侧墙边」里的「墙边」不是角色名，不能拿去比对左右。"""
+    sides = extract_screen_sides("老周穿蓝色工装外套，站在画面右侧墙边。")
+    assert "墙边" not in sides
+    assert "老周" not in sides
+
+
+def test_audit_screen_sides_flags_axis_flip_within_scene():
+    """同一场戏里同一角色出现在画面两侧 = 疑似越轴（我们的第一杀手）。"""
+    shots = [
+        {"id": "shot_a", "scene_id": "scene_001", "order": 0,
+         "video_prompt": "苏砚在画面左侧，老周在画面右侧，两人相距三米。"},
+        {"id": "shot_b", "scene_id": "scene_001", "order": 1,
+         "video_prompt": "苏砚在画面右侧，老周在画面左侧。"},
+    ]
+    issues = audit_screen_sides(shots)
+    assert "shot_a" in issues and "shot_b" in issues
+    assert "越轴" in " ".join(issues["shot_a"])
+
+
+def test_audit_screen_sides_ignores_different_scenes():
+    """不同场戏之间不比对——换场本来就换方位。"""
+    shots = [
+        {"id": "shot_a", "scene_id": "scene_001", "order": 0,
+         "video_prompt": "苏砚在画面左侧。"},
+        {"id": "shot_b", "scene_id": "scene_002", "order": 1,
+         "video_prompt": "苏砚在画面右侧。"},
+    ]
+    assert audit_screen_sides(shots) == {}
+
+
+def test_refresh_prompt_audits_adds_cross_shot_axis_issue():
+    shots = [
+        {"id": "shot_a", "scene_id": "scene_001", "order": 0,
+         "video_prompt": "苏砚在画面左侧，老周在画面右侧，两人相距三米，风吹动他的衣角。"},
+        {"id": "shot_b", "scene_id": "scene_001", "order": 1,
+         "video_prompt": "苏砚在画面右侧，老周在画面左侧，远处货车驶过，尘土扬起。"},
+    ]
+    refresh_prompt_audits(shots)
+    assert any("越轴" in i for i in shots[0]["prompt_audit"])
+    assert any("越轴" in i for i in shots[1]["prompt_audit"])
+
+
+# ---------- CLI 入口 ----------
+
+
+def test_cli_audits_text_and_reports_issues(capsys):
+    """手写提示词的人要能直接把文本丢进来当场看告警。"""
+    from app.crew.dramaturgy import _cli
+
+    assert _cli(["--text", "镜头缓慢推近他的脸，机身带极轻的手持晃动。"]) == 0
+    out = capsys.readouterr().out
+    assert "手持" in out
+
+    assert _cli(["--text", "镜头缓慢推近他的脸，焦点在他脸上短暂游移后重新合焦。"]) == 0
+    assert "未发现问题" in capsys.readouterr().out
+
+
+def test_cli_json_output(capsys):
+    import json as _json
+
+    from app.crew.dramaturgy import _cli
+
+    _cli(["--text", "电影感的走廊，镜头先推近又环绕。", "--json"])
+    data = _json.loads(capsys.readouterr().out)
+    assert any("占位词" in i for i in data["issues"])
+    assert any("一镜多运镜" in i for i in data["issues"])
 
 
 def test_strip_style_block_handles_trailing_punctuation_change():

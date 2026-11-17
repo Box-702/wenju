@@ -50,6 +50,18 @@ _NEGATION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 否定句的**语法层**：词表只能挡住固定写法，同义改写一律漏——「没碰」「未拿」
+# 「不拿」都不在词表里（实测漏报）。补一层保守的「否定副词 + 物理动词」模式，
+# 只收触碰 / 视线 / 说话 / 抬头低头这四类（规则 8 点名的高发写法）。
+#
+# 「不停」「不动」「不长」这类**正向表述不收**——「脚步不停」是我们自己在规则 8
+# 里推荐的写法（否定动作延续 → 改成正向），收了就是自己打自己。
+_NEGATION_GRAMMAR_RE = re.compile(
+    r"(?:不|没|未|别)(?:碰|摸|拿|穿|越过|接触)"
+    r"|(?:不|没|未|别)(?:看|说|睁|闭)"
+    r"|(?:不|没|未)(?:抬头|低头)"
+)
+
 # ---------------------------------------------------------------------
 # 台词引用：引号直挂说话动词且**没有冒号**的旧写法（`说道「…」`）会渲染成
 # 含混假说话，剥除；官方音画句式（`角色说话：「…」`，冒号挂引号）保留——
@@ -105,40 +117,161 @@ _LIGHT_WORDS = (
 SHOT_FUNCTIONS = ("emotion", "action", "pressure")
 
 # 运镜动词（「推开门」不命中；「推近/环绕/跟拍」才算运镜）。
+#
+# 这是**不带语境要求的原始表**：风格段剥离（strip_camera_moves）用它——
+# 风格段里孤零零一个「推近」本身就是一条运镜指令，不该因为附近没有「镜头」二字就放过。
 _CAMERA_MOVE_RE = re.compile(
     r"(推近|拉近|推入|拉出|后拉|横移|摇镜|摇向|环绕|跟拍|跟随|升降|俯冲|推进)"
     r"|\b(push[- ]?in|pull[- ]?out|pan|orbit|tracking|dolly|crane|tilt)\b",
     re.IGNORECASE,
 )
 
-# 镜头语境词：运镜动词必须挨着它，才算「在描述镜头怎么动」。
+# 强运镜动词：提示词里几乎只用于描述镜头运动——**无论离镜头语境词多远都算运镜**。
+#
+# 为什么分级（2026-11-17）：旧实现用固定 14 字语境窗口，于是
+# 「机位在苏砚左前方约两米五，齐腰高度略仰，沿通道中轴向前缓慢推进约六十厘米」
+# 这种**我们自己 SKILL.md 教的写法**检不出「推进」——审计器对它零告警，
+# 「一镜多运镜」也就对它零感知（实测漏报，见 DEVELOPMENT 5.60）。
+# 而把窗口直接放宽又会重演 2026-10 那次事故：真实提示词 4/4 全被误报成
+# 「一镜多运镜」（「在靠门地面拉出一道冷光带」里的「拉出」被当成 pull-out）。
+# 分级之后两头都不再漏：强动词无条件命中，弱动词才要求语境。
+_CAMERA_MOVE_STRONG_RE = re.compile(
+    r"(推近|急推|拉远|急拉|推进|横移|摇镜|摇向|横摇|上摇|下摇|环绕|跟拍|跟随|升降|俯冲|甩镜|变焦)"
+    r"|\b(push[- ]?in|pull[- ]?out|push[- ]?back|pan|tilt|orbit|tracking|dolly|crane|zoom)\b",
+    re.IGNORECASE,
+)
+
+# 弱运镜动词：日常义与镜头义都有（拉近/推入/后拉），必须**同一分句**里出现
+# 镜头语境词才算运镜。「拉出」整条移出——它只出现在「拉出一道冷光带」这种
+# 物理描述里，而中文镜头语言几乎不用它写运镜（「拉远/后拉」才是）。
+_CAMERA_MOVE_WEAK_RE = re.compile(r"(拉近|推入|后拉)")
+
+# 手持/晃动的标记词。handheld 在我们的机位类型里是**独立的一种**，
+# 所以「本镜已声明运镜 + 又写手持晃动」= 一镜两种机位运动，要报。
+# （纯静止镜不报——规则 12 明确允许把手持晃动当真实感写。）
+#
+# 「晃动」必须带镜头语境才算：实测真实提示词里「油灯火苗偶尔被穿堂风带得晃动，
+# 光影随之轻颤」说的是**烛火**不是机位——按字面匹配会把这 11 个镜头全误报。
+_HANDHELD_STRONG_RE = re.compile(r"(手持|机身晃|机身带)")
+_HANDHELD_WEAK_RE = re.compile(r"(晃动|晃了晃|轻微晃)")
+# 镜头语境词（手持用）：与 _CAMERA_CONTEXT_WORDS 同源，但不含「画面」——
+# 「画面轻微晃动」可以是任何东西在晃。
+_HANDHELD_CONTEXT_RE = re.compile(r"(机身|机位|摄影机|摄像机|镜头|相机|取景|画框)")
+
+# 运镜同义词归一：推近/推进/拉近/推入 都是**同一种运动**的不同写法。
+# 不归一就会把「推进」和「推近」数成两种运镜——实测真实提示词里 15 个镜头
+# 因此被误报「一镜多运镜」。
+_CAMERA_MOVE_CANONICAL: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("推", ("推近", "急推", "推进", "拉近", "推入", "push-in", "dolly", "push in")),
+    ("拉", ("拉远", "急拉", "后拉", "pull-out", "push-back", "pull out")),
+    ("横移", ("横移",)),
+    ("摇", ("摇镜", "摇向", "横摇", "上摇", "下摇", "pan", "tilt")),
+    ("环绕", ("环绕", "orbit")),
+    ("跟", ("跟拍", "跟随", "tracking")),
+    ("升降", ("升降", "crane")),
+    ("俯冲", ("俯冲",)),
+    ("甩", ("甩镜",)),
+    ("变焦", ("变焦", "zoom")),
+)
+
+
+def canonical_camera_moves(verbs: list[str]) -> list[str]:
+    """把运镜动词归一成「运动类型」——同义词算同一种。
+
+    「推近」和「推进」是同一种运动；数成两种就是误报。
+    """
+    out: list[str] = []
+    for verb in verbs:
+        low = verb.lower()
+        for canon, members in _CAMERA_MOVE_CANONICAL:
+            if any(low == m.lower() for m in members):
+                if canon not in out:
+                    out.append(canon)
+                break
+        else:
+            if verb not in out:
+                out.append(verb)
+    return out
+
+# 镜头语境词：弱运镜动词必须挨着它（同一分句），才算「在描述镜头怎么动」。
 # 没有语境词时，「在地面拉出一道冷光带」里的「拉出」会被误当成 pull-out——
 # 这类误报曾让真实提示词 4/4 全被标成「一镜多运镜」。
 _CAMERA_CONTEXT_WORDS = (
     "镜头", "摄影机", "摄像机", "机位", "运镜", "视角", "构图", "景别", "画面", "camera", "shot",
 )
-# 语境窗口：动词前后多少字内出现镜头词才算数。
-_CAMERA_CONTEXT_WINDOW = 14
 
 
-def find_camera_moves(text: str, *, context_window: int = _CAMERA_CONTEXT_WINDOW) -> list[str]:
-    """找出**带镜头语境**的运镜动词。
+def _mentions_handheld(text: str) -> bool:
+    """文本里有没有在说**机位**的手持/晃动。
 
-    与 `_CAMERA_MOVE_RE` 的区别：后者只匹配字面，会把「拉出一道冷光带」误判成
-    pull-out；本函数要求动词附近出现镜头/摄影机/机位等语境词，
-    否则不算运镜。`camera.path`（导演写的运镜轨迹）请直接用 `find_camera_moves` 判定，
-    它天然带语境。
+    「手持」一律算；「晃动」必须带镜头语境词——否则「油灯火苗被穿堂风带得晃动」
+    会被当成机位手持（实测真实提示词里这一句出现过 11 次，全是烛火）。
+    """
+    if not text:
+        return False
+    if _HANDHELD_STRONG_RE.search(text):
+        return True
+    for clause in re.split(_CLAUSE_SPLIT_RE, text):
+        if _HANDHELD_WEAK_RE.search(clause) and _HANDHELD_CONTEXT_RE.search(clause):
+            return True
+    return False
+
+
+def _split_sentences(text: str) -> list[str]:
+    """按句号类标点切句（分号也算句界——中文提示词里分号常起断句作用）。"""
+    return [s for s in re.split(r"[。！？!?\n；;]+", text) if s]
+
+
+def _clause_spans(sentence: str) -> list[tuple[int, int]]:
+    """句内分句的 (起, 止) 区间。"""
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    for m in _CLAUSE_SPLIT_RE.finditer(sentence):
+        if m.start() > pos:
+            spans.append((pos, m.start()))
+        pos = m.end()
+    if pos < len(sentence):
+        spans.append((pos, len(sentence)))
+    return spans
+
+
+def _has_camera_context(text: str) -> bool:
+    low = (text or "").lower()
+    return any(w in low for w in _CAMERA_CONTEXT_WORDS)
+
+
+def find_camera_moves(text: str, *, context_window: int | None = None) -> list[str]:
+    """找出提示词里的运镜动词。
+
+    强动词（推进/横移/环绕/跟拍…）无条件命中；弱动词（拉近/推入/后拉）要求
+    **同一分句**里出现镜头语境词（镜头/机位/构图…）——「距离拉近」不是运镜，
+    「镜头拉近」才是。
+
+    `context_window` 为兼容旧调用保留：给定时，弱动词额外放宽到前后该字数
+    （默认不给 = 只认同分句）。
     """
     if not text:
         return []
     out: list[str] = []
-    for m in _CAMERA_MOVE_RE.finditer(text):
-        verb = m.group(0)
-        lo = max(0, m.start() - context_window)
-        hi = min(len(text), m.end() + context_window)
-        window = text[lo:hi].lower()
-        if any(w in window for w in _CAMERA_CONTEXT_WORDS):
-            out.append(verb)
+    for sent in _split_sentences(text):
+        spans = _clause_spans(sent)
+        for m in _CAMERA_MOVE_STRONG_RE.finditer(sent):
+            out.append(m.group(0))
+        for m in _CAMERA_MOVE_WEAK_RE.finditer(sent):
+            clause = ""
+            for lo, hi in spans:
+                if lo <= m.start() < hi:
+                    clause = sent[lo:hi]
+                    break
+            if not clause:
+                clause = sent
+            if _has_camera_context(clause):
+                out.append(m.group(0))
+            elif context_window:
+                lo = max(0, m.start() - context_window)
+                hi = min(len(sent), m.end() + context_window)
+                if _has_camera_context(sent[lo:hi]):
+                    out.append(m.group(0))
     return out
 
 
@@ -235,11 +368,16 @@ def find_negations(text: str) -> list[str]:
 
     引号内的文字先剥掉再检测——「警戒带上写着『禁止入内』」是画面里的实体招牌，
     不是给模型的否定指令，不能误伤。
+
+    词表之外还有一层语法匹配（`_NEGATION_GRAMMAR_RE`）：「没碰」「未拿」这类
+    同义改写不在词表里，但同样是喂给模型的否定概念。
     """
     if not text:
         return []
     clean = _QUOTE_SPAN.sub("”", text)
-    return [m.group(0) for m in _NEGATION_RE.finditer(clean)]
+    out = [m.group(0) for m in _NEGATION_RE.finditer(clean)]
+    out += [m.group(0) for m in _NEGATION_GRAMMAR_RE.finditer(clean)]
+    return out
 
 
 def strip_lock_blocks(text: str) -> str:
@@ -492,15 +630,27 @@ def audit_video_prompt(shot: dict[str, Any], *, style_context: str = "") -> list
         issues.append(f"含引用台词（「{quotes[0][:12]}」）：旧写法会渲染成含混假说话，官方句式需在引号前加冒号：角色说话：「…」")
 
     # 一镜多运镜：只看**本镜自己的**运镜——剥掉全片风格段，且要求动词带镜头语境。
+    # 动词先归一成运动类型（「推近」和「推进」是同一种，数成两种就是误报）。
     own_text = strip_style_block(prompt, style_context)
-    flat = set(find_camera_moves(own_text))
+    verbs = find_camera_moves(own_text)
     camera = shot.get("camera")
     if isinstance(camera, dict):
-        flat |= set(find_camera_moves(str(camera.get("path") or "")))
+        verbs += find_camera_moves(str(camera.get("path") or ""))
+    flat = canonical_camera_moves(verbs)
     if len(flat) >= 2:
         issues.append(
-            "疑似一镜多运镜（" + "、".join(sorted(flat)[:3]) + "）："
+            "疑似一镜多运镜（" + "、".join(flat[:3]) + "）："
             "一镜只保留一种主要运动，其余删掉或另起一镜"
+        )
+
+    # 手持晃动 vs 已声明的运镜：handheld 是**独立的机位类型**（_CAMERA_TYPES），
+    # 一镜已经有 dolly 再叠手持 = 两种机位运动（规则 1）。
+    # 规则 12 允许把「手持轻微晃动」当质感写，但那只在**本镜没有别的运镜**时成立；
+    # 本镜已声明运镜时，治 AI 味该用焦点游移 / 曝光起伏（镜头属性，不是机位运动）。
+    if flat and _mentions_handheld(own_text):
+        issues.append(
+            "本镜已声明运镜（" + "、".join(flat[:3]) + "），又写了手持晃动："
+            "手持是独立机位类型，一镜只留一种；治 AI 味改用焦点游移 / 曝光起伏"
         )
 
     # 同一句写两遍：多半是兜底逻辑重复追加，模型会当成两个连续动作。
@@ -519,3 +669,220 @@ def refresh_prompt_audits(shots: list[dict[str, Any]], *, style_context: str = "
         if not isinstance(shot, dict):
             continue
         shot["prompt_audit"] = audit_video_prompt(shot, style_context=style_context)
+    # 跨镜检查：屏幕方位（轴线）是**镜与镜之间**的事，逐镜审计看不见。
+    for shot_id, issues in audit_screen_sides(shots).items():
+        for shot in shots:
+            if isinstance(shot, dict) and shot.get("id") == shot_id:
+                shot.setdefault("prompt_audit", [])
+                for issue in issues:
+                    if issue not in shot["prompt_audit"]:
+                        shot["prompt_audit"].append(issue)
+                break
+
+
+# =====================================================================
+# 跨镜屏幕方位（轴线）——逐镜审计够不着的那一类问题
+# =====================================================================
+#
+# 为什么单开一块（2026-11-17）：词表层能查「句子里有没有坏词」，查不了
+# 「这一镜和上一镜对不对得上」。而**越轴是我们的第一杀手**（实测：机位从人物
+# 一侧绕到另一侧 → 无参考图时背景被重新想象 → 位置对应全崩）。
+#
+# 规则 13 定了：屏幕左右是**机位属性不是角色身份**——反打时机位描述跟着换，
+# 但左右关系不变。于是「同一场戏里某人先在画面左、后在画面右」就是可查的
+# 矛盾，比「这一镜好不好」更该报。
+#
+# 这里从提示词正文里抽「谁在画面哪一侧」，做**字段比对**（不需要理解语义），
+# 只在两侧都抽到时才报——抽不准就当没看见，宁可漏报不误报。
+
+_SIDE_AFTER_NAME_RE = re.compile(
+    r"([一-龥A-Za-z][一-龥A-Za-z0-9·]{0,5}?)\s*"
+    r"(?:位于|处于|站在|靠|贴|在)\s*"
+    r"(?:画面|屏幕|镜头|画幅|屏)\s*[^，。；、\n]{0,6}?(左|右)(?:侧|边|方|半边)?"
+)
+
+_SIDE_BEFORE_NAME_RE = re.compile(
+    r"(?:画面|屏幕|镜头|画幅|屏)\s*[^，。；、\n]{0,4}?(左|右)(?:侧|边|方|半边)?\s*"
+    r"(?:是|为|站着|靠着|坐着|站着的是|是站着的)?\s*"
+    r"([一-龥A-Za-z][一-龥A-Za-z0-9·]{0,5})"
+)
+
+# 抽出来的「名字」里常见的非人称词——它们不是角色，别拿去比对左右。
+_NON_NAME_TOKENS = frozenset({
+    "站", "在", "他", "她", "它", "我", "你", "们", "那", "这", "有人", "两人", "三人",
+    "一个人", "所有", "每个", "其他", "画面", "镜头", "屏幕", "两人之间",
+    "他们", "她们", "每个人", "所有人", "那侧", "这侧", "一侧", "那一侧",
+    "这一侧", "左边", "右边", "左侧", "右侧", "半边", "角落", "前景", "背景",
+    "墙", "墙边", "门口", "桌边", "路边", "台阶", "地上", "空中", "中轴", "中心",
+    "侧", "边", "方",
+})
+
+# 名字里出现这些字 → 不是人名（正则会把「外套站在」「他的手」这类也吞进来）。
+_NAME_BLACKLIST_CHARS = ("在", "站", "位", "靠", "贴", "是", "的", "了", "着", "过",
+                         "来", "去", "和", "与", "把", "被", "侧", "边", "方", "着")
+
+# 景别/比例词——它们常出现在「画面右侧三分之二」「中景」这类短语里，
+# 抽取名字时会被误当成角色（实测真实提示词里「三分之二」「中景」都进来过）。
+_NON_NAME_PATTERNS = ("之分", "分之", "景", "画面", "全身", "半身", "脸部", "眼睛", "手掌",
+                      "角", "边缘", "方向", "位置")
+
+
+def _normalize_name(token: str) -> str:
+    """人名归一：去掉编号后缀（「孔乙己2号」→「孔乙己」）。
+
+    不归一的话，同一个人在不同镜头里写成「孔乙己」「孔乙己2号」，
+    比对左右时会当成两个人，两边都不冲突 → 真越轴反而看不见。
+    """
+    token = (token or "").strip()
+    return re.sub(r"[0-9０-９]+号$", "", token)
+
+
+def _looks_like_name(token: str) -> bool:
+    """这段文字像不像一个角色名。"""
+    token = _normalize_name(token)
+    if len(token) < 2 or len(token) > 6:
+        return False
+    if token in _NON_NAME_TOKENS:
+        return False
+    if any(p in token for p in _NON_NAME_PATTERNS):
+        return False
+    return not any(ch in token for ch in _NAME_BLACKLIST_CHARS)
+
+
+def extract_screen_sides(text: str) -> dict[str, set[str]]:
+    """从提示词正文里抽「谁在画面左/右」。
+
+    返回 {角色名: {"左", "右"}}。抽不准就不抽——宁可漏报不误报。
+    """
+    if not text:
+        return {}
+    out: dict[str, set[str]] = {}
+
+    def _add(name: str, side: str) -> None:
+        if not _looks_like_name(name):
+            return
+        out.setdefault(_normalize_name(name), set()).add(side)
+
+    for m in _SIDE_AFTER_NAME_RE.finditer(text):
+        _add(m.group(1), m.group(2))
+    for m in _SIDE_BEFORE_NAME_RE.finditer(text):
+        _add(m.group(2), m.group(1))
+    return out
+
+
+def audit_screen_sides(shots: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """跨镜比对屏幕方位：同一场戏里同一角色出现在画面两侧 → 疑似越轴。
+
+    返回 {shot_id: [告警]}。只在**两侧都抽到**时才报（单侧抽到说明解析不了，
+    不是矛盾）。
+    """
+    by_scene: dict[str, list[tuple[dict[str, Any], dict[str, set[str]]]]] = {}
+    for shot in shots:
+        if not isinstance(shot, dict):
+            continue
+        text = str(shot.get("group_prompt") or shot.get("video_prompt") or "")
+        if not text:
+            continue
+        scene = str(shot.get("scene_id") or "")
+        by_scene.setdefault(scene, []).append((shot, extract_screen_sides(text)))
+
+    issues: dict[str, list[str]] = {}
+    for scene, items in by_scene.items():
+        if len(items) < 2:
+            continue
+        items.sort(key=lambda x: int(x[0].get("order") or 0))
+        seen: dict[str, dict[str, list[str]]] = {}
+        ambiguous: set[str] = set()
+        for shot, sides in items:
+            for name, side_set in sides.items():
+                # 同一镜里两侧都提到 → 解析不了（可能一个是空间描述一个是角色），
+                # 这种名字整场不比对，宁可漏报不误报。
+                if len(side_set) > 1:
+                    ambiguous.add(name)
+                for side in side_set:
+                    seen.setdefault(name, {}).setdefault(side, []).append(str(shot.get("id") or ""))
+        for name, side_map in seen.items():
+            if name in ambiguous or len(side_map) < 2:
+                continue
+            detail = "、".join(
+                f"{side}侧:{'/'.join(sids)}" for side, sids in sorted(side_map.items())
+            )
+            msg = (
+                f"同一场戏（{scene}）里「{name}」出现在画面两侧（{detail}）："
+                "屏幕左右是机位属性、不是角色身份——反打时机位描述跟着换，左右关系不变；"
+                "请确认这一处是不是越轴"
+            )
+            for sids in side_map.values():
+                for sid in sids:
+                    issues.setdefault(sid, []).append(msg)
+    return issues
+
+
+# =====================================================================
+# CLI：把整套规则变成人可以直接用的工具
+# =====================================================================
+#
+# 为什么要有（2026-11-17）：这套审计器原本只在系统内部自动跑——对话里出的
+# 提示词自动过一遍，**手写提示词的人**（自己在别家视频模型上写提示词的作者）
+# 用不上：那 13 条规则、五个杀手、两套切镜方言只存在于 SKILL.md 与本文档里。
+# 有了入口，作者可以把自己写的提示词丢进来当场看告警。
+#
+# 用法：
+#   uv run python -m app.crew.dramaturgy --file prompt.txt
+#   uv run python -m app.crew.dramaturgy --text "镜头缓慢推近……"
+#   uv run python -m app.crew.dramaturgy --file prompt.txt --json
+#   uv run python -m app.crew.dramaturgy --shots shots.json   # 跨镜轴线检查
+
+def _cli(argv: list[str] | None = None) -> int:
+    import argparse
+    import json
+    from pathlib import Path
+
+    ap = argparse.ArgumentParser(
+        prog="python -m app.crew.dramaturgy",
+        description="视频提示词确定性审计（否定句/占位词/假说话/一镜多运镜/手持冲突/跨镜轴线）",
+    )
+    ap.add_argument("--file", help="提示词文件（UTF-8 文本）")
+    ap.add_argument("--text", help="直接给一段提示词")
+    ap.add_argument("--shots", help="镜头 JSON 数组文件（跨镜轴线检查用）")
+    ap.add_argument("--style", help="全片风格段（camera_style），用于排除风格段里的运镜词")
+    ap.add_argument("--json", action="store_true", help="以 JSON 输出")
+    args = ap.parse_args(argv)
+
+    if args.shots:
+        shots = json.loads(Path(args.shots).read_text(encoding="utf-8"))
+        result = {
+            "shots": {sid: issues for sid, issues in audit_screen_sides(shots).items()},
+        }
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            if not result["shots"]:
+                print("跨镜轴线检查：未发现冲突")
+            for sid, issues in result["shots"].items():
+                print(f"[{sid}]")
+                for issue in issues:
+                    print(f"  - {issue}")
+        return 0
+
+    text = args.text or ""
+    if args.file:
+        text = Path(args.file).read_text(encoding="utf-8")
+    if not text.strip():
+        ap.error("请给 --file / --text / --shots 之一")
+
+    issues = audit_video_prompt({"video_prompt": text}, style_context=args.style or "")
+    if args.json:
+        print(json.dumps({"issues": issues}, ensure_ascii=False, indent=2))
+    else:
+        if not issues:
+            print("确定性审计：未发现问题")
+        else:
+            print(f"确定性审计：{len(issues)} 条提醒")
+            for issue in issues:
+                print(f"  - {issue}")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI 入口
+    raise SystemExit(_cli())

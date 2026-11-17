@@ -302,7 +302,7 @@ Wenju/
 │   ├── runner.py             #   引擎
 │   └── fixtures/             #   录制的真实产出（离线回归用）
 │
-└── tests/                    # 测试套件（685 tests，53 个测试文件）
+└── tests/                    # 测试套件（697 tests，53 个测试文件）
 ```
 
 ## 环境变量
@@ -340,7 +340,7 @@ Wenju/
 
 ```bash
 python -m pytest tests -q
-# 685 passed
+# 697 passed
 ```
 
 ## 提示词质量 eval
@@ -367,6 +367,22 @@ python -m evals.skill_eval --ablate --repeat 3   # 技能加载 eval（消融对
 Δ +25%**；价值集中在带硬约束的地方（依赖顺序一条就值 +60%）。
 
 详见 [`evals/README.md`](evals/README.md)。
+
+## 提示词自查（CLI）
+
+项目内部的提示词审计器（`app/crew/dramaturgy.py`）现在也能单独跑——
+**自己手写提示词**（在别家视频模型上写）的人可以直接把文本丢进来当场看告警：
+
+```bash
+uv run python -m app.crew.dramaturgy --file prompt.txt          # 审一段提示词
+uv run python -m app.crew.dramaturgy --text "镜头缓慢推近……"    # 直接给文本
+uv run python -m app.crew.dramaturgy --file prompt.txt --json   # 机器可读
+uv run python -m app.crew.dramaturgy --shots shots.json         # 跨镜轴线检查
+```
+
+查的六件事：否定句（含「没碰/未拿/别看」这类改写）、空洞占位词、假说话写法、
+一镜多运镜（推近/推进先归一成同一种运动）、手持晃动与已声明运镜冲突、
+跨镜屏幕方位（同一场戏里同一角色出现在画面两侧 = 疑似越轴）。
 
 ## 许可证
 

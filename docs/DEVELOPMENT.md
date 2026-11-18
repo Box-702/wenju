@@ -2649,6 +2649,27 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   _mentions_handheld / extract_screen_sides / audit_screen_sides / _cli）、
   `tests/test_dramaturgy.py`（新增 10 条）；D-67。
 
+### 5.70 D-67 语法层让 eval 金样本红 CI——改样本不改规则（2026-11-18）
+
+- **症状**：`84b348a` 推送后 CI「提示词 eval（离线层）」22s 挂掉：`dialogue_tension`
+  fixture 的 `shot_scene_001_003` 被判 DPT-04 critical「含否定式描述（没碰）」，
+  `test_fixture_real_prompt_passes_production_audit` 与 `..._eval_assertions`
+  双双失败（后端 697 / 前端构建全绿，只有 evals 层挂）。
+- **根因**：金样本是 D-67 之前录制的一次**真实链路产出**（49957a0 落库），
+  终帧句「钱停在桌子正中，两人的手各在一边，谁都没碰」。旧词表正则对它零命中
+  所以当年绿灯；D-67 加的 `_NEGATION_GRAMMAR_RE`（不/没/未/别 + 碰/摸/拿…）
+  正是冲着「没碰」这类改写来的——`tests/test_dramaturgy.py:238` 明确断言它能抓。
+  也就是说：**样本违反现行规则，规则在抓真问题，挂是对的**。5.69 那轮在 884
+  个真实镜头上验了误报，但没跑 evals 的 fixture 层，漏了这处自相矛盾。
+- **解法**：改样本不改规则。终帧句与 video_prompt 尾句的「谁都没碰」改成
+  语义等价的正向表述「中间留着一拳的距离」（终帧本来就该写可见状态，正向描述
+  也是规则 8 自己推荐的方向）；审计器与语法层一字不动。
+- **教训**：改确定性审计规则时，`pytest tests` 之外必须再跑
+  `pytest evals -q -k "not deterministic_assertions and not judge_scores and
+  not report_renders"`（CI 离线层口径，免 key 免钱）——fixture 层锁的就是
+  「真实产出必须过现行规则」，两者是同一套判据的两面。
+- **涉及文件**：`evals/fixtures/dialogue_tension.json`（2 处文案）。
+
 ## 六、排查手册（症状 → 先查什么）
 
 | 症状 | 先查 |

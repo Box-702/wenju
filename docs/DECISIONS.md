@@ -73,6 +73,7 @@
 | [D-65](#d-65-提示词包-镜头怎么拍与剧本导出分开) | 导出 | 提示词包 = 镜头怎么拍（与剧本导出分开） | 已定 |
 | [D-66](#d-66-产品定位裁决前期生产管线-开放导出对话仍是主入口工作台承担看与调) | 产品 | 定位收敛为前期生产管线 + 开放导出；对话仍主入口，工作台承担「看与调」 | 已定 |
 | [D-67](#d-67-审计器从词表升级为分级-结构识别与跨镜字段比对) | 审计 | 审计器升级：强/弱动词分级 + 同义归一 + 跨镜屏幕方位比对 + CLI 入口 | 已定 |
+| [D-68](#d-68-在线-eval-默认关闭只留显式付费入口) | 工程 | 在线 eval 默认关闭：`pytest evals` 只跑免费层，付费层要 `--online`，CI 不再跑在线层 | 已定 |
 
 > **编号说明**：D-28 这一号**从未使用**（历史遗留的空号，正文里没有该条，
 > 两处旧引用已改指 D-29）。新决策一律从正文末尾追加，不占用旧号。
@@ -2412,6 +2413,45 @@ D-63 / D-64 / D-65
 **相关**：`app/crew/dramaturgy.py`（find_camera_moves / canonical_camera_moves /
 audit_screen_sides / extract_screen_sides / _cli）· `tests/test_dramaturgy.py` ·
 DEVELOPMENT 5.69 / T-19 · D-05 / D-50 / D-13
+
+---
+
+<a id="d-68-在线-eval-默认关闭只留显式付费入口"></a>
+## D-68 在线 eval 默认关闭，只留显式付费入口 —— 已定（2026-11-18）
+
+**背景**：`pytest evals` 里的 L1/L2 是「有 key 就真跑」的在线层——11 条 case ×
+导演/美术/摄影 3 次调用，judge 再加最多 3 次，一次全量 **100+ 次模型调用、
+几十分钟**。它和离线层混在同一条默认命令里，已经造成两次误跑：T-18
+（2026-11-16，11 条 × 2 轮）与 5.70（2026-11-18，全量在线层在后台跑了
+16 分钟才被手动杀掉）。同一条纪律在 AGENTS.md 里写过两遍，仍然靠自觉。
+
+**选项**：① 保持现状，靠文档提醒；② 删掉 pytest 在线层，只留 `evals.run`；
+③ **默认关闭 + 显式开关**：在线测试打 `online` 标记，`pytest evals` 默认
+skip，`--online` 才跑；CI 只保留离线 job，在线层不进 CI。
+
+**决定**：选 ③。具体：
+
+- `evals/conftest.py` 提供 `--online`；未显式打开时给所有 `online` 标记的
+  用例加 skip（不是 deselect——输出里能看到「23 skipped」，口径不丢）。
+- `pyproject.toml` 注册 marker，避免 unknown-mark 警告。
+- CI 只跑 `pytest evals -q -m "not online"`；原 `eval-llm` job 整块删除。
+  它不是「暂时没跑」而是**跑不了**：D-48 之后模型配置只走 DB，CI 上没有 DB，
+  就算配了 `EVAL_API_KEY` 也构造不出可用模型——一直是死代码。
+- 改完提示词要真验，仍在本地跑 `python -m evals.run`（DB 配置 + 付费动作）。
+
+**理由**：① 默认路径必须零成本——「跑一下 eval 看看」不该先算钱；② 付费层
+需要的是**显式意图**，不是任何隐含条件（有 key 就自动跑，正是两次误跑的根因）；
+③ CI 保留免费层已经能拦住 D-67 这类回归（金样本 + 审计器矛盾），在线层对
+每次 push 的边际价值远低于它的成本与时长。
+
+**什么时候该推翻**：① 如果 CI 以后有了可复现的模型配置注入方式（DB 种子 +
+secret），可以把在线层加成 `workflow_dispatch` 手动 job；② 如果离线层连续
+多次漏掉只有在线层能抓的回归，说明 fixture 覆盖不足——应补录制样本，而不是
+把在线层改回自动；③ 若将来有免费的本地小模型能跑 judge，再考虑默认开启。
+
+**相关**：`evals/conftest.py`（新增）· `evals/test_eval.py`（3 个 online 标记）·
+`pyproject.toml`（markers）· `.github/workflows/ci.yml`（删 eval-gate / eval-llm）·
+AGENTS.md · README.md · evals/README.md · DEVELOPMENT 5.71 · T-18 / 5.70
 
 ---
 

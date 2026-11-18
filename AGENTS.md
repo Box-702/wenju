@@ -21,9 +21,9 @@
 - 改代码前看 `ARCHITECTURE.md` 分层规则（依赖方向不能反）。
 - 提新方案前查 `DECISIONS.md`（别推翻已有决策、别重复调研）。
 - 改任何提示词/SKILL.md 后跑 `python -m evals.run`（判定标准变了改 `evals/rubric.md`）。
-  ⚠️ `evals.run` 与 `pytest evals` 的 **L1/L2 在线层都要真调模型、要花钱**；
-  只想要离线层用
-  `pytest evals -q -k "not deterministic_assertions and not judge_scores and not report_renders"`。
+  ⚠️ `evals.run` / `pytest evals --online` 的 **L1/L2 在线层都要真调模型、要花钱**
+  （11 条 case × 3 个工种，约 100+ 次调用、几十分钟）。
+  `pytest evals` **默认只跑离线层**（24 条、1–2 秒、不花钱）——在线层必须显式 `--online`。
 - 报错先查 `DEVELOPMENT.md` 第六节排查手册。
 
 ## 运行与结构速查

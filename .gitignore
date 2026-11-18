@@ -31,6 +31,9 @@ data/
 .ruff_cache/
 .mypy_cache/
 pytest-cache-files-*/
+# Git Bash 里 TEMP=/tmp 时，pytest 的临时目录会回落到仓库根
+pytest-of-*/
+wenju-test-*/
 
 # ---------- 前端（Vue）依赖与构建产物 ----------
 frontend/node_modules/

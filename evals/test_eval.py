@@ -11,6 +11,8 @@
 #   L2 需要 key：额外跑 LLM judge 打分（看趋势，不参与红绿判定）。
 #
 # 没有配置对话模型时，L1/L2 自动 skip——CI 不配 secret 也能跑。
+# 即便本机配了模型，L1/L2 也只在显式 `pytest evals --online` 时才跑：
+# 默认路径永不调模型（见 evals/conftest.py）。
 # =====================================================================
 
 from __future__ import annotations
@@ -226,6 +228,7 @@ def test_fixture_anchor_is_reused_verbatim():
 # =====================================================================
 
 
+@pytest.mark.online
 @pytest.mark.parametrize("case_id", [c.id for c in ALL_CASES])
 def test_case_deterministic_assertions(eval_llm: LLM, case_id: str):
     """每条 golden case 跑完整链路，确定性层不允许出现 critical。
@@ -254,6 +257,7 @@ def test_case_deterministic_assertions(eval_llm: LLM, case_id: str):
 # =====================================================================
 
 
+@pytest.mark.online
 @pytest.mark.parametrize("case_id", [c.id for c in ALL_CASES])
 def test_case_judge_scores(eval_llm: LLM, case_id: str):
     """跑 judge 打分。这里只断言 judge 本身能跑通、分数在合理区间。
@@ -276,8 +280,9 @@ def test_case_judge_scores(eval_llm: LLM, case_id: str):
         assert s.dims, f"{case_id}/{s.shot_id} 没有维度分"
 
 
+@pytest.mark.online
 def test_report_renders(eval_llm: LLM):
-    """报告能渲染、JSON 能序列化——不然结果没法进 CI artifact。"""
+    """报告能渲染、JSON 能序列化——不然结果没法存档对比。"""
     runner = EvalRunner(eval_llm, use_judge=False)
     report = runner.run_all(ALL_CASES[:2])
     text = report.render()

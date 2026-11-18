@@ -1,15 +1,18 @@
 # =====================================================================
 # ci.yml —— 后端测试 + 静态检查 + 提示词质量 eval + 前端构建
 #
-# 四个独立 job 并行跑：任一失败即标红。
+# push / PR 跑三个 job，并行、任一失败即标红：
+#   backend / eval-offline / frontend。
 #
 # backend 里含一步 ruff 致命集检查（E9/F63/F7/F82/B）：
 # 只拦真 bug，不拦行宽与导入序那几百条存量债。
 #
-# eval 分两个 job：
+# eval 分两层，CI 只跑免费的那层：
 #   - eval-offline：不需要任何 key，验证断言库、judge 解析器、case 完整性，
-#     以及「用录制的真实产出跑断言」——锁住审计器不误报。**每次都跑。**
-#   - eval-llm：需要 EVAL_* secret，跑真实链路。secret 没配时自动跳过。
+#     以及「用录制的真实产出跑断言」——锁住审计器不误报。**每次 push 都跑。**
+#   - 在线层（真实链路，11 case × 3 个工种，约 100+ 次模型调用、几十分钟）
+#     不进 CI：D-48 后模型配置只走本机 DB，CI 上没有可用配置；改完提示词
+#     在本地跑 `python -m evals.run`（付费动作，见 AGENTS.md）。
 # =====================================================================
 
 name: CI
@@ -67,59 +70,10 @@ jobs:
         run: uv sync --frozen
 
       # 不需要任何模型 key：只跑断言库、解析器与录制 fixture 的回归层。
+      # 在线层默认关闭（conftest 里 skip），这里再用 -m 显式排除，双保险。
       - name: 跑离线 eval
-        run: uv run pytest evals -q
+        run: uv run pytest evals -q -m "not online"
 
-  eval-gate:
-    name: 探测 eval 密钥（job 级 if 不能读 secrets，先转成 output）
-    runs-on: ubuntu-latest
-    outputs:
-      has-key: ${{ steps.check.outputs.has-key }}
-    steps:
-      - id: check
-        env:
-          EVAL_API_KEY: ${{ secrets.EVAL_API_KEY }}
-        run: echo "has-key=$([ -n "$EVAL_API_KEY" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-
-  eval-llm:
-    name: 提示词 eval（真实链路）
-    runs-on: ubuntu-latest
-    needs: eval-gate
-    # 只在 push 且配了 EVAL_API_KEY 时跑；没配就跳过，不阻塞 CI。
-    # （以前写成 `if: … || secrets.EVAL_API_KEY != ''`：job 级 if 读不到
-    #   secrets 上下文，整份工作流从 10-29 起每次 push 都在编译期直接红。）
-    if: github.event_name == 'push' && needs.eval-gate.outputs.has-key == 'true'
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: 安装 uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: 同步依赖
-        run: uv sync --frozen
-
-      - name: 跑提示词质量 eval
-        env:
-          CHAT_PROVIDER: ${{ vars.EVAL_CHAT_PROVIDER || 'deepseek' }}
-          DEEPSEEK_API_KEY: ${{ secrets.EVAL_API_KEY }}
-          ZHIPUAI_API_KEY: ${{ secrets.EVAL_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.EVAL_API_KEY }}
-        run: |
-          uv run python -m evals.run --out eval_report.json
-
-      - name: 上传报告
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: eval-report
-          path: eval_report.json
-          if-no-files-found: ignore
 
   frontend:
     name: 前端构建

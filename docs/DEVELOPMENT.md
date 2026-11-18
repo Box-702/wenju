@@ -2670,6 +2670,23 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   「真实产出必须过现行规则」，两者是同一套判据的两面。
 - **涉及文件**：`evals/fixtures/dialogue_tension.json`（2 处文案）。
 
+### 5.71 全量 pytest evals 误跑第三次——在线层改为显式 --online（2026-11-18）
+
+- **症状**：修 D-67 金样本时，验证命令误写成全量 `uv run pytest evals`；
+  UI 显示「已停止」后进程仍活着 16 分钟，经 Clash 代理持续调模型（真花钱）。
+- **根因**：在线层只靠「有没有配模型」决定跑不跑。本机 DB 配了对话模型，
+  `pytest evals` 于是默认走 L1/L2：11 case × 3 个工种 + judge，约 100+ 次调用、
+  几十分钟。加上 `2>&1 | tail -3` 让进度完全不可见、Windows 上「停止」只杀了
+  外层 shell——三件事叠成「卡死」的观感。这是 T-18 之后第二次踩同一个坑。
+- **解法**：D-68。在线测试打 `online` 标记；`evals/conftest.py` 默认给它们加
+  skip，`--online` 才跑；CI 删掉跑不了的 eval-llm / eval-gate（D-48 后没有 DB
+  配置，配 secret 也构造不出模型），只留离线层。现在 `pytest evals` 是
+  24 passed + 23 skipped，约 1.4 秒，零调用。
+- **教训**：纪律写在文档里不等于执行——**默认值才是纪律**。付费动作必须有
+  显式开关；「有 key 就自动跑」这种设计一定会被误触发。
+- **涉及文件**：`evals/conftest.py`（新增）· `evals/test_eval.py` · `pyproject.toml` ·
+  `.github/workflows/ci.yml` · AGENTS.md · README.md · evals/README.md · DECISIONS D-68
+
 ## 六、排查手册（症状 → 先查什么）
 
 | 症状 | 先查 |

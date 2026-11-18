@@ -51,8 +51,9 @@ python -m evals.run --out eval_report.json
 pytest 方式：
 
 ```bash
-pytest evals/ -q                    # 没配 key 时 L1/L2 自动 skip
-pytest evals/ -q -k case_deterministic
+pytest evals/ -q                    # 默认只跑离线层（不碰模型）
+pytest evals/ -q --online           # 显式打开 L1/L2（真调模型、要花钱）
+pytest evals/ -q --online -k case_deterministic
 ```
 
 **退出码**：`0` 通过 ｜ `1` 未通过（有 critical）｜ `2` 环境问题（没配 key / 余额不足）。

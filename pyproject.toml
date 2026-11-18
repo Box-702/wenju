@@ -67,6 +67,10 @@ addopts = "-p no:cacheprovider"
 # `python -m pytest`（隐式把 cwd 塞进 sys.path）下能过，CI 用 `uv run pytest` 就 ModuleNotFound。
 # 写在这里让任何启动方式（CI / IDE / 裸命令）行为一致，不再靠"本地碰巧用了 -m"。
 pythonpath = ["."]
+markers = [
+    # evals 的付费层：真调模型。默认跳过，`pytest evals --online` 才跑。
+    "online: 需要真实对话模型的在线层（默认跳过，显式 --online 才运行）",
+]
 
 [tool.ruff]
 line-length = 100

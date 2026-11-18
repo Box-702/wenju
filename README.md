@@ -351,9 +351,8 @@ python -m pytest tests -q
 ```bash
 python -m evals.run              # 跑 11 条 golden case（**需要对话模型，要花钱**）
 python -m evals.run --judge      # 额外跑 LLM judge 打分（看质量趋势）
-pytest evals -q                  # ⚠️ 含**在线层**（L1/L2）：有 key 就真跑、真花钱；
-                                  #   只要离线层用 -k "not deterministic_assertions
-                                  #   and not judge_scores and not report_renders"
+pytest evals -q                  # 默认只跑离线层：24 条、1–2 秒、不花钱
+pytest evals -q --online         # 显式打开 L1/L2 在线层（真调模型、几十分钟）
 
 python -m evals.skill_eval --ablate --repeat 3   # 技能加载 eval（消融对比）
 ```

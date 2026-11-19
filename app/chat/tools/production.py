@@ -215,15 +215,18 @@ _QUOTED_RE = re.compile(r"\{([^{}]*)\}|「([^「」]*)」|『([^『』]*)』")
 
 
 def estimate_speech_seconds(prompt: str) -> float:
-    """提示词里全部台词的口播时长估算（秒）。无台词返回 0。"""
+    """提示词里全部台词的口播时长估算（秒）。无台词返回 0。
+
+    单句口径来自 ``app.video.rhythm.estimate_speech_seconds``——全链路共用
+    一把尺子（导演校验 / 片长闸门 / 摄影指导 / 这里的导入检查）。之前各处
+    各算各的，闸门那把最松，把镜头砍到台词念不完（2026-11-19 实测）。
+    """
+    from ...video.rhythm import estimate_speech_seconds as _base
+
     total = 0.0
     for m in _QUOTED_RE.finditer(prompt):
         text = next((g for g in m.groups() if g), "")
-        en_words = len(re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", text))
-        cjk_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
-        # 剩余杂字符按 3 字符/s 粗估
-        other = max(0, len(text) - en_words * 4 - cjk_chars * 2)
-        total += en_words / 2.2 + cjk_chars / 3.8 + other / 3.0
+        total += _base(text)
     return round(total, 1)
 
 

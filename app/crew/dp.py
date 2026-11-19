@@ -20,7 +20,7 @@ import logging
 import re
 from typing import Any
 
-from ..domain import SceneBreakdown, Script, Shot, StyleGuide
+from ..domain import SceneBreakdown, Script, Shot, StyleGuide, assign_dialogue_ranges
 from ..llm import LLM
 from ..media.assets import as_name_map, build_index
 from ..skills import render_skill
@@ -330,6 +330,62 @@ def _covers(anchor: str, text: str) -> bool:
     return _ratio(4) >= 0.6 or _ratio(2) >= 0.65
 
 
+def stretch_for_dialogue(shots: list[Shot], script: Script) -> list[str]:
+    """把「台词念不完」的镜头拉长到念得完（返回人话说明）。
+
+    这是**花钱前的最后一道闸**。导演层与片长闸门都在拆镜时算过台词时长，
+    但台词可能在装配时落到别的镜头上——2026-11-19 实测《替身》：一个 6 秒的镜
+    要念 41 字（需 10.4 秒），成片里那半句直接被片尾截掉（用户看片：
+    「第一镜话说不完」）。
+
+    约束：
+      - 单镜上限 15 秒（视频模型一次生成的硬边界）；
+      - 镜头组整体 ≤15 秒（组是一条视频，多机位共用一条时长预算）——
+        组内只抬到组的上限，抬不动的照实说明。
+    """
+    from ..video.rhythm import speech_need_seconds
+    from .director import MAX_GENERATABLE_SEC
+
+    scene_of = {sc.id: sc for sc in script.scenes}
+    by_scene: dict[str, list[Shot]] = {}
+    for s in shots:
+        by_scene.setdefault(s.scene_id, []).append(s)
+
+    # 台词 → 镜头（与校验层同一把尺子）
+    need_by_shot: dict[str, float] = {}
+    for sc_id, sc_shots in by_scene.items():
+        scene = scene_of.get(sc_id)
+        ranges = assign_dialogue_ranges(
+            sorted(sc_shots, key=lambda s: s.order), scene.beats if scene else []
+        )
+        for sid, lines in ranges.items():
+            text = "".join((b.line or "") for b in lines)
+            need_by_shot[sid] = speech_need_seconds(text)
+
+    # 组的时长预算：组内机位加起来不能超 15 秒
+    group_total: dict[str, float] = {}
+    for s in shots:
+        if s.group_id:
+            key = f"{s.scene_id}::{s.group_id}"
+            group_total[key] = group_total.get(key, 0.0) + max(0.0, s.duration_sec)
+
+    notes: list[str] = []
+    for s in shots:
+        need = need_by_shot.get(s.id, 0.0)
+        if not need or s.duration_sec >= need:
+            continue
+        target = min(need, MAX_GENERATABLE_SEC)
+        if s.group_id:
+            key = f"{s.scene_id}::{s.group_id}"
+            # 组内机位共用一条 15 秒预算：拉长后**全组**仍须 ≤15 秒
+            room = max(0.0, MAX_GENERATABLE_SEC - group_total.get(key, 0.0))
+            target = min(target, s.duration_sec + room)
+        if target > s.duration_sec:
+            notes.append(f"{s.id}（{s.duration_sec:.0f}s→{target:.1f}s）")
+            s.duration_sec = target
+    return notes
+
+
 class DPAgent(CrewAgent):
     """摄影指导 Agent：构建模型感知的视频提示词。"""
 
@@ -389,11 +445,16 @@ class DPAgent(CrewAgent):
                 if flagged
                 else "，全部通过质量检查"
             ) if n else ""
+            stretched = getattr(self, "_last_stretch", None) or []
+            stretch_note = (
+                f"；{len(stretched)} 个镜头台词念不完，已加长（{'、'.join(stretched[:4])}）"
+                if stretched else ""
+            )
             lang_cn = "中文" if language == "zh" else "英文"
             return CrewTaskResult(
                 data=updated,
-                summary=f"已为 {n}/{len(updated)} 个镜头写好{lang_cn}视频提示词{audit_note}。",
-                metadata={"audit_flagged": flagged},
+                summary=f"已为 {n}/{len(updated)} 个镜头写好{lang_cn}视频提示词{audit_note}{stretch_note}。",
+                metadata={"audit_flagged": flagged, "stretched_shots": stretched},
             )
         except Exception as e:  # noqa: BLE001
             log.warning("摄影指导 Agent 失败：%s", e)
@@ -758,6 +819,10 @@ class DPAgent(CrewAgent):
                 "style": eff_style.strip().rstrip("。") if eff_style else "",
             }
             updated.append(shot)
+        # 花钱前最后一道：台词念得完吗？念不完就把这一镜拉长（组内不顶破 15 秒）。
+        # 必须发生在 _fold_group_prompts 之前——组提示词里写着「镜头N（X秒）」，
+        # 时钟不先改对，提示词里的秒数就是错的。
+        self._last_stretch = stretch_for_dialogue(updated, script)
         _fold_group_prompts(
             updated, parts_by_shot, language=language, provider=provider,
             # 空间锚（白模施工单产出的确定性文字，D-56）：有就拼，没有不占预算

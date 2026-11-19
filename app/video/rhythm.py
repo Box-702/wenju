@@ -152,3 +152,38 @@ def suggest_ladder(pacing: str | None, count: int, format: str | None = None) ->
     else:
         factors = [1.1 - 0.2 * (i / max(1, count - 1)) for i in range(count)]
     return [clamp_duration(base * f) for f in factors]
+
+
+# =====================================================================
+# 台词口播时长：一条镜子的时长下限由「这句台词念完要几秒」决定
+#
+# 为什么放在这里：导演校验、片长闸门、摄影指导三处都要算「念得完吗」，
+# 之前三套口径各算各的（导演 4 字/秒、导入链 3.8 字/秒、审计脚本去标点），
+# 结果是**闸门那把尺子总是最松**——它把镜头砍到念不完，没人再复检
+# （2026-11-19 实测《替身》：25 字台词需要 6.5 秒，被砍到 6 秒，
+# 成片第一句就是半句话，用户看片：「第一镜话说不完」）。
+#
+# 口径（取自导入链的台词超载检查，2026-11-12 实测调过）：
+#   中文 3.8 字/秒 · 英文 2.2 词/秒 · 其余字符 3 字符/秒 · 另加 1 秒余量
+#   （余量是留给表演的呼吸与停顿，不是留给念字的）
+# =====================================================================
+
+import re as _re
+
+_EN_WORD_RE = _re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+_CJK_RE = _re.compile(r"[一-鿿]")
+
+
+def estimate_speech_seconds(text: str) -> float:
+    """一段文本的口播时长估算（秒）。空文本返回 0。"""
+    text = text or ""
+    en_words = len(_EN_WORD_RE.findall(text))
+    cjk_chars = len(_CJK_RE.findall(text))
+    other = max(0, len(text) - en_words * 4 - cjk_chars * 2)
+    return round(en_words / 2.2 + cjk_chars / 3.8 + other / 3.0, 1)
+
+
+def speech_need_seconds(text: str, *, margin: float = 1.0) -> float:
+    """台词念完所需的镜头时长下限（含余量）。无台词返回 0。"""
+    speech = estimate_speech_seconds(text)
+    return speech + margin if speech else 0.0

@@ -2687,6 +2687,105 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **涉及文件**：`evals/conftest.py`（新增）· `evals/test_eval.py` · `pyproject.toml` ·
   `.github/workflows/ci.yml` · AGENTS.md · README.md · evals/README.md · DECISIONS D-68
 
+### 5.72 故事圣经没规定 JSON 结构 → 人物与地点双双塌成兜底值（2026-11-19）
+
+- **症状**：拿剧本《替身》（2579 字）跑管线，剧本与分镜都出来了，看着也像样，
+  但（a）**全片 24 个镜头共用同一个场景锚 `@主要场景(loc_main)`**——卧室戏的
+  提示词里带着「开放式工位、白色日光灯管、穿衬衫的上班族在走动」；
+  （b）人物只剩从说话人反推出来的名字，`role` 全是 supporting；
+  （c）原文写明「林远，38 岁」，美术阶段写出来的是「三十四岁」。
+- **根因**：三段，第一段是根：
+  1. **`json_mode` 不强制 schema**。`llm.structured(Bible)` 走
+     `with_structured_output(schema, method="json_mode")`，只等于给模型一句
+     「请输出 JSON」，模型不知道要哪些字段。实测它照系统提示词吐了另一套
+     场景级字段：`title/logline/purpose/conflict/action/dialogue/line/emotion/
+     subtext/entry_state/exit_state/adaptation_notes`——**`characters` 与
+     `locations` 两个数组整个不存在**。`Bible` 模型对多余键是 ignore，
+     于是两边都空。
+  2. `bible.locations` 空 → 全部场次落到兜底 `Location(id="loc_main",
+     name="主要场景")`；`bible.characters` 空 → 只剩「节拍说话人」自动补全，
+     角色没有身份信息，`Character` 当时也没有承载描述的字段。
+  3. Bible 的 `_CharacterIn.description` 即使有值，映射成 domain `Character`
+     时也只传了 `goal`/`motivation`，`description` 直接丢；而美术阶段只读
+     `c.personality or c.goal` → 拿到「无描述」→ 只能自己编年龄和长相。
+- **解法**：
+  - `_stage_bible` 提示词里写死 JSON 契约（字段名 + 「不要输出其它字段」），
+    并加两条硬规矩：人物/地点**逐个列全不要合并**、原文给出的人物设定
+    原样写进 `description`；
+  - 加确定性护栏 `_bible_structure_issue()`：`characters` 或 `locations` 为空
+    就带反馈重跑一次故事圣经（与既有的名层护栏 `_bible_naming_issue` 合成
+    一段 critique，一次问清，别分两轮试错）。**别信模型自律**——同 5.38/5.39
+    的规矩；
+  - `Character` 加 `description` 字段，映射时带上 `description`/`arc`，
+    美术阶段提示词改成 `c.description or c.personality or c.goal`。
+- **效果**（同一份原文、同一模型、同一天）：**8 场 / 7 地点 / 8 角色**，
+  每个地点都带原文描述（书房、打印区、聚餐包间、厨房、便利店、客厅、卧室），
+  每镜的场景锚与场次一一对应；美术阶段出 **7 场景 + 8 角色造型**，林远写
+  「38 岁」，β 写「与林远面容一致」（原文的核心设定保住了）。
+- **教训**：`json_mode` 的「结构化」只保证是 JSON，**不保证是你要的 JSON**。
+  凡是要模型按字段吐数据的环节，**契约必须写在提示词里**，再配一条确定性
+  检查兜底——否则模型换个形状就静默降级，下游全靠兜底值兜着，看起来还「像样」。
+- **涉及文件**：`app/pipeline/generation.py`（`_stage_bible` 提示词 ·
+  `_bible_structure_issue` · `_bible_issue` · 角色映射）· `app/domain.py`
+  （`Character.description`）· `app/crew/art_director.py`（读 description）·
+  `app/agent/nodes.py`（Agent 上下文带上人物描述）
+
+### 5.73 Agent 侧提交出片写死厂商名 → 打去已欠费的那户，402（2026-11-19）
+
+- **症状**：UI 里视频厂商明明选的是火山方舟（seedance），Agent 走对话链路
+  提交镜头，却去打 MiniMax 的 key，报 `402 insufficient balance`。
+- **根因**：`app/chat/tools/video.py` 三处提交（`submit_videos` /
+  `generate_video` / `rerun_video`）都写死 `provider="minimax", model="default"`；
+  `app/api/video.py` 的批次命令默认值也是 `"minimax"`。写死的名字盖过了
+  `pick_video_provider()` 的选择，而那户 MiniMax 的视频行在 DB 里是
+  **enabled=0**（欠费停用）。这是 D-48「配置只走 DB」的破口：**配置走 DB，
+  取的时候却绕开 DB**。
+- **解法**：
+  - `_pick_video_provider` 改名 `pick_video_provider`（公开），并**去掉
+    「优先 minimax」的特判**——改成按 DB 里 enabled 的行取第一个；
+  - Agent 侧三处提交改用 `pick_video_provider()` 的返回值；
+  - `app/api/video.py` 批次命令默认值同样走 `pick_video_provider()[0]`。
+- **效果**：Agent 提交与直跑脚本（`N2D/novel2video.py` 用 `video_rows[0].name`）
+  落到同一个厂商，两条路不再打架。
+- **教训**：**「配置项从 DB 读」不等于「用配置项」**。凡是有默认值的硬编码
+  字符串，都要回头查一遍它是不是在替用户做选择。
+- **涉及文件**：`app/video/service.py`（`pick_video_provider`）·
+  `app/chat/tools/video.py`（三处提交）· `app/api/video.py`（批次命令默认值）
+
+### 5.74 改了 Agent 工具的参数面，长跑的后端没热加载 → 参数被静默丢掉（2026-11-19）
+
+- **症状**：Agent 明确报告「提交时会带 ratio=9:16 竖屏」，出片却是 1280x720
+  横屏；查 `video_jobs.params_json` 里根本没有 `aspect_ratio`。
+- **根因**：后端进程是改代码**之前**启动的（uvicorn 没带 `--reload`），进程里
+  装的还是旧版工具签名；Agent 调旧签名时 `ratio` 这个参数不存在，要么被丢掉、
+  要么报错后重试——**Agent 的「我会带 X」是它的承诺，不是既成事实**。
+- **解法**：改 Agent 工具 / 服务代码后必须重启后端（本地开发直接带 `--reload`）；
+  验证「参数到底传没传」一律查 `video_jobs.params_json`，不听 Agent 汇报。
+- **教训**：**Agent 的自述不是证据，DB 里的 params 才是**。凡是「我保证了 X」
+  的承诺，都要有一条落库可核对的字段；没有这条字段，就默认它没做到。
+- **涉及文件**：`app/chat/tools/video.py`（`submit_videos` 加 ratio 参数）·
+  `app/video/service.py`（`_job_params` 读 aspect_ratio）
+
+### 5.75 改编 patch 只能覆盖场次、不能新增场次 → 「拆场」必然吃掉别的场（2026-11-19）
+
+- **症状**：Agent 应要求把原文第六场《新生活》独立出来，生成 17 条 patch：
+  12 条 `set` 把**《破绽》的标题与全部节拍覆盖成了《新生活》**，4 条 `add`
+  往《破绽》尾巴上追加节拍。接受后全片结局（苏晴瞥见 β 敲电路板、笑容僵住）
+  被整场吃掉。Agent 却报告「已拆回 7 场」。第一版 patch 更隐蔽：12 条全是
+  `set`，但 `before` 与 `after` **内容完全相同**——纯空转，什么都没拆。
+- **根因**：`apply_patch` 的操作路径空间是 `/script/scenes/{下标}/{字段}`，
+  `PatchOp` 只有 add/set/remove 三种，**没有「在第 i 场前插入一场」这种路径**
+  （`app/pipeline/patch.py`）。模型想加场，唯一能做的就是把某一场改写成新场。
+- **解法**（本轮临时）：绕过 patch，用 `store.create_version` 直接落一版正确的
+  7 场台本（原文第六场逐字补回），后续场次顺延编号。产品侧待办：① patch
+  支持整场级 `add`（`/script/scenes/{i}` 插一场）；② 加确定性检查——`set` 且
+  `before == after` 视为空转，评审时点名，不让「看起来改了 12 条」蒙过去。
+- **教训**：**「拆场 / 加场」这类需求在当前实现下必然破坏内容**；Agent 报告
+  「已完成改编」与版本实际内容不一致时，**以版本为准**（本轮是用户先看出来
+  「剧本还是 6 场」，Agent 才回头发现自己拆错了对象）。
+- **涉及文件**：`app/pipeline/patch.py`（路径空间限制）·
+  `app/chat/tools/screenplay.py`（`run_adaptation` 提议）· `app/agent/runner.py`
+
 ## 六、排查手册（症状 → 先查什么）
 
 | 症状 | 先查 |
@@ -3171,3 +3270,48 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   占告警大头，**本轮没动**——它的误报率值得单独查一轮（疑为锚段与正文天然
   重复）；④ 本轮**零花费**，但也没有真机验证：新检查只在真实**历史**提示词上
   验过，尚未在**新一轮**出片上看过告警是否指向真问题——留待花钱轮。
+
+### T-20 《替身》剧本端到端：吃剧本的两个塌陷 + Agent 侧厂商写死（2026-11-19，完成）
+
+- **假设**：产品只做过「小说 → 短剧」，剧本型原文（带场次标题、人物设定、
+  内景/外景）应该能直接进管线，且 Agent 对话路径能自己走完全链路。
+- **过程**：拿一份 2579 字的原创短剧剧本《替身》（科幻，克隆替身反杀本体）→
+  先用直跑脚本（`N2D/novel2video.py` 同款函数）跑文字链路体检 → 定位塌陷 →
+  改代码 → 重跑 → 再起后端（8000）+ Agent 对话路径，让 Agent 自己走
+  「导入 → 台本 → 改编审阅 → 拆镜 → 美术 → 定妆图 → 提示词 → 批准 → 出片」。
+- **发现的问题**（三个，按严重度）：
+  1. **故事圣经缺 JSON 契约 → 人物与地点双双塌成兜底值**：24/24 镜共用一个
+     场景锚 `@主要场景(loc_main)`，卧室戏提示词里带着办公工位；人物只剩说话人
+     反推，`role` 全 supporting，原文「38 岁」被美术写成「三十四岁」。
+     根因是 `json_mode` 不强制 schema + 提示词没写字段契约。见 5.72。
+  2. **人物设定在第一阶段就被丢掉**：`Character` 没有承载描述的字段，
+     美术阶段读到的永远是「无描述」，只能自己编长相。同 5.72。
+  3. **Agent 侧提交出片写死 `provider="minimax"`**：用户在 UI 里选的是方舟，
+     Agent 却打去 MiniMax 那户已欠费的 key → 402。见 5.73 / D-69。
+- **修改**：`_stage_bible` 提示词写死 JSON 契约 + 新增确定性护栏
+  `_bible_structure_issue`（缺人物/地点就带反馈重跑一次）；`Character` 加
+  `description` 并一路带到美术提示词与 Agent 上下文；视频厂商统一走
+  `pick_video_provider()`（按 DB 里 enabled 的行）。
+- **效果**（同一份原文、同一模型）：**8 场 / 7 地点 / 8 角色**，每个地点带原文
+  描述，美术出 **7 场景 + 8 角色造型**，林远「38 岁」、β「与林远面容一致」；
+  25 镜 / 117 秒，每镜场景锚与场次一一对应。697 测试 + 离线 eval（24 passed /
+  23 skipped）全绿。
+- **费用（实跑值）**：文字链路（台本/拆镜/美术/提示词，deepseek-flash）≈ ¥2–3；
+  定妆图/场景图 14 张（seedream 5-5，质检全过）≈ ¥5–10（图片侧代码没有计价，
+  按方舟单价估）；视频按 `estimate_cost_real` 实算：试点 3 镜 14 秒 @768P
+  = **¥13.91**（实算 5.96 + 3.97 + 3.97），剩余 23 镜全量 @768P ≈ **¥98.9**、
+  @480p ≈ **¥44.0**（接力参考视频不额外加钱：带视频输入整单按 28 元/M，
+  比纯输出的 46 元/M 便宜）。**试点这一轮合计 ≈ ¥21–27。**
+- **试点结论**：3 镜成片（14.3 秒，含原生音轨与烧录字幕）观感成立——运镜推近
+  有效、书房冷光/打印区冷白灯管/包间暖黄吊灯与风格指南一致、人脸与定妆图
+  同一演员、音轨里有真台词（volumedetect 有声）。瑕疵：β 特写镜头下巴有一道
+  暗色斑（疑似把「刚吃过蛋糕」画成了胡须状残渣）。
+- **遗留**：① 改编工作流的 patch 没实现「拆场/加场」——见 5.75（会吃掉别的场）；
+  ② 画幅：Agent 报「带 ratio=9:16」，实际出片是 16:9 横屏——后端没热加载，
+  见 5.74（`submit_videos` 已补 ratio 参数，重启后端后生效）；③ 在线 eval
+  judge 层本轮未跑（D-68 的付费层，改的提示词不在它的覆盖面内：eval 测的是
+  导演/美术/摄影三个工种，不测第一阶段的故事圣经）；④ 第一阶段对「剧本型原文」
+  的场次对齐仍弱：初稿把原文第六场整场丢了、把第一场后半的「打印区」并没了，
+  靠人工核对原文才发现——需要一条「场次/节拍对得上原文」的确定性校验；
+  ⑤ 参考图右下角有平台水印，已在 3 镜提示词末尾加「不得出现文字/水印」，
+  但视频成片本身仍可能被平台打标（方舟合规水印），待下一轮确认。

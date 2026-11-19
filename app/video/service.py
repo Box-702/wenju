@@ -793,12 +793,14 @@ def _unit_intent(
     return params, manual
 
 
-def _pick_video_provider() -> tuple[str, str]:
-    """选视频 provider：优先 MiniMax（本产品视频链路唯一切入点），否则第一个已配置的。"""
+def pick_video_provider() -> tuple[str, str]:
+    """选视频 provider：按 DB 里 **enabled** 的行选（默认第一个）。
+
+    绝不写死厂商名——写死过一次（Agent 侧提交硬编码 "minimax"），结果用户在
+    UI 里明明选了方舟、Agent 提交却打去了 MiniMax 那户已欠费的 key 上，
+    直接 402（2026-11-19 实测）。配置只走 DB 是 D-48 的规矩。
+    """
     rows = [r for r in deps.store().list_api_providers(kind="video") if getattr(r, "enabled", True)]
-    for row in rows:
-        if row.name == "minimax":
-            return row.name, "default"
     return (rows[0].name, "default") if rows else ("minimax", "default")
 
 
@@ -892,7 +894,7 @@ def generate_batch(project_id: str, payload: BatchCreateRequest) -> dict[str, An
     # 想对已成功镜头原词重出，走单镜重试入口，不靠重开批次。
     units_all = generation_units(version.shots)
     unit_by_id = {u["shot_id"]: u for u in units_all}
-    provider = payload.provider or _pick_video_provider()[0]
+    provider = payload.provider or pick_video_provider()[0]
     model = payload.model or "default"
     from .rhythm import suggest_duration
 

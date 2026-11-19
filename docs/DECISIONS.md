@@ -2455,6 +2455,48 @@ AGENTS.md · README.md · evals/README.md · DEVELOPMENT 5.71 · T-18 / 5.70
 
 ---
 
+## D-69 视频厂商按 DB 里 enabled 的行选，不写死也不「优先 MiniMax」 —— 已定（2026-11-19）
+
+**背景**：视频厂商的选择有两套逻辑并存——批次链路（`generate_batch`）走
+`pick_video_provider()`，按 DB 里 enabled 的行取；**Agent 对话链路的三处
+提交（`submit_videos` / `generate_video` / `rerun_video`）却写死
+`provider="minimax"`**，把前者的选择盖掉。2026-11-19 实测：UI 里视频厂商选的是
+火山方舟，Agent 提交却打去了 MiniMax 那户已欠费的 key → `402
+insufficient balance`（与 5.73 / model-default-resolution-trap 同一个坑的
+另一副面孔）。原先的 `pick_video_provider` 里还有一条「优先 minimax」的特判，
+同样是写死——D-48 定了「模型配置只走 DB」，这一条正好破口。
+
+**选项**：① 只改 Agent 三处，保留「优先 minimax」特判；② 改成「读
+model_preferences 里的视频偏好」；③ **按 DB 里 enabled 的行取第一个**，
+不写死任何厂商名。
+
+**决定**：选 ③。具体：
+
+- `_pick_video_provider` 改名 `pick_video_provider`（公开），去掉「优先
+  minimax」特判，改为 `[r for r in list_api_providers(kind="video") if
+  r.enabled]` 取第一个；DB 里没有 enabled 的视频行时兜底 `"minimax"`（保持
+  旧行为，不让代码崩）。
+- Agent 侧三处提交与 `app/api/video.py` 的批次命令默认值，统一用
+  `pick_video_provider()`。
+- 直跑脚本 `N2D/novel2video.py` 一直用的是 `video_rows[0].name`（enabled 的
+  第一行），两条路从此落到同一个厂商。
+
+**理由**：① **「配置走 DB」必须一路走到「用配置」**，中间任何写死的默认值都
+是破口；② 视频厂商没有「产品唯一切入点」这回事——D-45 之后厂商是可配的，
+继续偏袒 MiniMax 等于替用户做选择；③ enabled 语义（用户手动停用某户，
+多半是因为欠费或不想用它）本来就该是唯一的开关。
+
+**什么时候该推翻**：① 若引入「视频厂商偏好」这一任务类型（与 chat /
+image_gen 的 model_preferences 对称），应改为按偏好取，偏好缺失时再回落到
+enabled 第一行；② 若未来允许一户多 key 并按 key 轮换，此处要改成取 key 而非
+厂商；③ 若产品重新定回「单一视频厂商」，应改配置而不是改代码里的特判。
+
+**相关**：`app/video/service.py`（`pick_video_provider`）·
+`app/chat/tools/video.py`（三处提交）· `app/api/video.py`（批次命令默认值）·
+DEVELOPMENT 5.73 · D-45 · D-48
+
+---
+
 ## 记录新决策的模板
 
 ```markdown

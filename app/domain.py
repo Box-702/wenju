@@ -257,6 +257,10 @@ class Character(BaseModel):
     goal: str | None = None
     motivation: str | None = None
     personality: str | None = None
+    # 原文给出的人物设定（年龄、身份、性格、外貌线索）。别丢：美术阶段
+    # 只靠它写角色造型，丢在这里就等于让模型自己编年龄（2026-11-19 实测：
+    # 原文「38 岁」被写成「三十四岁」）。
+    description: str | None = None
     arc: str | None = None
     speech_style: str | None = None
 

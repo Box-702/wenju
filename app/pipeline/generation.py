@@ -261,6 +261,47 @@ def _bible_naming_issue(bible: Bible, language: str) -> str | None:
     )
 
 
+def _bible_structure_issue(bible: Bible, language: str) -> str | None:
+    """故事圣经是否**缺结构**（没有人物 / 没有地点）。
+
+    缺人物 → 下游角色只能靠说话人反推，美术拿不到年龄身份，只能自己编外貌
+    （2026-11-19 实测：38 岁的林远被写成「三十四岁」）；
+    缺地点 → 所有场次落到兜底的 `loc_main「主要场景」`，导演/美术/摄影
+    24 个镜头共用一个场景锚，卧室戏会带出办公工位（2026-11-19 实测《替身》）。
+
+    成因：json_mode 不强制 schema，模型照系统提示词吐了另一套字段，
+    characters/locations 整个数组缺失。提示词已给出 JSON 契约，这里是确定性
+    护栏——别信模型自律（见 5.38/5.39 的规矩）。
+    """
+    problems: list[str] = []
+    if not bible.characters:
+        problems.append("characters 为空")
+    if not bible.locations:
+        problems.append("locations 为空")
+    if not problems:
+        return None
+    return (
+        "上一版故事圣经没有给出" + "、".join(problems) + "——下游会因此塌掉"
+        "（地点会合并成「主要场景」，人物外貌只能靠编）。\n"
+        "请严格按下面的 JSON 结构输出，且不要输出其它字段：\n"
+        '{"title":"…","logline":"…","themes":["…"],'
+        '"characters":[{"id":"char_001","name":"人物名","role":"protagonist|supporting|antagonist",'
+        '"goal":"…","motivation":"…","description":"年龄、身份、性格、外貌线索"}],'
+        '"locations":[{"id":"loc_001","name":"地点名","description":"环境、光线、道具"}]}\n'
+        "characters 要列全原著的每一个人，locations 要列全原著的每一个地点，"
+        "不要合并。原文中给出的人物设定原样写进 description。"
+    )
+
+
+def _bible_issue(bible: Bible, language: str) -> str | None:
+    """故事圣经的可检出问题合成一段修正指令（None = 没问题）。"""
+    parts = [
+        p for p in (_bible_naming_issue(bible, language), _bible_structure_issue(bible, language))
+        if p
+    ]
+    return "\n\n".join(parts) if parts else None
+
+
 def _prior_block(prior_context: str) -> str:
     """前情提要注入块（连载选段改编时衔接上下文，禁止写进本次剧本）。"""
     text = (prior_context or "").strip()
@@ -280,9 +321,24 @@ def _stage_bible(llm: LLM, settings: Settings, *, title: str, excerpts: list[str
     prompt = (
         f"请基于下面的原著片段生成剧本故事圣经。标题：{title}\n"
         f"改编类型 profile：\n{profile_prompt(prof, language=language)}\n\n"
+        "【输出结构（必须严格照此 JSON，不要输出任何其它字段）】\n"
+        '{"title":"…","logline":"…","themes":["…"],'
+        '"characters":[{"id":"char_001","name":"人物名","role":"protagonist|supporting|antagonist",'
+        '"goal":"这个人物想要什么","motivation":"为什么",'
+        '"description":"原文给出的全部设定：年龄、身份、性格、外貌线索"}],'
+        '"locations":[{"id":"loc_001","name":"地点名",'
+        '"description":"这个地点的环境、光线、道具（按原文写，没有就写场景里能看见的东西）"}]}\n'
         "【命名硬规矩】人物与地点的 name 必须用原著中出现的称呼原文"
         "（中文原著就用中文名，如「林然」「后巷便利店」）；"
-        "**严禁把 name 写成拼音或英文 slug**（如 lin_ran）——拼音只允许出现在 id 里。\n\n"
+        "**严禁把 name 写成拼音或英文 slug**（如 lin_ran）——拼音只允许出现在 id 里。\n"
+        "【必须列全的硬规矩】\n"
+        "- characters 要覆盖原著出现的**每一个**人物（有名有姓的、只出场一句的都要列），"
+        "role 要分清主角/反派/配角；\n"
+        "- locations 要覆盖原著出现的**每一个**地点，逐个列，不要合并成「主要场景」；\n"
+        "- 原文若已经给出人物设定（年龄、职业、性格），原样写进 description，"
+        "不要改写、不要另编；\n"
+        "- 原文若是剧本（带场次标题、人物设定、内景/外景），"
+        "就按剧本的场次与地点来列，场次标题里的地点必须各自成条。\n\n"
         f"原著片段：\n{text[:4000]}"
         + _prior_block(prior_context)
     )
@@ -370,20 +426,22 @@ def generate_script(
                 chunks = [raw_text or ""]
             excerpts = chunks[:12]
             bible = _stage_bible(llm, settings, title=title, excerpts=excerpts, prof=prof, language=language, prior_context=prior_context)
-            # 名层护栏：显示名退化成拼音 slug 时，带反馈重跑一次故事圣经（有界：只一次）。
-            naming = _bible_naming_issue(bible, language)
-            if naming:
-                log.warning("人物/地点名退化成拼音，带反馈重跑故事圣经：%s", naming[:60])
+            # 护栏：名层退化（拼音 slug）/ 结构缺失（没有人物、没有地点）时，
+            # 带反馈重跑一次故事圣经（有界：只一次）。两种问题可能同时出现，
+            # 合成一段 critique 一次问清，别让模型分两轮试错。
+            critique = _bible_issue(bible, language)
+            if critique:
+                log.warning("故事圣经有问题，带反馈重跑一次：%s", critique[:80])
                 retry = _stage_bible(
                     llm, settings, title=title, excerpts=excerpts, prof=prof,
-                    language=language, prior_context=prior_context, critique=naming,
+                    language=language, prior_context=prior_context, critique=critique,
                 )
-                if _bible_naming_issue(retry, language) is None:
+                if _bible_issue(retry, language) is None:
                     bible = retry
                 else:
-                    # 重跑仍不合格：不硬塞（拼音名进下游会一路错到底），落日志 + artifacts 记一笔，
+                    # 重跑仍不合格：不硬塞（带病进下游会一路错到底），落日志 + artifacts 记一笔，
                     # 由上游（对话层）如实告诉用户「模型这次没听话」。
-                    log.warning("故事圣经重跑后名仍为拼音，保留但下游可能沿用 slug 称呼")
+                    log.warning("故事圣经重跑后仍有问题，保留但下游可能沿用兜底值")
             plan = _stage_scenes(llm, settings, bible=bible, excerpts=excerpts, prof=prof, language=language, chunks=chunks, prior_context=prior_context)
             # 退化护栏：把多章素材挤进过少的场景（结构退化）时，带反馈重拆一次。
             if _is_degenerate_plan(plan, raw_text):
@@ -411,7 +469,12 @@ def generate_script(
                 if cid in used_chars:
                     cid = f"{cid}_{i + 1}"[: 40]
                 used_chars.add(cid)
-                chars.append(Character(id=cid, name=c.name, role=c.role, goal=c.goal, motivation=c.motivation))
+                chars.append(Character(id=cid, name=c.name, role=c.role, goal=c.goal,
+                                       motivation=c.motivation,
+                                       # 人物设定（年龄/身份/性格）必须带到下游：
+                                       # 美术阶段只读人物描述来写角色造型，
+                                       # 丢在这里就等于让美术自己编外貌。
+                                       description=c.description, arc=c.arc))
             name_to_id = {c.name: c.id for c in chars}
             extra_speakers: list[str] = []
             for sc in plan.scenes:

@@ -776,7 +776,7 @@ from ..video.service import (  # noqa: E402,F401,F811
     VideoJobCreate,
     _batch_submit,
     _job_params,
-    _pick_video_provider,
+    pick_video_provider,
     _resolve_video_provider,
     _same_intent,
     _submit_video_job,
@@ -902,7 +902,7 @@ def batch_command(batch_id: str, payload: BatchCommandRequest) -> dict[str, Any]
 
     # 在状态变更前捕获当前任务与最新版本：approve/reroll 沿用原 provider/model。
     prev = deps.store().get_video_job(batch.job_id) if batch.job_id else None
-    provider = prev.provider if prev else "minimax"
+    provider = prev.provider if prev else pick_video_provider()[0]
     model = prev.model if prev else "default"
     prev_resolution = ((prev.params or {}).get("resolution") if prev else None) or None
     prev_aspect = ((prev.params or {}).get("aspect_ratio") if prev else None) or None

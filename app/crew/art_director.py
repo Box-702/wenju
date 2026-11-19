@@ -153,7 +153,12 @@ class ArtDirectorAgent(CrewAgent):
             "人物（请以这些名字为键写角色造型）：",
         ]
         for c in script.characters:
-            parts.append(f"  - {c.name}（{c.role or '未定'}）：{c.personality or c.goal or '无描述'}")
+            # description 排第一：它是原文的人物设定（年龄/身份/性格），
+            # 美术必须照着写造型，不能自己另编一套（2026-11-19 实测）。
+            parts.append(
+                f"  - {c.name}（{c.role or '未定'}）："
+                f"{c.description or c.personality or c.goal or '无描述'}"
+            )
         parts.append("\n地点（请以这些名字为键写环境描述）：")
         for loc in script.locations:
             parts.append(f"  - {loc.name}：{loc.description or '无描述'}")

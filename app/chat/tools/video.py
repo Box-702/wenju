@@ -66,8 +66,13 @@ def build(ctx: ToolContext) -> list:
         project_id: str,
         shot_ids: str = "",
         reference_asset_ids: str = "",
+        ratio: str = "",
     ) -> str:
-        """提交视频生成：为提示词已批准的镜头启动批量出片（串行推进，前一镜成片自动作为后一镜的接力参考）。参数：project_id=项目 id；shot_ids 可选（逗号分隔只出指定镜头），留空=全部已批准的镜头；reference_asset_ids 可选（逗号分隔的素材 id，当作本次出片的参考锚，如白模视频，id 从 list_assets 取）。"""
+        """提交视频生成：为提示词已批准的镜头启动批量出片（串行推进，前一镜成片自动作为后一镜的接力参考）。参数：project_id=项目 id；shot_ids 可选（逗号分隔只出指定镜头），留空=全部已批准的镜头；reference_asset_ids 可选（逗号分隔的素材 id，当作本次出片的参考锚，如白模视频，id 从 list_assets 取）；ratio=画面比例（9:16 / 16:9 / 1:1 等，留空=用全局默认 16:9）。
+
+        ratio 必须能传下来：用户刚回答过画幅（Agent 问过就得用），批量这条路
+        不能把答案吞掉——2026-11-19 实测，Agent 问完画幅走批量提交，
+        批量接口没有画幅参数，结果按默认横屏出片，问了等于没问。"""
         p = ctx.project(project_id)
         v = ctx.latest_video_version(p)
         if v is None or not v.shots:
@@ -90,9 +95,20 @@ def build(ctx: ToolContext) -> list:
             VideoJobCreate,
             generate_batch,
             generation_units,
+            pick_video_provider,
             submit_video_job,
             unit_approved,
         )
+
+        # 视频厂商按 DB 里 enabled 的行来（别写死——写死过一次，用户选了方舟
+        # 而 Agent 打去了欠费的 MiniMax 户，402；见 pick_video_provider 注释）。
+        video_provider, video_model = pick_video_provider()
+        # 画幅：用户明确给过就照给（留空=全局默认）。两条提交路径都要带上——
+        # 单镜提交早就支持 ratio，批量这条 2026-11-19 才补上。
+        ratio_clean = (ratio or "").strip()
+        extra_params: dict[str, Any] = {}
+        if ratio_clean:
+            extra_params["aspect_ratio"] = ratio_clean
 
         # 提交单位 = 生成单元（镜头组折叠后的一条视频；单镜自成一条）。
         units = generation_units(v.shots)
@@ -116,9 +132,10 @@ def build(ctx: ToolContext) -> list:
                 reused = 0
                 for u in submit_units:
                     _job, is_new = submit_video_job(p.id, VideoJobCreate(
-                        shot_id=u["shot_id"], provider="minimax", model="default",
+                        shot_id=u["shot_id"], provider=video_provider, model=video_model,
                         prompt=u["prompt"], version_id=v.id,
-                        params=({"reference_asset_ids": refs} if refs else {}),
+                        params=({**({"reference_asset_ids": refs} if refs else {}),
+                                 **extra_params}),
                     ))
                     created += 1 if is_new else 0
                     reused += 0 if is_new else 1
@@ -134,7 +151,8 @@ def build(ctx: ToolContext) -> list:
             if not ready:
                 return not_approved
             # 整片：走批次（串行推进，前一镜成片自动作为后一镜接力参考）。
-            batch = generate_batch(p.id, BatchCreateRequest(version_id=v.id))
+            batch = generate_batch(p.id, BatchCreateRequest(
+                version_id=v.id, aspect_ratio=ratio_clean or None))
         except Exception as e:  # noqa: BLE001  FastAPI HTTPException 也走这里，转成用户可读文本
             detail = getattr(e, "detail", None) or str(e)
             return f"提交视频生成失败：{detail}"
@@ -185,9 +203,12 @@ def build(ctx: ToolContext) -> list:
         from ...video.service import (
             VideoJobCreate,
             generation_units,
+            pick_video_provider,
             submit_video_job,
             unit_prompt,
         )
+
+        video_provider, video_model = pick_video_provider()
 
         # 组镜头：提交单位是组头，发的是折叠后的组提示词
         unit = next(
@@ -210,7 +231,7 @@ def build(ctx: ToolContext) -> list:
             params["duration_sec"] = int(duration)
         try:
             _job, is_new = submit_video_job(p.id, VideoJobCreate(
-                shot_id=target_id, provider="minimax", model="default",
+                shot_id=target_id, provider=video_provider, model=video_model,
                 prompt=prompt, version_id=v.id, params=params,
             ))
         except Exception as e:  # noqa: BLE001
@@ -232,7 +253,14 @@ def build(ctx: ToolContext) -> list:
         if shot is None:
             return f"没有找到镜头 {shot_id}，可以先查镜头清单确认 id。"
         job = ctx.latest_job_by_shot(p.id).get(shot_id)
-        from ...video.service import VideoJobCreate, retry_video_job, submit_video_job
+        from ...video.service import (
+            VideoJobCreate,
+            pick_video_provider,
+            retry_video_job,
+            submit_video_job,
+        )
+
+        video_provider, video_model = pick_video_provider()
 
         try:
             if job is not None and job.status in ("failed", "cancelled"):
@@ -246,7 +274,7 @@ def build(ctx: ToolContext) -> list:
                 return (f"镜头 {shot_id} 还在生成中（任务 {active.id}，状态 {active.status}），"
                         "没有重复提交。等它出完再决定要不要重跑；想立刻换一版就先取消那个任务。")
             _job, _created = submit_video_job(p.id, VideoJobCreate(
-                shot_id=shot_id, provider="minimax", model="default",
+                shot_id=shot_id, provider=video_provider, model=video_model,
                 prompt=shot.get("video_prompt") or "", version_id=v.id,
             ))
             return f"已提交镜头 {shot_id} 的重新生成，稍后可问我进度。"

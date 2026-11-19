@@ -25,6 +25,8 @@ data/
 *.db
 *.sqlite
 *.sqlite3
+# 家目录镜像（沙箱里 python 写不了 ~/.wenju 时的工作副本）：app.db + workspace + runs
+.wenju_run/
 
 # ---------- 测试 / 工具缓存 ----------
 .pytest_cache/

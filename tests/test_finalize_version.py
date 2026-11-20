@@ -78,3 +78,47 @@ def test_失败任务与非本镜任务不参与():
         _job("shot_b", "http://v/other_shot.mp4", version_id="vver_new"),
     ]
     assert _latest_succeeded_url(jobs, "shot_a", "vver_new") is None
+
+
+# ---------------------------------------------------------------- 同一份方案
+# 分批出片（--shot-limit + --resume）每批新建一个「批量批准」版本，但镜头
+# 方案是同一份：按版本号一刀切，前面几批的成片会被全丢掉（2026-11-20
+# 《替身v2》实测：15 镜有成片，成片里只进了 7 镜）。
+
+class _V:
+    def __init__(self, shots):
+        self.shots = shots
+
+
+class _Store:
+    def __init__(self, versions: dict[str, list[dict]]):
+        self.versions = versions
+
+    def get_video_version(self, version_id):
+        shots = self.versions.get(version_id)
+        return _V(shots) if shots is not None else None
+
+
+def test_同一份镜头方案的其他版本成片可以进成片():
+    jobs = [_job("shot_a", "http://v/old_batch.mp4", version_id="vver_batch1")]
+    store = _Store({"vver_batch1": [{"id": "shot_a", "video_prompt": "P"}]})
+    assert _latest_succeeded_url(
+        jobs, "shot_a", "vver_batch2", prompt="P", store=store
+    ) == "http://v/old_batch.mp4"
+
+
+def test_方案改过则其他版本的旧成片仍然排除():
+    jobs = [_job("shot_a", "http://v/old_batch.mp4", version_id="vver_batch1")]
+    store = _Store({"vver_batch1": [{"id": "shot_a", "video_prompt": "OLD"}]})
+    assert _latest_succeeded_url(
+        jobs, "shot_a", "vver_batch2", prompt="NEW", store=store
+    ) is None
+
+
+def test_拿不到对方版本时宁可不认():
+    """证明不了同方案 → 不认（宁可少一镜，也不拼错内容）。"""
+    jobs = [_job("shot_a", "http://v/old_batch.mp4", version_id="vver_batch1")]
+    store = _Store({})
+    assert _latest_succeeded_url(
+        jobs, "shot_a", "vver_batch2", prompt="P", store=store
+    ) is None

@@ -43,25 +43,69 @@ def _emit(rec: dict[str, Any], msg: str) -> None:
     del rec["messages"][:-40]  # 只保留最近的进度，避免长片刷屏
 
 
-def _latest_succeeded_url(jobs: list, shot_id: str, version_id: str | None = None) -> str | None:
+def _version_shot_prompts(store: Any, version_id: str | None) -> dict[str, str] | None:
+    """某版本里每个镜头的提示词（判定「镜头方案是否同一份」的依据）。"""
+    if not version_id:
+        return None
+    try:
+        v = store.get_video_version(version_id)
+    except Exception:  # noqa: BLE001
+        return None
+    if v is None or not v.shots:
+        return None
+    out: dict[str, str] = {}
+    for s in v.shots:
+        if isinstance(s, dict) and s.get("id"):
+            out[str(s["id"])] = str(s.get("video_prompt") or "")
+    return out
+
+
+def _latest_succeeded_url(
+    jobs: list,
+    shot_id: str,
+    version_id: str | None = None,
+    *,
+    prompt: str = "",
+    store: Any = None,
+    prompt_cache: dict[str, dict[str, str] | None] | None = None,
+) -> str | None:
     """该镜头最近一次成功任务的成片 URL（版本快照可能没回填 video_url）。
 
-    按 version_id 隔离（版本隔离收口）：只取「本版本的成功任务」；本版本一条
-    都没有时回退到「无版本归属」的历史任务（单镜手提交/对账回写常不带
-    version_id，无法证明是别代，与 _auto_references 同一口径放行）。
-    **明确属于其他版本的任务绝不混入**——旧版本合成拼进新版本成片，
-    内容与镜头方案对不上，且用户从成片里看不出来。
+    版本隔离的口径是**「镜头方案是否同一份」**，不是版本号本身：
+      - 本版本有该镜头的成功任务 → 直接用；
+      - 本版本没有 → 看别的版本有没有**提示词逐字一致**的同镜任务，
+        有就用（分批出片：--shot-limit + --resume 每批新建一个「批量批准」
+        版本，但镜头方案是同一份，按版本号一刀切会把前面几批的成片全丢掉
+        ——2026-11-20《替身v2》实测：15 镜有成片，成片里只进了 7 镜）；
+      - 提示词改过了（方案真变了）→ 旧成片一律不认——这才是版本隔离要防的事，
+        旧镜头拼进新成片，内容与方案对不上，用户还看不出来；
+      - 无版本归属的历史任务（单镜手提交/对账回写）仍按原口径放行。
     """
     candidates = [
         j for j in jobs
         if j.shot_id == shot_id and j.status == "succeeded" and j.video_url
     ]
+    if not candidates:
+        return None
     if version_id:
         same = [j for j in candidates if j.version_id == version_id]
         if same:
             candidates = same
         else:
-            candidates = [j for j in candidates if not j.version_id]
+            cache = prompt_cache if prompt_cache is not None else {}
+            keep: list = []
+            for j in candidates:
+                if not j.version_id:
+                    keep.append(j)          # 无版本归属：按原口径放行
+                    continue
+                if not prompt or store is None:
+                    continue                # 没法证明同方案 → 不认
+                if j.version_id not in cache:
+                    cache[j.version_id] = _version_shot_prompts(store, j.version_id)
+                other = cache.get(j.version_id) or {}
+                if other.get(shot_id, "") == prompt:
+                    keep.append(j)
+            candidates = keep
     urls = [(j.created_at, j.video_url) for j in candidates]
     return max(urls)[1] if urls else None
 
@@ -175,6 +219,12 @@ def finalize_film(
         from .service import generation_units
 
         unit_by_head = {u["shot_id"]: u for u in generation_units(shot_dicts)}
+        # 当前版本的镜头提示词：判定别的版本的任务是不是「同一份方案」
+        prompt_by_shot = {
+            str(s.get("id")): str(s.get("video_prompt") or "")
+            for s in shot_dicts if s.get("id")
+        }
+        prompt_cache: dict[str, dict[str, str] | None] = {}
         ready = 0
         # 每个 clip 覆盖几个成员镜头（校准循环按它把 shots 切段配对 clips）
         unit_member_counts: list[int] = []
@@ -183,7 +233,12 @@ def finalize_film(
             unit = unit_by_head.get(sid)
             if unit is None:
                 continue  # 组员：由组头代表下载
-            url = _latest_succeeded_url(jobs, sid, vid)
+            url = _latest_succeeded_url(
+                jobs, sid, vid,
+                prompt=prompt_by_shot.get(sid, ""),
+                store=store,
+                prompt_cache=prompt_cache,
+            )
             if not url:
                 warnings.append(f"镜头 {sid} 还没有成片，已跳过")
                 emit(f"镜头 {sid} 没有成片，跳过")

@@ -263,8 +263,19 @@ def _intent_params_equal(stored: dict[str, Any], effective: dict[str, Any]) -> b
     def _norm(value: Any) -> Any:
         return value if value else None
 
-    return all(_norm(stored.get(key)) == _norm(effective.get(key))
-               for key in _INTENT_PARAM_KEYS)
+    for key in _INTENT_PARAM_KEYS:
+        s, e = _norm(stored.get(key)), _norm(effective.get(key))
+        if s == e:
+            continue
+        # 音色锚的上线豁免（2026-11-20）：回填功能上线**之前**提交的任务，
+        # params 里根本没有这个键——比对侧现在算得出来，不等于当年投出去的
+        # 不一样。老任务一律认同意图，否则每次重开批次都会把上线前的成功
+        # 镜头重新烧一遍（《替身v2》16 镜 ≈ ¥85 的实弹就埋在这）。
+        # 存过（非空）而两边不同 = 真换过音色，判成新意图。
+        if key == "reference_audios" and s is None:
+            continue
+        return False
+    return True
 
 
 def _same_generation_intent(
@@ -502,7 +513,8 @@ def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, boo
         for url in _manual_reference_videos(project_id, shot_refs):
             if url not in manual_reference_videos:
                 manual_reference_videos.append(url)
-    _auto_references(project_id, payload.shot_id, payload.version_id, stored_params)
+    _auto_references(project_id, payload.shot_id, payload.version_id, stored_params,
+                     provider=payload.provider)
 
     # 用量摘要（D-53）：界面不再展示费用估算——预估与实付脱节只会伤信任
     # （导入回执「预估 ¥3.6」vs 实付 ¥27.7 的教训）。落库三类创作者数量：
@@ -595,7 +607,141 @@ def _manual_reference_videos(project_id: str, shot: dict[str, Any]) -> list[str]
     return urls
 
 
-def _auto_references(project_id: str, shot_id: str | None, version_id: str | None, stored_params: dict[str, Any]) -> None:
+def _shot_speakers(shot_plan: list[dict[str, Any]], shot_id: str, script: Any) -> list[str]:
+    """该提交单元（单镜或整组）里开口说话的角色 id，按出现顺序去重。
+
+    组任务投的是折叠后的组提示词，覆盖全组机位——音色锚要给的是**整组**的
+    说话人，不只组头。dialogue_ref 指向剧本节拍，节拍带 speaker。
+    """
+    shots = [s for s in (shot_plan or []) if isinstance(s, dict)]
+    head = next((s for s in shots if s.get("id") == shot_id), {})
+    gid = str(head.get("group_id") or "")
+    members = (
+        [s for s in shots
+         if str(s.get("group_id") or "") == gid
+         and str(s.get("scene_id") or "") == str(head.get("scene_id") or "")]
+        if gid else [head]
+    )
+    refs = [str(m.get("dialogue_ref") or "").strip() for m in members]
+    refs = [r for r in refs if r]
+    beat_speaker: dict[str, str] = {}
+    for sc in (script.scenes if script else []):
+        for b in sc.beats:
+            if b.id in refs and b.speaker:
+                beat_speaker[b.id] = b.speaker
+    seen: set[str] = set()
+    out: list[str] = []
+    for r in refs:
+        cid = beat_speaker.get(r)
+        if cid and cid not in seen:
+            seen.add(cid)
+            out.append(cid)
+    return out
+
+
+def _voice_sample(store: Any, project_id: str, char_id: str, voice_id: str,
+                  *, create: bool = True) -> str | None:
+    """角色音色样音的素材回放地址（有缓存则复用，没有则 TTS 合成一条入库）。
+
+    音色规范（2026-11-20）：native 音画同生模式下，视频模型没有 voice_id 字段，
+    唯一能把「这个角色该用什么嗓子」传进去的通道是 reference_audio——传一段
+    该角色音色的样音，模型生成的台词人声会向它靠。样音按 (角色, 音色) 缓存，
+    一个角色一生只合成一次（MiniMax TTS 很便宜，但绝不逐镜重复合成）。
+
+    create=False（比对侧）：只查缓存不合成不写库——幂等比对发生在每个成功任务
+    上，绝不能在这里烧 TTS 或改选角表。
+
+    固定中性句子做样本：音色由 voice_id 决定，文本内容不进成片、只当声线参考。
+    句长 ~13 字 ≈ 3 秒，落在方舟 2.0 参考音频的 [2,15] 秒下限之上。
+    任何一步失败都返回 None（不阻断出片）。
+    """
+    if not voice_id:
+        return None
+    tag = f"音色样音::{char_id}::{voice_id}"
+    for a in store.list_assets(project_id, kind="audio"):
+        if a.name == tag and a.url:
+            return a.url
+    if not create:
+        return None
+    try:
+        from .finalize import _resolve_tts
+
+        tts = _resolve_tts(store)
+        if tts is None:
+            return None
+        audio = tts.synthesize("这是一段用于音色参考的样音。", voice_id=voice_id)
+    except Exception as e:  # noqa: BLE001
+        log.warning("音色样音合成失败（忽略）：%s %s", char_id, str(e)[:80])
+        return None
+    if not audio:
+        return None
+    from ..store import gen_id
+
+    asset_id = gen_id("asset")
+    try:
+        store.add_asset(
+            project_id, kind="audio", name=tag, source="voice_sample",
+            url=f"/api/assets/file/{asset_id}", id=asset_id, content=bytes(audio),
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("音色样音入库失败（忽略）：%s", str(e)[:80])
+        return None
+    return f"/api/assets/file/{asset_id}"
+
+
+def voice_audios_for(
+    store: Any, project_id: str, shot_plan: list[dict[str, Any]], shot_id: str,
+    script: Any, *, provider: str = "", stored_params: dict[str, Any] | None = None,
+    synthesize: bool = True,
+) -> list[str]:
+    """该提交单元该带的音色样音（≤3）；不适用时返回空列表。
+
+    音色规范（2026-11-20）：native 音画同生下视频模型没有 voice_id 字段，
+    唯一能把「该角色用什么嗓子」传进去的通道是 reference_audio——传该角色
+    音色的样音，模型生成的台词人声向它靠（Seedance 2.0 官方：≤3 段、
+    单段 2–15s、必须同时带 ≥1 张图或视频——定妆图回填保证了这条）。
+
+    只在满足全部条件时给：① 厂商的 content 有 audio_url 分支（方舟/MiniMax）；
+    ② 调用方没显式给过 reference_audios（显式优先，不覆盖）；③ 有剧本
+    （说话人要从节拍里解析）。任何一步失败返回空——音色锚是锦上添花，
+    绝不阻断出片。
+
+    提交侧与比对侧（_unit_intent）共用这一份口径：回填进了 stored_params 的
+    reference_audios 必须能被比对侧重算出来，否则幂等会把「没变的任务」判成
+    新意图白烧钱（_INTENT_PARAM_KEYS 含 reference_audios，与参考图同坑同修）。
+    """
+    if (provider or "").strip().lower() not in ("seedance", "minimax"):
+        return []
+    if stored_params is not None and stored_params.get("reference_audios"):
+        return []
+    if script is None or not shot_plan:
+        return []
+    try:
+        if synthesize:
+            # 提交侧：自动选角先落库（resolve_casting 纯读拿不到推断结果的持久化），
+            # 只在 voice_casting 缺该角色时补，人工指定的不动。
+            from ..media.casting import cast_and_persist
+
+            cast = cast_and_persist(store, project_id, script)
+        else:
+            # 比对侧：纯读——不写选角表、不烧 TTS（幂等比对跑在每个成功任务上）。
+            from ..media.casting import resolve_casting
+
+            cast = resolve_casting(store, project_id, script)
+        casting_map = {m.char_id: m.voice_id for m in cast.members if m.char_id}
+        audios: list[str] = []
+        for cid in _shot_speakers(shot_plan, shot_id, script):
+            url = _voice_sample(store, project_id, cid, casting_map.get(cid, ""),
+                                create=synthesize)
+            if url and url not in audios:
+                audios.append(url)
+        return audios[:3]
+    except Exception as e:  # noqa: BLE001
+        log.warning("音色锚回填失败（不阻断出片）：%s", str(e)[:120])
+        return []
+
+
+def _auto_references(project_id: str, shot_id: str | None, version_id: str | None, stored_params: dict[str, Any], *, provider: str = "") -> None:
     """提交时自动补齐多模态一致性输入（调用方显式提供的键优先，不覆盖）。
 
     - reference_videos：连续性接力——按镜头计划（reference_group / chain_from）
@@ -678,6 +824,13 @@ def _auto_references(project_id: str, shot_id: str | None, version_id: str | Non
         u: url_provider[u] for u in stored_params.get("reference_videos") or []
         if u in url_provider
     }
+    # ---- 音色锚回填（2026-11-20 音色规范）----
+    audios = voice_audios_for(store, project_id,
+                              [s for s in version.shots if isinstance(s, dict)],
+                              shot_id, script,
+                              provider=provider, stored_params=stored_params)
+    if audios:
+        stored_params["reference_audios"] = audios
 
 
 # ---------- 取消 / 重试 ----------
@@ -749,7 +902,7 @@ def retry_video_job(job_id: str) -> dict[str, Any]:
 def _unit_intent(
     unit: dict[str, Any], version_shots: list[Any], *, project_id: str,
     resolution: str | None, aspect_ratio: str | None, fallback_duration: float,
-    script: Any, registry: dict[str, str],
+    script: Any, registry: dict[str, str], provider: str = "",
 ) -> tuple[dict[str, Any], list[str]]:
     """批量口径下该单元「这次要投」的意图参数与手挑参考视频。
 
@@ -779,6 +932,16 @@ def _unit_intent(
             shot_id=unit["shot_id"], shot_plan=version_shots,
             completed_urls={}, image_registry=registry, script=script,
         ).get("reference_images") or None
+    # 参考音频：镜头显式带过的优先；没有时按提交侧同一口径算音色锚
+    # （synthesize=False：比对侧绝不写选角表、绝不烧 TTS）。算不出来
+    # （老任务上线前提交、缓存里没有样音）时与 _intent_params_equal 的
+    # 「存过为空一律同意图」豁免同口径，不会误判成新意图。
+    intent_audios = list(head.get("reference_audios") or [])
+    if not intent_audios:
+        intent_audios = voice_audios_for(
+            deps.store(), project_id, [s for s in version_shots if isinstance(s, dict)],
+            unit["shot_id"], script, provider=provider, synthesize=False,
+        )
     params = {
         "duration_sec": int(round(unit["duration_sec"] or fallback_duration)),
         "resolution": resolution or default_resolution(),
@@ -786,7 +949,7 @@ def _unit_intent(
         "first_frame_image": head.get("first_frame_image") or None,
         "last_frame_image": head.get("last_frame_image") or None,
         "reference_images": intent_images,
-        "reference_audios": head.get("reference_audios") or None,
+        "reference_audios": intent_audios or None,
         "content": None,
     }
     manual = _manual_reference_videos(project_id, head) if head else []
@@ -915,6 +1078,7 @@ def generate_batch(project_id: str, payload: BatchCreateRequest) -> dict[str, An
                 unit_by_id[shot_id], version.shots, project_id=project_id,
                 resolution=payload.resolution, aspect_ratio=payload.aspect_ratio,
                 fallback_duration=fallback_dur, script=script, registry=registry,
+                provider=provider,
             )
         return intent_cache[shot_id]
 

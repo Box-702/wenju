@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -33,6 +34,8 @@ from ..llm.tts import (
     VOICE_MALE_MATURE,
     VOICE_MALE_YOUNG,
 )
+
+log = logging.getLogger(__name__)
 
 # ---- 音色池 ------------------------------------------------------------
 # 只收 MiniMax 官方系统音色。池内顺序 = 分配优先级（先给「有辨识度」的音色）。
@@ -408,6 +411,55 @@ def cast_script(
             + "、".join(guessed)
         )
     return result
+
+
+def resolve_casting(store: Any, project_id: str, script: Script) -> Casting:
+    """读库选角（纯读）：资产库视图、提交侧音色锚、比对侧共用这一份口径。"""
+    style = store.get_video_style(project_id) or {}
+    return cast_script(
+        script,
+        casting=style.get("voice_casting") or None,
+        genders=style.get("character_genders") or None,
+        appearances=style.get("character_appearances") or None,
+        images=style.get("reference_images") or None,
+        visual_style=style.get("visual_style"),
+        voice_pool=build_voice_pool(store, style.get("visual_style")),
+    )
+
+
+def cast_and_persist(store: Any, project_id: str, script: Script) -> Casting:
+    """选角 + **落库**：把自动推断出的音色固化进 voice_casting。
+
+    2026-11-20《替身v2》复盘的音色规范缺口：cast_script 是纯函数，自动选出的
+    音色每次现算、从不落库——用户改画风或换勾选池，同一角色下一轮就换了嗓子；
+    而 native 出片的音色桥（service._auto_references）要读的正是
+    voice_casting 这份**持久**表。人工指定（source=casting）的不动，
+    只补「没指定过」的角色——这份表是用户的，代码只填空。
+
+    写回走 merge_video_style（浅合并），与资产库 PATCH / 克隆绑定同一口径；
+    失败只记日志不抛出——选角落库是锦上添花，绝不阻断调用方主流程。
+    """
+    cast = resolve_casting(store, project_id, script)
+    existing = dict((store.get_video_style(project_id) or {}).get("voice_casting") or {})
+    added: dict[str, str] = {}
+    labels = dict((store.get_video_style(project_id) or {}).get("voice_labels") or {})
+    for m in cast.members:
+        if m.source == "casting" or not m.char_id:
+            continue                      # 人工指定过：用户的表，一个字不动
+        if m.char_id in existing:
+            continue
+        added[m.char_id] = m.voice_id
+        if m.voice_label and m.voice_label != m.voice_id:
+            labels[m.char_id] = m.voice_label
+    if added:
+        try:
+            store.merge_video_style(project_id, {
+                "voice_casting": {**existing, **added},
+                "voice_labels": labels,
+            })
+        except Exception:  # noqa: BLE001
+            log.warning("自动选角落库失败（忽略）：project=%s", project_id)
+    return cast
 
 
 def build_voice_pool(store: Any, visual_style: str | None = None) -> list[dict[str, Any]]:

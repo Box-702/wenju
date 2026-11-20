@@ -118,6 +118,18 @@ class SeedanceProvider(VideoProvider):
         for u in params.reference_videos[:3]:
             items.append({"type": "video_url", "role": "reference_video",
                           "video_url": {"url": u}})
+        # 参考音频（音色锚，2026-11-20 补）：官方文档 2.0 系列支持
+        # audio_url role=reference_audio（≤3 段、单段 2–15s、wav/mp3），
+        # **但不可单独输入**——至少要同时带一张参考图或一个参考视频，
+        # 否则建任务就被拒。此前 _content() 漏了这支，params.reference_audios
+        # 在 provider 边界被静默丢弃（文件头注释 :15-17 一直声称支持）——
+        # 「角色音色进不去、成片人声每次一个样」的根因之一。
+        if params.reference_audios and (
+                params.image_url or params.last_frame_image
+                or params.reference_images or params.reference_videos):
+            for u in params.reference_audios[:3]:
+                items.append({"type": "audio_url", "role": "reference_audio",
+                              "audio_url": {"url": u}})
         return items
 
     def _model_factor(self) -> float:

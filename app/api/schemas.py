@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from ..domain import CameraMovement, ShotType
 
 # ---------- 项目 / 版本 ----------
 
@@ -160,7 +162,14 @@ class VideoVersionCreate(BaseModel):
 
 
 class VideoPromptReview(BaseModel):
-    """保存单个镜头的 Prompt，并记录人工审阅决定。"""
+    """保存单个镜头的 Prompt，并记录人工审阅决定。
+
+    工作台片段编辑器（2026-11-20）顺带支持改镜头结构化参数：
+    duration_sec / shot_type / camera / dialogue_at——即梦式「每个分镜
+    独立可调」的最小写面。**None = 本次不改动**；给了值就整体替换该字段。
+    改了时长/开口时刻会让已批准提示词里的「镜头N（X秒）」对不上，
+    端点侧会把该镜头打回待审（改参数与改文字同权，见 review_video_prompt）。
+    """
 
     prompt: str = Field(min_length=1, max_length=8000)
     decision: Literal["save", "approve", "needs_revision"] = "save"
@@ -168,6 +177,21 @@ class VideoPromptReview(BaseModel):
     # 用户从参考素材里挑的参考视频（资产 id）。
     # None=本次不改动；列表=整体替换（空列表即清空），最多 3 条。
     reference_asset_ids: list[str] | None = Field(default=None, max_length=3)
+    # ---- 镜头结构化参数（None=不动）----
+    duration_sec: float | None = Field(default=None, ge=1.0, le=30.0)
+    shot_type: ShotType | None = None
+    camera: CameraMovement | None = None
+    dialogue_at: float | None = Field(default=None, ge=0.0, le=30.0)
+
+    @field_validator("camera", mode="before")
+    @classmethod
+    def _drop_empty_camera(cls, v: object) -> object:
+        # 前端常把未动的下拉发成 {}：空对象当「没给」，别让 pydantic 用
+        # 全默认值的 CameraMovement 覆盖掉导演原本写好的运镜。
+        if isinstance(v, dict) and not any(
+                str(x).strip() for x in v.values() if x is not None):
+            return None
+        return v
 
 
 class VideoPromptBulkReview(BaseModel):

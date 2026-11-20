@@ -3494,3 +3494,24 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **涉及文件**：`app/video/finalize.py`（`_latest_succeeded_url` + 新增
   `_version_shot_prompts`）· `tests/test_finalize_version.py`（新增 3 例：
   同方案可进 / 方案改过仍排除 / 证明不了就不认）
+
+### 5.80 工作台后端：改组内机位时长会让组提示词的秒数过期（2026-11-20，B1）
+
+- **症状**（设计时发现，非线上）：片段编辑器要支持「改某个分镜的时长」。
+  但组提示词是 DP 折叠时按成员 `duration_sec` 算出来的「镜头N（X秒）」字符串，
+  API 层只改 `shot.duration_sec` 不动 `group_prompt`——提交闸门
+  （`submit_video_job` 等值校验）拿的是 `unit_prompt`（=group_prompt），
+  用户改完时长以为生效了，实际投出去的还是旧秒数，且时长优先级
+  「显式 > 导演 > 节奏默认」里导演值又被改了——两处对不上。
+- **根因**：组提示词的秒数是**派生值**，源头是成员时长；改源头不改派生值
+  就是数据不一致。API 层拿不到各机位的锚/正文片段，无法在这里重折叠
+  （重折叠是 DP 的 `_fold_group_prompts` 职责）。
+- **解法**：改组内任一台机位的 `duration_sec` → 整组 `prompt_status` 打回
+  `needs_review`（返回 `group_refold_note` 说明），逼「重新生成提示词」走
+  DP 重算秒数。绝不让用户拿着对不上秒数的提示词批准出片。单镜不受影响。
+- **涉及文件**：`app/api/schemas.py`（VideoPromptReview 扩 duration_sec/shot_type/
+  camera/dialogue_at，None=不动；camera 空对象当没给）·
+  `app/api/video.py`（review_video_prompt 消费参数 + 组打回；新增
+  `POST .../video/shots/{id}/reroll`）· `app/video/service.py::reroll_shot`
+  （业务体：失败重试 / 已批准合法重出 / 未批准 409 / 组感知归组头）·
+  `tests/test_workbench_backend.py`（8 例）

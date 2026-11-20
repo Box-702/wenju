@@ -896,6 +896,86 @@ def retry_video_job(job_id: str) -> dict[str, Any]:
     return {"id": job_id, "status": "pending"}
 
 
+def reroll_shot(project_id: str, shot_id: str, *, version_id: str | None = None) -> dict[str, Any]:
+    """单镜重出片（工作台「重新生成」按钮与修复工具链的后端底座）。
+
+    语义（与对话工具 rerun_video 同口径，收编成 REST 可走的业务体）：
+      · 该镜最新任务还在失败/取消态 → 直接重试那条（不新建意图）；
+      · 否则 = 对已批准提示词**合法重出片**：走 submit_video_job 全流程，
+        幂等由 claim 表 + 在途同意图复用兜住（绝不双份钱）；
+      · 提示词没批准 → 409（人工闸门 D-43 不因「重出」破例）。
+
+    组感知：shot_id 可以是组内任何机位——提交单元是组头（一条视频覆盖
+    整段戏），这里把成员 id 归到它所在的生成单元再投，报错信息用人话
+    说明「重出的是整段片段」。
+
+    返回 {"job_id", "status", "reused", "shot_id", "unit_shot_id", "note"}。
+    """
+    store = deps.store()
+    project = store.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, "项目不存在")
+    shot_id = (shot_id or "").strip()
+
+    # 版本：显式指定 > 当前最新带提示词的版本
+    versions = sorted(store.list_video_versions(project_id), key=lambda v: v.created_at)
+    version = None
+    if version_id:
+        version = next((v for v in versions if v.id == version_id), None)
+        if version is None:
+            raise HTTPException(404, "视频版本不存在")
+    else:
+        for v in reversed(versions):
+            if v.shots and any(isinstance(s, dict) and unit_prompt(s)
+                               for s in v.shots if isinstance(s, dict)):
+                version = v
+                break
+    if version is None or not version.shots:
+        raise HTTPException(404, "还没有镜头方案：先拆解镜头并生成提示词")
+
+    plan = [s for s in version.shots if isinstance(s, dict)]
+    if not any(str(s.get("id")) == shot_id for s in plan):
+        raise HTTPException(404, f"镜头 {shot_id} 不在当前方案里")
+
+    # 组感知：把机位 id 归到它所在的生成单元（提交单位 = 单元组头）
+    unit = next((u for u in generation_units(plan) if shot_id in u["member_ids"]), None)
+    if unit is None or not unit["prompt"]:
+        raise HTTPException(409, "该镜头还没有提示词，无法重出片")
+    head_id = unit["shot_id"]
+    head = next(s for s in plan if str(s.get("id")) == head_id)
+
+    # 最新任务：失败/取消 → 重试原任务（不新建）
+    latest = None
+    for j in sorted(store.list_video_jobs(project_id), key=lambda x: x.created_at):
+        if j.shot_id == head_id:
+            latest = j
+    if latest is not None and latest.status in ("failed", "cancelled"):
+        retry_video_job(latest.id)
+        return {"job_id": latest.id, "status": "pending", "reused": True,
+                "shot_id": shot_id, "unit_shot_id": head_id,
+                "note": "之前那次失败了，已重新排队"}
+
+    if head.get("prompt_status") != "approved":
+        raise HTTPException(
+            409,
+            "该镜头所在片段的提示词还没批准，重出片前需要先批准"
+            + ("（这是镜头组的一员，批准的是整段）" if unit["group_id"] else ""),
+        )
+
+    provider, model = pick_video_provider()
+    job, created = submit_video_job(project_id, VideoJobCreate(
+        shot_id=head_id, provider=provider, model=model,
+        prompt=unit["prompt"], version_id=version.id,
+    ))
+    note = (
+        f"已提交重出片（{head_id}）"
+        + ("——提交单位是整段片段，组内机位一起重出" if unit["group_id"] else "")
+    ) if created else "该片段已有在途的同意图任务，复用没有重复提交"
+    return {"job_id": job.id, "status": job.status if not created else "submitted",
+            "reused": not created, "shot_id": shot_id, "unit_shot_id": head_id,
+            "note": note}
+
+
 # ---------- 批量生成（自动 / 审批模式） ----------
 
 

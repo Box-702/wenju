@@ -554,6 +554,40 @@ def review_video_prompt(
     target["prompt_review_note"] = payload.note.strip()
     if payload.reference_asset_ids is not None:
         target["reference_asset_ids"] = _normalize_reference_assets(payload.reference_asset_ids, project_id)
+
+    # 工作台片段编辑器（2026-11-20）：结构化参数 None=不动，给了就替换。
+    # 时长/开口时刻是提交时的权威值（_unit_of 按成员 duration_sec 求和、
+    # submit 用显式 > 导演 > 节奏默认），改了就改这份，不必动提示词正文。
+    params_changed: list[str] = []
+    if payload.duration_sec is not None and float(payload.duration_sec) != float(target.get("duration_sec") or 0):
+        target["duration_sec"] = float(payload.duration_sec)
+        params_changed.append("duration_sec")
+    if payload.shot_type is not None and payload.shot_type != target.get("shot_type"):
+        target["shot_type"] = payload.shot_type
+        params_changed.append("shot_type")
+    if payload.camera is not None:
+        cam_dump = payload.camera.model_dump()
+        if cam_dump != (target.get("camera") or {}):
+            target["camera"] = cam_dump
+            params_changed.append("camera")
+    if payload.dialogue_at is not None and float(payload.dialogue_at) != float(target.get("dialogue_at") or 0):
+        target["dialogue_at"] = float(payload.dialogue_at)
+        params_changed.append("dialogue_at")
+
+    # 改了组内任一台机位的时长，组提示词里「镜头N（X秒）」的秒数就过期了
+    # （那是 DP 折叠时按成员时长代码算的）。API 层拿不到各机位的锚/正文片段，
+    # 无法在这里重折叠——把组头打回待审，让「重新生成提示词」走 DP 重算秒数，
+    # 绝不让用户拿着对不上秒数的提示词去批准出片。
+    group_refold = ""
+    if "duration_sec" in params_changed and target.get("group_id"):
+        for s in shots:
+            if (isinstance(s, dict) and s.get("group_id") == target.get("group_id")
+                    and str(s.get("scene_id") or "") == str(target.get("scene_id") or "")):
+                s["prompt_status"] = "needs_review"
+        group_refold = (
+            "该镜头属于镜头组，改时长后整组提示词的秒数需重新生成（组内机位已打回待审）"
+        )
+
     # 人工改完 prompt 后重跑确定性审计，结论随新版本落库（出厂前双重审计的人工侧）。
     # 传入风格指南的 camera_style，排除「本镜没有的运镜」——风格段每个镜头都带一遍。
     refresh_prompt_audits(shots, style_context=_style_context(current))
@@ -563,12 +597,15 @@ def review_video_prompt(
         "needs_revision": "要求修改镜头提示词",
         "save": "保存镜头提示词草稿",
     }
+    label = labels[payload.decision]
+    if params_changed:
+        label += "·改参数"
     version = deps.store().create_video_version(
         project_id=project_id,
         shots=shots,
         style_guide=current.style_guide,
         source_type="manual",
-        label=labels[payload.decision],
+        label=label,
         notes=payload.note.strip() or None,
         parent_version_id=current.id,
     )
@@ -584,6 +621,8 @@ def review_video_prompt(
         "prompt_status": target["prompt_status"],
         "approved_count": approved,
         "needs_review_count": needs_review,
+        "params_changed": params_changed,
+        "group_refold_note": group_refold,
     }
 
 
@@ -865,6 +904,19 @@ def cancel_video_job(job_id: str) -> dict[str, Any]:
 def retry_video_job(job_id: str) -> dict[str, Any]:
     """重试失败的视频生成任务（业务体在 app/video/service.py）。"""
     return _video_service.retry_video_job(job_id)
+
+
+@router.post("/projects/{project_id}/video/shots/{shot_id}/reroll")
+def reroll_shot(project_id: str, shot_id: str, version_id: str | None = None) -> dict[str, Any]:
+    """单镜重出片：工作台「重新生成」按钮与修复工具链的后端入口。
+
+    与任务级 retry 的区别：retry 只救失败/取消的任务；reroll 是对**已成功
+    但不满意**的镜头合法重出一版（走 submit_video_job 全流程，幂等由 claim
+    表与在途同意图复用兜住，绝不双份钱）。组内任何机位都能发起——提交单位
+    是整段片段（组头），返回里 unit_shot_id 说明实际重出的是哪条。
+    """
+    common.get_project(project_id)
+    return _video_service.reroll_shot(project_id, shot_id, version_id=version_id)
 
 
 # ---------- 批量生成（自动 / 审批模式） ----------

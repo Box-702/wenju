@@ -9,6 +9,7 @@
 //   episodes 分集视频页（每集一卡 + 批量 + 成片）
 // =====================================================================
 import { store } from '../../stores/app'
+import OverviewView from './OverviewView.vue'
 import ScriptView from './ScriptView.vue'
 import ClipsView from './ClipsView.vue'
 import RolesView from './RolesView.vue'
@@ -17,7 +18,8 @@ import EpisodesView from './EpisodesView.vue'
 
 <template>
   <div class="wb-view">
-    <ScriptView v-if="store.wbView === 'script'" />
+    <OverviewView v-if="!store.wbView" />
+    <ScriptView v-else-if="store.wbView === 'script'" />
     <ClipsView v-else-if="store.wbView === 'clips'" />
     <RolesView v-else-if="store.wbView === 'roles'" />
     <EpisodesView v-else-if="store.wbView === 'episodes'" />

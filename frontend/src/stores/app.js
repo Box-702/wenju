@@ -35,20 +35,20 @@ export const store = reactive({
   assetRefreshSeq: 0,  // 素材入库后 +1：侧栏资产视图跟着刷（跨组件不共享 ref）
   versions: [],        // 当前项目的版本列表
 
-  // 左侧面板开关（默认展开，记忆在 localStorage）
-  leftOpen: true,
   // 应用模式：home=品牌首页（作品列表） / workspace=创作工作区（三栏）
   mode: 'home',
-  // 场景聚焦模式（点击左侧场景时设置，右栏显示单个场景详情）
+  // 场景聚焦模式（点击左侧场景时设置，第二栏显示单个场景详情）
   focusedSceneId: null,
-  // 右侧查看面板开关（默认收起，记忆在 localStorage）
-  rightOpen: false,
+  // 第二列上下文栏开关（即梦式：大纲 / 镜头 / 资产 / 白模）：默认开
+  rightOpen: localStorage.getItem('sw-layout:rightOpen') !== '0',
 
-  // 右侧作品工作台：剧本（默认）/ 场景 / 视频
-  view: 'video',   // 工作区化默认：右侧直接展示产出（提示词 + 视频）；剧本/场景一键切回
-  // 工作台主栏视图（D-73 对标即梦四栏）：null=对话；script/clips/roles/episodes=工作台。
-  // 对话仍是主入口（D-66），工作台是「看与调」的并列主栏，左侧竖排栏切换。
+  // 作品工作台：剧本（默认）/ 场景 / 视频
+  view: 'video',
+  // 工作台主区视图（D-73 对标即梦四栏）：null=作品总览；script/clips/roles/episodes=工作台。
+  // 对话是右侧常驻面板（AgentPanel），主区让给工作台——即梦式布局。
   wbView: null,
+  // 右侧 Agent 对话面板（即梦式常驻右栏）：默认开，记忆在 localStorage
+  agentOpen: localStorage.getItem('sw-agent-open') !== '0',
   storyPlan: null,     // 当前作品的故事规划（理解卡 + 分集提案，D-71）
   viewerText: '',      // 最新版本剧本全文（纯文本，供复制）
   viewerScript: null,  // 最新版本结构化剧本（供剧本排版渲染）
@@ -227,8 +227,15 @@ export function toggleRightPanel() {
 }
 /** 恢复上次的面板开关偏好（App 挂载时调用）。 */
 export function restorePanelPrefs() {
-  store.leftOpen = localStorage.getItem('sw-layout:leftOpen') !== '0'  // 默认开
-  store.rightOpen = localStorage.getItem('sw-layout:rightOpen') === '1'  // 默认关
+  // 第二列上下文栏 / Agent 面板：即梦式布局默认都开，只有显式关过才收起
+  store.rightOpen = localStorage.getItem('sw-layout:rightOpen') !== '0'
+  store.agentOpen = localStorage.getItem('sw-agent-open') !== '0'
+}
+
+/** 开/关右侧 Agent 对话面板（即梦式常驻右栏）。 */
+export function toggleAgentPanel() {
+  store.agentOpen = !store.agentOpen
+  localStorage.setItem('sw-agent-open', store.agentOpen ? '1' : '0')
 }
 
 // ---------------------------------------------------------------------
@@ -1380,6 +1387,46 @@ export function playVideo(shot) {
 /** 关闭视频播放器。 */
 export function closeVideo() {
   store.playingVideo = null
+}
+
+/** 提交「样片」：低分辨率（480P）快速验证运镜/人物/台词是否到位，比成片便宜快。
+ *  即梦片段卡的「生成样片」就是这个——先样片满意再出成片。
+ *  闸门与 submitVideoJob 一致（必须已批准），只把分辨率钉到 480P。 */
+export async function submitSampleVideo(shot) {
+  if (!store.pid || !shot) return
+  const target = groupHeadOf(shot) || shot
+  const prompt = submitPromptOf(target)
+  if (!prompt) { notify('这个片段还没有提示词', 'info'); return }
+  if (target.prompt_status !== 'approved') {
+    notify('请先编辑并批准这个片段的提示词', 'info')
+    openPromptEditor(target)
+    return
+  }
+  let provider = 'minimax'
+  let model = 'MiniMax-H3'
+  try {
+    const providers = await api('/providers?kind=video')
+    const picked = providers.find(p => p.configured && p.enabled)
+    if (picked) { provider = picked.name; model = picked.config?.model || model }
+  } catch {}
+  try {
+    const job = await api(`/projects/${store.pid}/video/generate`, 'POST', {
+      shot_id: target.id, provider, model, prompt,
+      version_id: store.videoVersionId,
+      params: { aspect_ratio: store.videoAspect || null, resolution: '480P' },
+    })
+    notify(`样片已提交（480P 快速验证）：${target.subject || target.id}`, 'ok')
+    await loadVideoJobs()
+    return job
+  } catch (e) {
+    notify(`样片提交失败：${e.message}`, 'error')
+  }
+}
+
+/** 打开一个 URL 的播放器（不依赖 shot 对象，供工作台按 job 播放）。 */
+export function playUrl(url, title = '', meta = null) {
+  if (!url) return
+  store.playingVideo = { url, title, meta }
 }
 
 /** 打开 Prompt 编辑器。 */

@@ -11,8 +11,6 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import HeaderBar from './components/HeaderBar.vue'
 import HomePage from './components/HomePage.vue'
 import AssetPanel from './components/AssetPanel.vue'
-import ChatThread from './components/ChatThread.vue'
-import ChatComposer from './components/ChatComposer.vue'
 import ContextPanel from './components/ContextPanel.vue'
 import ViewerPanel from './components/ViewerPanel.vue'
 import PageShell from './components/PageShell.vue'
@@ -20,12 +18,14 @@ import SkillsPage from './components/SkillsPage.vue'
 import NewProjectModal from './components/NewProjectModal.vue'
 import SettingsModal from './components/settings/SettingsModal.vue'
 import PatchDrawer from './components/PatchDrawer.vue'
+import VideoPlayer from './components/video/VideoPlayer.vue'
 import PromptEditor from './components/video/PromptEditor.vue'
 import AssetPreview from './components/AssetPreview.vue'
 import Toast from './components/Toast.vue'
-import WorkbenchRail from './components/workbench/WorkbenchRail.vue'
+import IconRail from './components/workbench/IconRail.vue'
 import WorkbenchView from './components/workbench/WorkbenchView.vue'
-import { loadTree, loadWorkspace, loadProjectFiles, restorePanelPrefs, toggleRightPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, loadAssetRefs, closePromptEditor, saveShotPrompt, loadStoryPlan } from './stores/app'
+import AgentPanel from './components/workbench/AgentPanel.vue'
+import { loadTree, loadWorkspace, loadProjectFiles, restorePanelPrefs, toggleRightPanel, toggleAgentPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, loadAssetRefs, closePromptEditor, saveShotPrompt, loadStoryPlan, closeVideo } from './stores/app'
 import { initNav, pushNav } from './nav'
 import { importProject } from './api'
 
@@ -118,68 +118,6 @@ async function onDrop(e) {
   }
 }
 
-// ---- 可拉伸三栏 ----
-const layoutEl = ref(null)
-const MIN = { left: 200, right: 280, mid: 360 }
-const SPLITS = 8
-const readW = (key, def) => {
-  const n = Number(localStorage.getItem('sw-layout:' + key))
-  return Number.isFinite(n) && n >= 60 ? n : def
-}
-const leftW = ref(readW('left', 260))
-const rightW = ref(readW('right', 360))
-
-let drag = null
-const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi)
-function clampAll() {
-  if (!layoutEl.value) return
-  const w = Math.max(0, layoutEl.value.getBoundingClientRect().width - SPLITS)
-  const rightSpace = store.rightOpen ? MIN.right : 0
-  const leftMax = Math.max(MIN.left, w - MIN.mid - rightSpace)
-  leftW.value = clamp(leftW.value, MIN.left, leftMax)
-  if (store.rightOpen) {
-    const rightMax = Math.max(MIN.right, w - MIN.mid - leftW.value)
-    rightW.value = clamp(rightW.value, MIN.right, rightMax)
-  }
-}
-
-function startDrag(side, e) {
-  if (!layoutEl.value || window.innerWidth < 760) return
-  const rect = layoutEl.value.getBoundingClientRect()
-  drag = { side, avail: rect.width - SPLITS, x: e.clientX, lw: leftW.value, rw: rightW.value }
-  document.body.classList.add('layout-resizing')
-  window.addEventListener('pointermove', onDrag)
-  window.addEventListener('pointerup', endDrag)
-  e.preventDefault()
-}
-function onDrag(e) {
-  if (!drag) return
-  if (e.buttons === 0) { endDrag(); return }
-  const dx = e.clientX - drag.x
-  if (drag.side === 'left') {
-    leftW.value = clamp(
-      drag.lw + dx,
-      MIN.left,
-      Math.max(MIN.left, drag.avail - MIN.mid - (store.rightOpen ? rightW.value : 0)),
-    )
-  } else {
-    rightW.value = clamp(
-      drag.rw - dx,
-      MIN.right,
-      Math.max(MIN.right, drag.avail - MIN.mid - leftW.value),
-    )
-  }
-}
-function endDrag() {
-  if (!drag) return
-  localStorage.setItem('sw-layout:left', String(Math.round(leftW.value)))
-  localStorage.setItem('sw-layout:right', String(Math.round(rightW.value)))
-  drag = null
-  document.body.classList.remove('layout-resizing')
-  window.removeEventListener('pointermove', onDrag)
-  window.removeEventListener('pointerup', endDrag)
-}
-
 // Ctrl+I 切换上下文侧栏（大纲 / 镜头 / 资产）
 function globalKey(e) {
   if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
@@ -195,7 +133,6 @@ function globalKey(e) {
 const isNarrow = ref(window.innerWidth < 1024)
 function onResize() {
   isNarrow.value = window.innerWidth < 1024
-  clampAll()
 }
 // 窄屏下选中项目 / 对话 → 收起抽屉（内容已切到中间列，面板挡视线）
 // 视图变化（首页 / 工作区 / 工作台视图 / 各个页面）写进浏览器历史，返回键就能退回去
@@ -210,27 +147,25 @@ watch(() => [store.pid, store.convId], () => {
   // 工作目录里的真实文件树（右侧「工作目录」区渲染它）
   loadProjectFiles()
   if (!isNarrow.value) return
-  store.leftOpen = false
   store.rightOpen = false
+  store.agentOpen = false
 })
 // 窄屏下右栏视图切换（如场景聚焦）同理收起左栏
 watch(() => store.view, () => {
-  if (isNarrow.value && store.rightOpen) store.leftOpen = false
+  if (isNarrow.value && store.rightOpen) store.agentOpen = false
 })
 
 // ---- 左栏：作品 + 资产库（工作区化：对话收敛为每作品一个）----
 
-watch(() => store.rightOpen, () => clampAll())
 
 onMounted(async () => {
   initNav()
   restorePanelPrefs()
-  // 窄屏首屏：抽屉默认收起（覆盖 restorePanelPrefs 的桌面默认值）
+  // 窄屏首屏：两个抽屉默认收起（覆盖 restorePanelPrefs 的桌面默认值）
   if (isNarrow.value) {
-    store.leftOpen = false
     store.rightOpen = false
+    store.agentOpen = false
   }
-  clampAll()
   window.addEventListener('resize', onResize)
   window.addEventListener('keydown', globalKey)
   await loadWorkspace()
@@ -242,7 +177,6 @@ onMounted(async () => {
   await loadModelStatus()
 })
 onUnmounted(() => {
-  endDrag()
   window.removeEventListener('resize', onResize)
   window.removeEventListener('keydown', globalKey)
 })
@@ -275,17 +209,12 @@ onUnmounted(() => {
         </div>
       </div>
     </Transition>
-    <!-- 对话是主体，右侧是随上下文变化的通用侧边栏；
-         左侧竖排栏切换工作台四视图（D-73），工作台激活时主栏换成视图 -->
+    <!-- 即梦式四区（D-73 布局修正）：
+         最左细图标栏 ｜ 上下文栏（大纲/镜头/资产/白模）｜ 主内容区 ｜ 右侧常驻 Agent 对话面板。
+         对话仍是完整的 Agent（42 个工具），只是位置从主栏搬进右栏——即梦把 Agent 放右边，
+         我们照做；收起后右下角浮标能再打开。 -->
     <div class="stage-wrap">
-      <WorkbenchRail />
-      <main class="stage">
-        <WorkbenchView v-if="store.wbView" />
-        <template v-else>
-          <ChatThread />
-          <ChatComposer @open-skills="store.overlay = 'skills'" />
-        </template>
-      </main>
+      <IconRail />
       <div class="ctx-wrap" :class="{ closed: !store.rightOpen }">
         <ContextPanel
           @open-assets="store.overlay = 'assets'"
@@ -293,7 +222,21 @@ onUnmounted(() => {
           @open-output="store.overlay = 'output'"
         />
       </div>
+      <main class="stage">
+        <WorkbenchView />
+      </main>
+      <div class="agent-wrap" :class="{ closed: !store.agentOpen }">
+        <AgentPanel />
+      </div>
     </div>
+    <button
+      v-if="!store.agentOpen"
+      class="agent-reopen ghost"
+      title="打开 Agent 对话面板"
+      @click="toggleAgentPanel()"
+    >
+      对话
+    </button>
   </template>
 
   <!-- 页面：资产库 / 技能 / 产出 / 我的作品。
@@ -347,6 +290,19 @@ onUnmounted(() => {
     @review="onPromptReview"
   />
   <PatchDrawer />
+
+  <!-- 全局视频播放器：任何视图设 store.playingVideo 都能弹（即梦式行内/浮层预览）。
+       以前只挂在 VideoWorkbench，工作台的「播放」点了没反应就是这个原因。 -->
+  <div v-if="store.playingVideo" class="modal-backdrop" @click.self="closeVideo()">
+    <div class="modal-card wide">
+      <VideoPlayer
+        :url="store.playingVideo.url"
+        :title="store.playingVideo.title"
+        :meta="store.playingVideo.meta"
+        @close="closeVideo()"
+      />
+    </div>
+  </div>
   <Toast />
 </template>
 
@@ -371,21 +327,51 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-/* 右栏展开时与对话区**左右平分**（各一半）。
-   收起时 width:0，对话列独占整屏并在视口正中。 */
+/* 第二列上下文栏（IconRail 右边）：定宽，收起时 width:0。
+   即梦式布局里它是「文件/资产」列，不该吃掉主区——300px 定宽。
+   position:relative 必给：.aurora 是 fixed z:0 的光斑层，static 的列会被
+   整个盖黑（2026-11-20 截图验收抓到：图标栏/上下文栏整列发黑，内容其实都在）。 */
 .ctx-wrap {
+  position: relative;
   flex: none;
-  width: 50%;
+  width: 300px;
   min-height: 0;
-  /* 右栏展开：自右侧轻微滑入（它本来就是从右边来的） */
   animation: ctx-slide-in 240ms var(--ease) backwards;
   transition: width 200ms var(--ease), opacity 200ms var(--ease);
   overflow: hidden;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
 }
 .ctx-wrap.closed {
   width: 0;
   opacity: 0;
   pointer-events: none;
+}
+
+/* 右侧 Agent 对话面板（即梦式常驻右栏）：收起时 width:0，主区自动补位。
+   同 ctx-wrap：必须 relative，否则光斑层盖住面板底。 */
+.agent-wrap {
+  position: relative;
+  flex: none;
+  width: clamp(360px, 30vw, 460px);
+  min-height: 0;
+  transition: width 200ms var(--ease), opacity 200ms var(--ease);
+  overflow: hidden;
+}
+.agent-wrap.closed {
+  width: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 收起后的重开浮标（右下角，即梦把 Agent 收进图标时也有类似入口） */
+.agent-reopen {
+  position: fixed; right: 18px; bottom: 18px; z-index: 70;
+  height: 34px; padding: 0 14px; border-radius: var(--radius-full);
+  border: 1px solid var(--line-strong);
+  background: var(--panel-solid, var(--surface));
+  box-shadow: var(--shadow-2);
+  font-size: 12.5px;
 }
 
 /* 主舞台：对话流 + 输入区 */
@@ -408,49 +394,6 @@ onUnmounted(() => {
   flex-direction: column;
   min-height: 0;
   width: 100%;
-}
-
-.layout {
-  display: flex;
-  height: calc(100dvh - var(--header-h));
-  min-width: 0;
-  position: relative;
-}
-.pane { min-width: 0; flex: none; }
-.pane-left {
-  display: flex; flex-direction: column; overflow: hidden;
-  background: var(--surface);
-  border-right: 1px solid var(--line);
-}
-.left-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-.left-body > * { flex: 1; min-height: 0; }
-.pane-mid { display: flex; flex-direction: column; min-height: 0; min-width: 0; flex: 1; }
-.split { flex: none; width: 8px; cursor: col-resize; position: relative; }
-.split::before {
-  content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px;
-  border-radius: 2px;
-  background: color-mix(in oklch, var(--line) 45%, transparent);
-  transition: background var(--dur) var(--ease), width var(--dur) var(--ease);
-}
-.split:hover::before, body.layout-resizing .split::before {
-  background: var(--gold); width: 2px; left: 3px;
-}
-
-/* 面板容器：始终渲染，用 width + opacity 过渡实现开合 */
-.panel-wrap {
-  display: flex; flex: none;
-  width: calc(var(--pw) + 8px); /* 面板宽度 + 分隔条 */
-  opacity: 1;
-  overflow: hidden;
-  transition: width 320ms var(--ease), opacity 250ms var(--ease);
-}
-.panel-wrap.closed {
-  width: 0;
-  opacity: 0;
-}
-/* 右侧面板：从右侧展开 */
-.panel-right-wrap {
-  transition: width 320ms var(--ease), opacity 250ms var(--ease);
 }
 
 /* 拖拽导入覆盖层 */
@@ -478,41 +421,32 @@ onUnmounted(() => {
 .fade-enter-active, .fade-leave-active { transition: opacity 200ms var(--ease); }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
-/* ---------- 响应式：≤1023px 面板抽屉化 ---------- */
-/* 左右面板统一为覆盖式抽屉（fixed + 遮罩），中间列保持全宽；
-   开合由 store.leftOpen / rightOpen 驱动，选中内容后自动收起。 */
+/* ---------- 响应式：≤1023px 上下文栏与 Agent 面板抽屉化 ---------- */
+/* 即梦式四区在窄屏收不成四列：第二列（上下文栏）与右列（Agent 面板）
+   变覆盖式抽屉，主内容区保持全宽；开合仍由 store.rightOpen / agentOpen 驱动。 */
 @media (max-width: 1023px) {
-  .layout { height: calc(100dvh - var(--header-h)); }
-  .split { display: none; }
-  .panel-wrap,
-  .panel-wrap.panel-right-wrap {
+  .ctx-wrap,
+  .agent-wrap {
     position: fixed;
     top: var(--header-h); bottom: 0;
     z-index: 60;
     width: min(86vw, 400px) !important;
-    background: var(--panel);
+    background: var(--surface);
     box-shadow: var(--shadow-3);
     transition: transform 280ms var(--ease), visibility 280ms;
   }
-  .panel-wrap.panel-left-wrap { left: 0; border-right: 1px solid var(--line); }
-  .panel-wrap.panel-right-wrap { right: 0; border-left: 1px solid var(--line); }
-  .panel-wrap .pane { width: 100% !important; height: 100%; }
+  .ctx-wrap { left: 56px; border-right: 1px solid var(--line); }
+  .agent-wrap { right: 0; border-left: 1px solid var(--line); }
   /* 抵消桌面的 width+opacity 塌缩：抽屉用 transform 出入场 */
-  .panel-wrap.closed {
-    width: min(86vw, 400px) !important;
+  .ctx-wrap.closed,
+  .agent-wrap.closed {
     opacity: 1;
     visibility: hidden;
     pointer-events: none;
   }
-  .panel-wrap.panel-left-wrap.closed { transform: translateX(-102%); }
-  .panel-wrap.panel-right-wrap.closed { transform: translateX(102%); }
-  .pane-mid { width: 100%; }
-  .drawer-scrim {
-    position: fixed;
-    top: var(--header-h); left: 0; right: 0; bottom: 0;
-    z-index: 55;
-    background: oklch(0 0 0 / .45);
-  }
+  .ctx-wrap.closed { transform: translateX(-102%); }
+  .agent-wrap.closed { transform: translateX(102%); }
+  .stage { width: 100%; }
 }
 
 @media (max-width: 760px) {

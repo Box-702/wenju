@@ -9,7 +9,12 @@
 
 from __future__ import annotations
 
-from app.crew.director import DirectorAgent, action_budget, count_action_units
+from app.crew.director import (
+    DirectorAgent,
+    action_budget,
+    count_action_phrases,
+    count_action_units,
+)
 from app.domain import (
     Character,
     Location,
@@ -43,21 +48,29 @@ def _check(shots: list[Shot], beats: list[ScriptBeat] | None = None) -> list[str
     return agent._validate_continuity([bd], _script(beats or []))
 
 
-def test_动作预算按时长算() -> None:
-    assert action_budget(5.0) == 3      # 一个动作 + 两笔细节是常见写法
+def test_动作预算按小事件算() -> None:
+    """2026-11-20 新粒度：一个分镜 = 一个小事件（一个主动作 + 两笔细节），
+    上限与时长无关——时长是「片段」的事，不是分镜的事。"""
+    assert action_budget(5.0) == 3
     assert action_budget(8.0) == 3
-    assert action_budget(12.0) == 4
+    assert action_budget(12.0) == 3
     assert count_action_units("甲推开门走进来；乙抬头看他；甲走到桌前站住") == 3
+    # 逗号级短语数才是「几个动作」
+    assert count_action_phrases(
+        "林远-β站起来，走到橱柜前，把锡纸仔细折成一个小方块") == 3
 
 
-def test_一镜动作超载被打回() -> None:
-    """《孔乙己》九镜全部超标（8–10 秒写 3–6 段动作），一个都没逃掉。"""
+def test_动作链过长不再打回而是拆开() -> None:
+    """过载的分镜由代码拆成相邻分镜（拆链），不再打回让模型重写——
+    打回要烧一整轮导演调用，而模型照旧写长。"""
     shots = [Shot(
-        id="shot_scene_001_000", scene_id="scene_001", order=0, duration_sec=8,
-        action="甲推开门走进来；乙抬头看他；甲走到桌前站住；乙把碗放下",
+        id="shot_scene_001_000", scene_id="scene_001", order=0, duration_sec=6,
+        action=("林远-β站起来，走到橱柜前，把锡纸仔细折成一个小方块；"
+                "他拉开橱柜最深处的那扇门，把锡纸塞进旧罐子后面；"
+                "手从罐子后面抽出来，把罐子推回原位，关上柜门"),
     )]
     issues = _check(shots)
-    assert any("段身体动作" in i for i in issues)
+    assert not any("段身体动作" in i for i in issues)
 
 
 def test_动作密度合规时不再唠叨() -> None:
@@ -349,25 +362,27 @@ def test_闸门_悬空接力引用被修复():
             assert s.chain_from in orders and s.chain_from < s.order
 
 
-def test_动作下限_两段微动作被打回():
-    """v3 实测教训：24 镜 22 镜只写 2 段微动作 → 模型循环播放成 PPT。
-    校验器必须打回 <3 段的 action。"""
+def test_动作下限_短且全微动作被打回():
+    """v3 实测教训：静态机位 + 一个微动作 = 模型循环播放成 PPT。
+    新粒度下不再要求「≥3 段」（一个小事件本就可以只写一件事），
+    只拦「短 + 全是微动作」这一种。"""
     shots = [Shot(
         id="shot_scene_001_000", scene_id="scene_001", order=0, duration_sec=4,
         action="孔乙己嘴唇抿成一条线；右手仍按在柜台上没收回来",
     )]
     issues = _check(shots)
-    assert any("至少 3 段" in i for i in issues), issues
+    assert any("微动" in i for i in issues), issues
 
 
-def test_动作下限_三段全微动也被打回():
-    """段数够但全是面部/手指微动，同样循环感——要一段位移级大动作。"""
+def test_动作下限_多句全微动不再打回():
+    """三句以上的微动作不再打回：模型可以把它拆成相邻分镜，
+    拆链与「全微动」的判定只看长度与位移级，不再看段数。"""
     shots = [Shot(
         id="shot_scene_001_000", scene_id="scene_001", order=0, duration_sec=4,
         action="他抿了一下嘴；眉毛压低；指节慢慢收紧",
     )]
     issues = _check(shots)
-    assert any("位移级" in i for i in issues), issues
+    assert not any("微动" in i for i in issues), issues
 
 
 def test_动作下限_有位移三段的合格镜头不误伤():

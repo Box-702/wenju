@@ -79,10 +79,38 @@ DURATION_BUDGET_SEC: dict[str, float] = {
 # 都合理，卡太死会把合格方案反复打回。
 BUDGET_TOLERANCE = 1.5
 
+# ---- 内容比例预算（2026-11-20《替身v2》复盘新增）----
+#
+# 固定 120 秒预算不看内容量，等于逼导演删事件：《替身v2》10 场 52 个节拍，
+# 120 秒 = 每场 12 秒都不到，闸门实测「删掉 16 个镜头」，苏晴的核心台词
+# （「而且我觉得那个β怪怪的」）整句消失——被删的事件恰恰是视频模型最需要
+# 独立镜头的那种，一个镜塞两个事件就是漂移之源（人物挤出画外、动作不发生）。
+# 即梦的路线是反的：同一篇原文拆成 5 集 × 60–95 秒，一集一个戏剧单元，
+# 事件不删、按集摊开。
+#
+# 于是预算改为「内容决定」：每场至少 MIN_SCENE_BUDGET_SEC 秒（≈5 个分镜
+# × 4–5 秒，够把该场的节拍全部拍完），全片预算 = max(类型预算, 场数 × 保底)。
+# 预算超过单集上限时按 120 秒/集自动分集（director.plan_episodes），
+# 一集一次生成批次，钱花在「拍全」而不是「拍删」上。
+MIN_SCENE_BUDGET_SEC = 24.0
+# 单集目标时长（秒）：短剧一集 1–2 分钟；预算超出它就分成多集。
+EPISODE_TARGET_SEC = 120.0
+
 
 def duration_budget(format: str | None = None) -> float:
     """该类型的成片目标时长（秒）。短剧默认 120 秒。"""
     return DURATION_BUDGET_SEC[normalize_format(format)]
+
+
+def content_duration_budget(format: str | None, scene_count: int) -> float:
+    """按内容量定的全片预算（秒）：max(类型预算, 场数 × 每场保底)。
+
+    场数取不到（0）时退回类型预算——行为与改造前逐字节一致。
+    """
+    base = duration_budget(format)
+    if scene_count <= 0:
+        return base
+    return max(base, scene_count * MIN_SCENE_BUDGET_SEC)
 
 VALID_PACINGS = ("slow", "medium", "fast", "variable")
 

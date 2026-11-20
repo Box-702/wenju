@@ -180,12 +180,31 @@ def assert_director(
                 "DIR-12", "critical", "director",
                 "全片没有一个 wide：场景空间从未交代，观众不知道人在哪",
             )
-        thin = [s for s in all_shots if count_action_units(s.action) < 3]
+        # DIR-13 动作质量（2026-11-20 随分镜粒度重写，两个方向都查）：
+        # 旧口径「action 不足 3 段 = PPT」建立在「一镜演一整段戏」上；新口径
+        # 一个分镜 = 一个小事件（2–3 个逗号短语），两头都可能是病：
+        #   · 太薄：≤2 个短语且全是微动作（无位移级）→ 静态机位循环播放 = PPT
+        #     （v3『83 秒重复一个动作』的直接指标，与 director 校验器 6b- 同口径）；
+        #   · 太厚：>5 个逗号短语 → 模型做不完，人物被挤出画外
+        #     （《替身v2》004_017 实测：8 个动作挤在 5 秒里只剩半张脸）。
+        # 过载看逗号级短语数（分句数拦不住：3 个分句可能含 8 个动作）。
+        from app.crew.director import _MOVEMENT_RE, count_action_phrases
+
+        thin = [s for s in all_shots
+                if count_action_phrases(s.action) <= 2
+                and not _MOVEMENT_RE.search(s.action or "")]
         if len(thin) > n_all * 0.3:
             res.add(
                 "DIR-13", "critical", "director",
-                f"{len(thin)}/{n_all} 镜的 action 不足 3 段（微动作循环 = PPT，"
-                "v3『83 秒重复一个动作』的直接指标）",
+                f"{len(thin)}/{n_all} 镜的 action 太薄（≤2 句且无位移级大动作："
+                "微动作循环 = PPT，v3『83 秒重复一个动作』的直接指标）",
+            )
+        overload = [s for s in all_shots if count_action_phrases(s.action) > 5]
+        if len(overload) > n_all * 0.3:
+            res.add(
+                "DIR-13", "critical", "director",
+                f"{len(overload)}/{n_all} 镜的动作链过长（>5 个逗号短语）：一个分镜只演"
+                "一个小事件，塞一串动作模型做不完，人物会被挤出画外（漂移之源）",
             )
         # 运镜配给制（2026-11-14 用户看片：闸门机械补运动后「推近复读三次」
         # = 另一种刻意）：相邻两镜不用同一种运镜；同型运镜之间至少隔两镜。

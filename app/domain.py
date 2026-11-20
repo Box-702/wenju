@@ -518,6 +518,12 @@ class Shot(BaseModel):
     group_index: int = Field(default=0, ge=0, le=15)  # 组内机位序号（0 起，合法组≤4，宽松收）
     group_prompt: str | None = None    # 组提示词（仅组头镜头持有）：提交生成时用它，
                                        # 单镜 video_prompt 仍逐镜保留供审阅/审计/单镜重出片
+    # ---- 分镜粒度（2026-11-20，一个分镜 = 一个小事件）----
+    # 动作链过长的分镜会被代码拆成相邻分镜（director.split_action_chains）：
+    # 每段一个主动作 + 两笔细节。这两个字段记「本分镜是原动作链的第几段 /
+    # 共几段」，供工作台把片段还原成「一个小事件 → N 个分镜」。
+    beat_index: int = Field(default=0, ge=0, le=15)  # 原动作链内的段序（0 起）
+    beat_total: int = Field(default=1, ge=1, le=15)   # 原动作链的总段数（未拆=1）
     # ---- 集（Episode）：集-镜两级结构（D-63）----
     # 集 = 小说的一章（场景的 chapter_refs）。短剧常常只有一章——那全片就是
     # 一集；连载改编时一章一集，进度百分比与导出分集都按它算。

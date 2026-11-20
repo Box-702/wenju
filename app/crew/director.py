@@ -53,23 +53,36 @@ CHARS_PER_SEC = 4.0
 
 
 def action_budget(duration_sec: float) -> int:
-    """单镜能演清楚的「身体动作段」上限。
+    """一个分镜能写几个「逗号级动作短语」。
 
-    注意这不是「几个动作」而是「几个分句」：模型写一个动作时习惯补两笔细节
-    （「把碗搁在柜台上；下巴一抬；手指点过去」其实是同一个动作的三步），
-    所以下限给 3 段；越长的镜头允许写越多笔。
+    2026-11-20 起口径变了（对齐即梦分镜粒度）：分镜不再是「一整段戏」，
+    而是**一个小事件**（一个主动作 + 两笔细节）。模型写得太长不再打回
+    （打回 = 烧一轮导演调用重写），而是**由代码拆成相邻分镜**——
+    见 ``split_action_chains``。保留这个函数是为了让校验器与技能文档
+    继续有一把共同的尺子。
 
-    至于「一镜里多个主体各做各的动作」，试过用角色名出现次数来判，但正则分不清
-    「甲指着乙」和「乙在做动作」，实测全是误报（还把合格的分镜改坏），已撤回——
-    这一条交给导演规则本身约束，机械层只兜底「明显塞太满」。
+    旧口径是「时长 ÷ 3、最少 3 段」（分句计数），实测拦不住真正的过载：
+    《替身v2》004_017 只有 3 个分句，却含 8 个动作（站起来/走到橱柜前/折锡纸/
+    拉开柜门/塞进罐后/抽手/推回/关柜门），人物直接被挤出画外。
     """
-    return max(3, round(duration_sec / 3))
+    return MAX_PHRASES_PER_BEAT
 
 
 def count_action_units(action: str) -> int:
     """数一个镜头里写了几段身体动作（按分号/换行切，过短的碎片不计）。"""
     parts = re.split(r"[；;\n]+", action or "")
     return len([p for p in parts if len(p.strip()) >= 4])
+
+
+def count_action_phrases(action: str) -> int:
+    """数一个镜头里写了几句「逗号级动作短语」——拆链与过载判定用同一把尺子。
+
+    分句数（``count_action_units``）与真实动作数不是一回事：模型写一个动作
+    习惯补两笔细节（「把碗搁在柜台上；下巴一抬；手指点过去」是同一个动作的
+    三步），而《替身v2》004_017 只有 3 个分句却含 8 个动作（逗号级）。
+    粒度以逗号级为准。
+    """
+    return len(_split_phrases(action))
 
 
 # 位移级大动作词表（动作下限校验用，2026-11-12 v3「83 秒重复一个动作」复盘）：
@@ -88,10 +101,18 @@ def _default_pacing(adaptation_type: str | None) -> str:
     return default_pacing(adaptation_type)
 
 
-def _budget_for(adaptation_type: str | None) -> float:
-    """成片目标时长（秒）。短剧 120 秒。"""
-    from ..video.rhythm import duration_budget
-    return duration_budget(adaptation_type)
+def _budget_for(adaptation_type: str | None, scene_count: int = 0) -> float:
+    """成片目标时长（秒）：内容比例预算。
+
+    2026-11-20《替身v2》复盘改的口径：旧版固定 120 秒不看内容量，10 场 52 个
+    节拍被闸门「删掉 16 个镜头」——被删的事件恰恰是最需要独立镜头的，一个镜
+    塞两个事件就是漂移之源（人物挤出画外、动作不发生）。现在每场保底
+    MIN_SCENE_BUDGET_SEC 秒（≈5 个分镜），预算 = max(类型预算, 场数 × 保底)；
+    超出一集时长的部分由分集摊开（见 assign_episodes 的按时长拆集），
+    不再由删镜摊开。即梦对同一篇原文的路线就是这样（5 集 × 60–95 秒）。
+    """
+    from ..video.rhythm import content_duration_budget
+    return content_duration_budget(adaptation_type, scene_count)
 
 
 # 确定性闸门用的单镜时长上限：短剧节奏基线（导演技能「不要写 8 秒以上」）。
@@ -457,27 +478,38 @@ def _format_constraints(
     模型就会按「电影感」给 8–10 秒镜头——短剧观众早就划走了。
     """
     from ..pipeline.visual_styles import get_visual_style
-    from ..video.rhythm import duration_budget, normalize_format, rhythm_table
+    from ..video.rhythm import (
+        MIN_SCENE_BUDGET_SEC,
+        content_duration_budget,
+        normalize_format,
+        rhythm_table,
+    )
 
     fmt = normalize_format(adaptation_type)
     table = rhythm_table(fmt)
     spec = get_visual_style(visual_style)
-    budget = duration_budget(fmt)
+    budget = content_duration_budget(fmt, total_scenes)
 
     lines = [""]
     if fmt == "short_drama":
-        # 分批拆解时，模型只看得到自己这一批的戏——「整片 120 秒」对它没有约束力，
-        # 它会照剧情一路拆细（实测：说了 120 秒，仍拆出 62 镜 300+ 秒）。所以要把
-        # 预算按场数折算成「这一批只有多少秒」，它才知道该合并多少。
-        share = budget * max(1, batch_scenes) / max(1, total_scenes)
+        # 分批拆解时，模型只看得到自己这一批的戏，所以预算按场数折算成
+        # 「这一批有多少秒」。2026-11-20 起口径翻转：旧版是固定 120 秒摊到
+        # 每场（10 场 = 每场 12 秒），逼模型「该删就删」——实测闸门删掉 16 个
+        # 镜头、苏晴的核心台词整句消失，而被删的恰恰是最需要独立镜头的事件
+        # （一个镜塞两个事件 = 人物挤出画外、动作不发生 = 漂移之源）。
+        # 现在每场保底 MIN_SCENE_BUDGET_SEC 秒（≈5 个分镜，够拍完该场全部节拍），
+        # 预算超一集时长的部分由分集摊开，不由删镜摊开。
+        share = max(batch_scenes, 1) * MIN_SCENE_BUDGET_SEC
         lines += [
-            "【类型约束】短剧：横屏 16:9（默认，工作台可切竖屏）、1–2 分钟、前 3 秒必须抓住注意力。",
+            "【类型约束】短剧：横屏 16:9（默认，工作台可切竖屏）、每集 1–2 分钟、前 3 秒必须抓住注意力。",
             f"【本批预算】这次要拆 {batch_scenes} 场，合计约 **{share:.0f} 秒、"
             f"{max(1, int(share / table['medium']))}–{max(1, int(share / table['fast']))} 个镜头**"
-            f"（全片 {total_scenes} 场共约 {budget:.0f} 秒）。超出这个数就是超了，"
-            "要合并镜头，不是加镜头。",
-            "不是「把小说拍完」，是「把这场冲突拍爽」——过场、铺垫、次要人物的反应镜头，"
-            "该合并就合并、该删就删。",
+            f"（全片 {total_scenes} 场共约 {budget:.0f} 秒，超一集会自动分集）。"
+            "这是**下限式预算**：把本场的节拍全部拍完，宁多勿删。",
+            "【覆盖律（硬规则）】本场每个节拍都要有镜头承载：动作节拍给画面，"
+            "对白节拍给说话人镜头。**禁止删事件**——删事件不是省时长，是把两个事件"
+            "挤进一个镜头，视频模型做不完就会把人物挤出画外、让动作不发生。"
+            "时长超了由分集解决，不由你解决。",
             f"【节奏基线】短剧单镜 {table['fast']:.0f}–{table['slow']:.0f} 秒：多数镜头写 "
             f"{table['fast']:.0f}–{table['medium']:.0f} 秒，只有情绪转折或重大信息才给 "
             f"{table['slow']:.0f} 秒。不要写 8 秒以上的镜头——那是电影节奏。",
@@ -552,15 +584,137 @@ def _critique_for(batch: list, critique: list[str]) -> list[str]:
     return [c for c in critique if any(i in c for i in ids)]
 
 
-# 镜头组上限（MiniMax H3 单次生成 4-15s；组=一次生成，见 D-46 / PLAN-shot-group）
+# 镜头组上限（一次生成 = 一个片段；MiniMax H3 单次生成 4-15s，见 D-46 / PLAN-shot-group）
+# 2026-11-20：成员数 4 → 3（对齐即梦「一个片段 2–3 个分镜」：分镜多了，
+# 单次生成的动作复杂度与时长都会失控；模型 2-3 个分镜一段时刚好）。
 GROUP_MAX_SEC = 15.0
 GROUP_MIN_SEC = 4.0
-GROUP_MAX_MEMBERS = 4
+GROUP_MAX_MEMBERS = 3
 
 # 硬切/转场断点：cut_reason 里出现这些词说明这是镜头语言的段落边界。
 # cut_reason 描述的是「为什么切到本镜」——边界镜可以开新组（它之后的
 # 同段镜头跟它是一段），但绝不并入前面那段。
 _HARD_CUT_RE = re.compile(r"硬切|转场|闪回|插叙|hard\s*cut|flashback|match\s*cut", re.IGNORECASE)
+
+# ---- 分镜粒度（2026-11-20 对齐即梦：一个小事件 = 一个分镜）----
+#
+# 分镜不再是「一整段戏」，而是**一个小事件**：一个主动作 + 两笔细节，
+# 写成 2–3 个逗号级短语。相邻分镜成组打包成一次生成（= 片段）。
+#
+# 这条换掉的是旧口径「一镜演一整段戏、段数下限 3 段、上限 时长÷3」：
+# 《替身v2》实测每镜平均 7.4 个逗号短语（≈8 个动作）挤在 4–6 秒里，
+# 人物被挤出画外、动作根本没发生（004_017 只剩半张脸）。
+MAX_PHRASES_PER_BEAT = 3
+# 超过这个短语数就是「动作链过长」，由代码拆成相邻分镜（打回重写太贵）
+MAX_PHRASES_BEFORE_SPLIT = 5
+# 拆出来的分镜各自的时长下限（分镜是提示词单位，出片单位是「片段」= 组）
+MIN_SPLIT_BEAT_SEC = 2.0
+# 拆出来的分镜各自的时长上限（单次生成的片段总时长另有 15s 上限）
+MAX_SPLIT_BEAT_SEC = 6.0
+# 台词落点：分镜的动作里出现这些词，说明这一段就是「开口说话」的那段
+_SPEECH_PHRASE_RE = re.compile(
+    r"开口|说话|低声|轻声|开口问|应声|回答|念|喊|叫|问道|答道|开口道|轻声说"
+)
+
+
+def _split_phrases(action: str) -> list[str]:
+    """把一段动作描述拆成逗号级短语（保留原文措辞，只切分界）。"""
+    parts = [p.strip() for p in re.split(r"[；;，,。\n]+", action or "") if p.strip()]
+    return [p for p in parts if len(p) >= 3]
+
+
+def _renumber_shots(breakdowns: list[SceneBreakdown], start_order: int) -> int:
+    """拆分之后重排 order / id / chain_from，返回下一个可用 order。
+
+    拆出来的兄弟分镜共用同一个旧 order（order 是 id 的一部分
+    ``shot_{scene}_{order:03d}``），不重排会出现重复 id；chain_from 指着
+    「更早的 order」，也要跟着重映射（指向被拆镜的第一段）。
+    """
+    flat = [s for bd in breakdowns for s in bd.shots]
+    ordered = sorted(flat, key=lambda s: (s.order, s.beat_index))
+    old_orders = [s.order for s in ordered]
+    old_to_new: dict[int, int] = {}
+    for s, old in zip(ordered, old_orders, strict=True):
+        if old not in old_to_new:
+            old_to_new[old] = start_order      # 该旧 order 的第一段承接旧号
+        s.order = start_order
+        s.id = f"shot_{s.scene_id or 'scene_000'}_{start_order:03d}"
+        start_order += 1
+    for s, _old in zip(ordered, old_orders, strict=True):
+        if s.chain_from is not None and s.chain_from in old_to_new:
+            s.chain_from = old_to_new[s.chain_from]
+    return start_order
+
+
+def split_action_chains(breakdowns: list[SceneBreakdown]) -> int:
+    """把动作链过长的分镜拆成相邻分镜（一个分镜 = 一个小事件）。
+
+    2026-11-20《替身v2》实测：模型给的一镜平均 7.4 个逗号短语（≈8 个动作），
+    挤在 4–6 秒里——视频模型做不完，人物直接被挤出画外（004_017 只剩半张脸），
+    动作也没发生。旧的解法是「打回让模型重写」，那要烧一整轮导演调用，
+    而且模型往往照旧写长（教了不做）。
+
+    现在改成**确定性拆分**：
+      · 短语数 ≤ MAX_PHRASES_BEFORE_SPLIT 的不动（正常分镜）；
+      · 超了的按短语数切成若干段，每段一个分镜（一个主动作 + 两笔细节）；
+      · **总时长守恒**：拆出来的分镜时长之和 ≈ 原时长（出片单位是「片段」，
+        片段总时长不变 → 片长预算与花费都不变）；
+      · 台词落在「含开口/说话字样」的那一段；没有就落在最后一段（此时
+        片段开头就是台词，不会被片尾截断）；
+      · 运镜只留给第一段（整段动作的运镜轨迹不可复制到每一段），
+        后续段切成静态机位（片段内切镜）。
+
+    返回拆出来的分镜数。
+    """
+    split_total = 0
+    for bd in breakdowns:
+        new_shots: list[Shot] = []
+        for s in bd.shots:
+            phrases = _split_phrases(s.action)
+            if len(phrases) <= MAX_PHRASES_BEFORE_SPLIT:
+                new_shots.append(s)
+                continue
+            # 切成若干段：每段最多 MAX_PHRASES_PER_BEAT 个短语
+            chunks = [
+                phrases[i:i + MAX_PHRASES_PER_BEAT]
+                for i in range(0, len(phrases), MAX_PHRASES_PER_BEAT)
+            ]
+            n = len(chunks)
+            # 时长守恒：原时长分给各段，钳到 [MIN, MAX]；分不完的给最后一段
+            per = s.duration_sec / n
+            per = max(MIN_SPLIT_BEAT_SEC, min(MAX_SPLIT_BEAT_SEC, per))
+            # 台词落点：含「开口/说话」的那一段，否则最后一段
+            dlg_idx = n - 1
+            for i, ch in enumerate(chunks):
+                if any(_SPEECH_PHRASE_RE.search(p) for p in ch):
+                    dlg_idx = i
+                    break
+            for i, ch in enumerate(chunks):
+                clone = s.model_copy(deep=True)
+                clone.action = "，".join(ch)
+                clone.duration_sec = per
+                clone.beat_index = i
+                clone.beat_total = n
+                # 运镜只给第一段：整段动作的运镜轨迹不能复制到每一段
+                if i > 0:
+                    clone.camera = clone.camera.model_copy(
+                        update={"type": "static", "path": ""}
+                    )
+                # 末帧只对最后一段有意义（动作链的结束态）
+                clone.final_frame = s.final_frame if i == n - 1 else ""
+                # 台词只落在一段上（domain 侧同 ref 只认第一个，这里显式化）
+                clone.dialogue_ref = s.dialogue_ref if i == dlg_idx else None
+                # 接力只给第一段（后续是同一次生成内的切镜，不是接力）
+                clone.chain_from = s.chain_from if i == 0 else None
+                # 切点理由：第一段沿用原由，后面的说明是同一动作链的下一步
+                clone.cut_reason = (
+                    s.cut_reason if i == 0
+                    else "同一动作链的下一步：动作单元切换"
+                )
+                new_shots.append(clone)
+            split_total += n - 1
+        bd.shots = new_shots
+    return split_total
 
 
 def _normalize_groups(breakdowns: list[SceneBreakdown]) -> None:
@@ -676,6 +830,13 @@ def _auto_group_one_scene(bd: SceneBreakdown) -> tuple[int, int]:
         if s.group_id or s.chain_from is not None:
             _flush()
             continue
+        # 拆链兄弟必须同组（2026-11-20）：一个原分镜拆出的 N 段是「一个小
+        # 事件」的多机位，落在同一次生成里；下一段动作（beat_index=0 的新
+        # 兄弟）另起一组，不许把两个不同动作并进一次生成。
+        if s.beat_total > 1 and s.beat_index == 0:
+            _flush()
+            run = [s]
+            continue
         # 软边界：不并入当前 run，但可以自己开新段（它之后的同段镜头跟它）
         soft_break = (
             bool(_HARD_CUT_RE.search(str(s.cut_reason or "")))
@@ -771,12 +932,12 @@ class DirectorAgent(CrewAgent):
             last = breakdowns
             critique = self._validate_continuity(
                 breakdowns, script,
-                budget_sec=_budget_for(adaptation_type),
+                budget_sec=_budget_for(adaptation_type, len(script.scenes)),
             )
             if not critique:
                 # 校验通过（在 1.5x 上限内）也要过确定性闸门：
                 # 闸门按「预算」而不是「上限」收——超预算的秒数就是超预算的钱。
-                budget = _budget_for(adaptation_type)
+                budget = _budget_for(adaptation_type, len(script.scenes))
                 gated, notes = enforce_duration_budget(
                     breakdowns, budget,
                     shots_dialogue=dialogue_map_for(script, breakdowns),
@@ -794,7 +955,7 @@ class DirectorAgent(CrewAgent):
                 return CrewTaskResult(data=gated, summary=summary)
 
         # 迭代用完仍不合格：批评可以不理，预算不能不理——钱是硬约束。
-        budget = _budget_for(adaptation_type)
+        budget = _budget_for(adaptation_type, len(script.scenes))
         gated, notes = enforce_duration_budget(
             last, budget,
             shots_dialogue=dialogue_map_for(script, last),
@@ -890,9 +1051,11 @@ class DirectorAgent(CrewAgent):
         scene_of = {sc.id: sc for sc in (script.scenes if script else [])}
         char_of = {c.id: c.name for c in (script.characters if script else [])}
 
-        # 0) 片长预算：短剧是 1–2 分钟的片子，不是「把小说拍完」。
+        # 0) 片长预算（2026-11-20 起是内容比例预算：max(类型预算, 场数×24s)）。
         #    没有这一条时，导演会按剧情一路拆下去——《孔乙己》七场戏拆出 60 镜
         #    295 秒，是短剧的三倍，生成成本与观众耐心都不允许。
+        #    批评口径同步翻转：超预算不再要求「删事件」（那是漂移之源），
+        #    而是「把挤在一起的动作拆开写短、把重复机位合并」——事件本身保留。
         if budget_sec:
             total = sum(max(0.0, s.duration_sec) for bd in breakdowns for s in bd.shots)
             limit = budget_sec * 1.5
@@ -900,9 +1063,9 @@ class DirectorAgent(CrewAgent):
                 n = sum(len(bd.shots) for bd in breakdowns)
                 issues.append(
                     f"整片总时长 {total:.0f} 秒、共 {n} 个镜头，超出预算（目标 {budget_sec:.0f} 秒，"
-                    f"上限 {limit:.0f} 秒）。短剧不是「把小说拍完」：请合并同场景的连续动作、"
-                    "删掉过场与铺垫镜头、把次要人物的反应镜头并进主镜，"
-                    f"压到 {int(budget_sec / 5)} 个镜头左右。"
+                    f"上限 {limit:.0f} 秒）。**不要删事件**：把时长压回节奏基线"
+                    "（多数分镜 3–5 秒，别一律写 6 秒以上）、合并同一事件的重复机位；"
+                    "每个节拍仍要有镜头承载。"
                 )
 
         # 0b) 镜头语言多样性：模型会躺在「特写+固定机位」的安全区里——
@@ -1005,37 +1168,31 @@ class DirectorAgent(CrewAgent):
                     )
             prev = None
             for s in scene_shots:
-                # 3) 时长必须在模型可行区间内
-                if s.duration_sec < 4.0 or s.duration_sec > 15.0:
+                # 3) 时长：生成单位是「片段」（组），不是单个分镜
+                #    2026-11-20 起分镜可以短到 2 秒（一个小事件的一个机位），
+                #    但**独立成片段的分镜**仍必须落在 4–15 秒（厂商下限 4 秒）。
+                if not s.group_id and (s.duration_sec < 4.0 or s.duration_sec > 15.0):
                     issues.append(
                         f"镜头 {s.id} 的时长 {s.duration_sec}s 超出生成器可行区间（4–15 秒），请调整"
                     )
-                # 6b) 动作密度：一镜演不下这么多身体动作
-                units = count_action_units(s.action)
-                budget = action_budget(s.duration_sec)
-                if units > budget:
+                # 6b) 动作密度：过载不再打回，由代码拆分（2026-11-20）
+                #     旧口径是「段数 > 时长÷3 → 打回让模型重写」。实测那是治标：
+                #     模型照旧写长（教了不做），而打回要烧一整轮导演调用。
+                #     现在过载的分镜由 split_action_chains 就地拆成相邻分镜，
+                #     所以这里不再报问题（报了也是白烧一轮）。
+                # 6b-) 动作下限：只拦「短 + 全是微动作」这一种——
+                #     静态机位 + 一个微动作 = 模型把它循环播放（2026-11-12 v3
+                #     实测「83 秒重复一个动作」）。新粒度下一个分镜本就可以
+                #     只写一件事，所以不再要求「≥3 段」，只要求「有一段位移级
+                #     大动作」——除非它短到只有一两句。
+                phrases = count_action_phrases(s.action)
+                if phrases <= 2 and not _MOVEMENT_RE.search(s.action or ""):
                     issues.append(
-                        f"镜头 {s.id} 的 action 写了 {units} 段身体动作，{s.duration_sec:.0f} 秒只演得下 "
-                        f"{budget} 段：只保留这一镜的主事件（接触 → 完成，至多两步），"
-                        "其余的删掉或另起一镜。动作塞太满时模型会丢节拍、挪时序，"
-                        "人物就出现在不该在的位置，手也会穿模"
-                    )
-                # 6b-) 动作下限（2026-11-12 v3 实测：24 镜 22 镜只写 2 段微动作，
-                #     静态机位 + 微动作 = 模型把动作循环播放，整片「83 秒重复一个动作」）：
-                #     段数至少 3，且至少一段是位移级大动作（纯计数与词表，客观可查）。
-                if units < 3:
-                    issues.append(
-                        f"镜头 {s.id} 的 action 只有 {units} 段身体动作（至少 3 段）："
-                        "4 秒静态画面只写一个微动作，视频模型会把它循环播放，"
-                        "观众看到的就是 PPT。给这一镜一条动作弧线：起（位移级动作，"
-                        "如起身/绕过柜台/俯身去拿）→ 过（接触或反应）→ 落（final_frame 的结束态）。"
+                        f"镜头 {s.id} 的 action 只有 {phrases} 句且全是面部/手指微动："
+                        "视频模型会把它循环播放，观众看到的就是 PPT。给这一镜一条"
+                        "动作弧线：起（位移级动作，如起身/绕过柜台/俯身去拿）→"
+                        "过（接触或反应）→ 落（final_frame 的结束态）。"
                         "情绪要翻译成位移：不是「他在生气」，是「他把碗顿在柜台上，半碗酒溅出来」。"
-                    )
-                elif not _MOVEMENT_RE.search(s.action or ""):
-                    issues.append(
-                        f"镜头 {s.id} 的 action 三段全是面部/手指微动（没有一段位移级大动作）："
-                        "至少一段要让整个身体动起来（起身、跨半步、绕过柜台、俯身去拿、退回去坐下），"
-                        "微动作留给其余两段做节拍。"
                     )
                 # 6c) 一镜一说话人 + 台词要念得完
                 seg = shots_dialogue.get(s.id) or []
@@ -1238,6 +1395,12 @@ class DirectorAgent(CrewAgent):
             )
             breakdowns.append(breakdown)
 
+        # 动作链过长的分镜拆成相邻分镜（一个分镜 = 一个小事件）。
+        # 拆完要重排 order / id / chain_from：拆出来的兄弟分镜共用同一个旧
+        # order，order 是 id 的一部分，不重排会出现重复 id。
+        split_action_chains(breakdowns)
+        next_order = _renumber_shots(breakdowns, start_order)
+
         _normalize_groups(breakdowns)
         # 导演不标组时由代码兜底成组（同场相邻孤立单镜，≤15s/≤4 员）。
         auto_group_scene(breakdowns)
@@ -1292,23 +1455,68 @@ def assign_episodes(breakdowns: list[SceneBreakdown], script: Script) -> None:
     """给每个镜头标上「它属于第几集」（D-63 集-镜两级结构）。
 
     集 = 小说的一章：场景本来就带着 chapter_refs（来自原著章节），
-    那一章就是它所属的集。短剧常常只有一章——那全片就是一集；连载改编时
-    一章一集，进度百分比、导出分集都按它算。
+    那一章就是它所属的集。连载改编时一章一集。
+
+    **一章装不下一集时按时长拆集**（2026-11-20《替身v2》复盘新增）：
+    内容比例预算（每场保底 24 秒）让单章短作的总时长可以超过一集
+    （10 场 ≈ 240 秒 = 两集）。旧版全塞一集，观众看到的就是 4 分钟
+    「一集」——即梦对同一篇原文拆 5 集 × 60–95 秒才是短剧的集形态。
+    拆法：章内按场次顺序贪心装箱，每集合计 ≤ EPISODE_TARGET_SEC；
+    单场超一集时长的不硬拆（场是戏剧单元），它自己占一集。
+    集 id 加 `#n` 后缀（`ch_001#2`），episode_index 全局连续。
 
     就地写（与 group 归一同样的做法）：不新增一张表，不改镜头方案的结构，
     只在镜头上多两个字段。
     """
+    from ..video.rhythm import EPISODE_TARGET_SEC
+
     order: dict[str, int] = {}
     for i, ch in enumerate(script.source.chapter_ids or []):
         order.setdefault(ch, i)
-    scene_ep: dict[str, tuple[str, int]] = {}
+    scene_ch: dict[str, str] = {}
     for sc in script.scenes:
         ch = sc.chapter_refs[0] if sc.chapter_refs else sc.id
         if ch not in order:
             order[ch] = len(order)
-        scene_ep[sc.id] = (ch, order[ch])
+        scene_ch[sc.id] = ch
+
+    # 每场的实际分镜时长（闸门后），供贪心装箱
+    scene_dur: dict[str, float] = {}
     for bd in breakdowns:
-        ep_id, ep_idx = scene_ep.get(bd.scene_id, (bd.scene_id, 0))
+        scene_dur[bd.scene_id] = sum(
+            max(0.0, s.duration_sec) for s in bd.shots)
+
+    # 按章分组（保持场次顺序），超一集的章拆成多集
+    by_chapter: dict[str, list[str]] = {}
+    for bd in breakdowns:
+        ch = scene_ch.get(bd.scene_id, bd.scene_id)
+        by_chapter.setdefault(ch, []).append(bd.scene_id)
+
+    ep_of_scene: dict[str, tuple[str, int]] = {}
+    ep_counter = 0
+    for ch in sorted(by_chapter, key=lambda c: order.get(c, 0)):
+        scenes_in_ch = by_chapter[ch]
+        # 贪心装箱：累计 ≤ EPISODE_TARGET_SEC 就并进当前集
+        parts: list[list[str]] = []
+        run: list[str] = []
+        run_sec = 0.0
+        for sid in scenes_in_ch:
+            d = scene_dur.get(sid, 0.0)
+            if run and run_sec + d > EPISODE_TARGET_SEC:
+                parts.append(run)
+                run, run_sec = [], 0.0
+            run.append(sid)
+            run_sec += d
+        if run:
+            parts.append(run)
+        for pi, part in enumerate(parts):
+            ep_id = ch if len(parts) == 1 else f"{ch}#{pi + 1}"
+            for sid in part:
+                ep_of_scene[sid] = (ep_id, ep_counter)
+            ep_counter += 1
+
+    for bd in breakdowns:
+        ep_id, ep_idx = ep_of_scene.get(bd.scene_id, (bd.scene_id, 0))
         for s in bd.shots:
             s.episode_id = ep_id
             s.episode_index = ep_idx

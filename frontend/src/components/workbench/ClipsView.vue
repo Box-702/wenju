@@ -1,15 +1,19 @@
 <script setup>
 // =====================================================================
-// ClipsView.vue —— 工作台·分镜页（即梦「分集视频 > 片段编辑」形态）
+// ClipsView.vue —— 工作台·分镜页（即梦「分集视频」形态，整集同页）
 //
-// 与即梦对齐的三个决定（2026-11-20 用户拍板「只保留即梦功能的按钮，完全仿照」）：
-//   1. 单片段视图：一次只展示一个片段（左编辑 / 右预览），底部胶片条切换——
-//      不再 21 张卡竖排、每卡一排花钱按钮（那版被用户指着说像 21 个任务在烧钱）。
-//   2. 按钮只有即梦有的三个：↻（重出该片段）、生成样片（480P）、生成成片。
-//      提示词编辑 = 点提示词文本本身（即梦是行内编辑，我们跳全屏审阅器，
-//      批准硬闸门 D-43 不变）。花钱按钮保留「两步确认」：第一下变红问确认。
-//   3. 右侧预览 = **当前集全部已出片片段连着放**：播放列表按片段顺序接力，
-//      进度条带章节刻度，点底部胶片条跳到对应片段——即梦那个 00:10/00:58 的播放器。
+// 与即梦对齐的三个决定（2026-11-21 用户拍板，取代前一天的「单片段视图」，
+// 理由：逐个点片段才能看到提示词太低效——「每一集的分段的提示词应该
+// 放在同一页里面」）：
+//   1. 整集同页：当前集的全部片段竖排在一列里，每张卡 = 片段头 +
+//      资产 chip + 场景锚 + 各分镜提示词（AssetRefText 行内渲染）+
+//      审计 + 出片按钮。胶片条降级为「锚点导航」：点缩略图滚到对应卡。
+//   2. 出片流程闸门（学即梦「完成每一项才会放行出片」）：
+//      剧本 → 分镜 → 提示词批准 → 可出片，四步状态条常驻页头；
+//      「可出片」在本集全部提示词批准前是锁定态。单张卡的花钱按钮
+//      仍受「该片段已批准」约束（D-43 不变）+ 两步确认（第一下变红）。
+//   3. 右侧预览 = **当前集全部已出片片段连着放**：播放列表按片段顺序
+//      接力，进度条带章节刻度。
 // 文案禁费用/积分字样（D-53），只报「项 / 秒」。
 // =====================================================================
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
@@ -24,7 +28,7 @@ import {
 } from '../../stores/app'
 
 // ---------------------------------------------------------------------
-// 数据：分组卡片 → 集 → 选中片段
+// 数据：分组卡片 → 集 → 选中片段（选中 = 高亮 + 连播锚点，不再切视图）
 // ---------------------------------------------------------------------
 const loading = ref(true)
 const loadError = ref('')
@@ -94,7 +98,7 @@ const card = computed(() => {
 watch(card, c => { if (c && c.key !== cardKey.value) cardKey.value = c.key })
 
 // ---------------------------------------------------------------------
-// 片段卡口径
+// 片段卡口径（同页多卡：全部按「传入卡片」取值，不再只有一张卡）
 // ---------------------------------------------------------------------
 function groupTotal(c) {
   return c.members.reduce((a, m) => a + Math.max(0, Number(m.duration_sec) || 0), 0)
@@ -124,15 +128,16 @@ function promptStatusBadge(c) {
   if (s === 'needs_revision') return { label: '需修改', cls: 'bad' }
   return { label: '待审', cls: 'warn' }
 }
-const isApproved = computed(() => card.value?.head.prompt_status === 'approved')
-function approvalTitle() {
-  return isApproved.value ? '' : '提示词还没批准，先点提示词文本进审阅器批准'
+function isApprovedOf(c) {
+  return c?.head.prompt_status === 'approved'
+}
+function approvalTitle(c) {
+  return isApprovedOf(c) ? '' : '提示词还没批准，先点提示词文本进审阅器批准'
 }
 
 // 资产 chip：从片段全部文本扫 @名(char_xxx)/@名(loc_xxx)
 const REF_RE = /@[^@\s]{1,20}\((?:char|loc)_[a-z0-9_]+\)/gi
-const assetChips = computed(() => {
-  const c = card.value
+function assetChipsOf(c) {
   if (!c) return []
   const text = [shownPrompt(c.head), ...c.members.map(m => `${m.subject || ''} ${m.action || ''} ${m.video_prompt || ''}`)].join(' ')
   const ids = new Set()
@@ -143,16 +148,54 @@ const assetChips = computed(() => {
   const refs = store.assetRefs || {}
   const out = [...ids].map(id => ({ id, ...refs[id] })).filter(r => r.name)
   return [...out.filter(r => r.kind !== 'location'), ...out.filter(r => r.kind === 'location')]
-})
+}
 // 场景锚行：提示词里第一个 loc 引用原样交给 AssetRefText
-const sceneAnchor = computed(() => {
-  const c = card.value
+function sceneAnchorOf(c) {
   if (!c) return ''
   return shownPrompt(c.head).match(/@[^@\s，。；;、（）()]{1,20}\(loc_[a-z0-9_]+\)/)?.[0] || ''
-})
+}
 
 // ---------------------------------------------------------------------
-// 花钱动作：在途锁 + 两步确认（第一下变红问「确认？」，5 秒内再点才提交）
+// 出片流程闸门（J4）：剧本 → 分镜 → 提示词批准 → 可出片。
+// 学即梦：没有完成上一步，下一步不放行——「可出片」在本集全部片段
+// 的提示词都批准之前始终是锁定态，光标和按钮都过不去。
+// ---------------------------------------------------------------------
+const gate = computed(() => {
+  const cs = ep.value?.cards || []
+  const total = cs.length
+  const approved = cs.filter(c => isApprovedOf(c)).length
+  const scripted = (store.versions || []).length > 0
+  const boarded = cards.value.length > 0
+  const allApproved = total > 0 && approved === total
+  const steps = [
+    {
+      key: 'script', label: '剧本',
+      state: scripted ? 'done' : 'todo',
+      note: scripted ? '已就绪' : '先生成剧本',
+    },
+    {
+      key: 'board', label: '分镜',
+      state: boarded ? 'done' : scripted ? 'todo' : 'locked',
+      note: boarded ? `${total} 个片段` : '先拆解镜头',
+    },
+    {
+      key: 'approve', label: '提示词批准',
+      state: !boarded ? 'locked' : allApproved ? 'done' : approved > 0 ? 'partial' : 'todo',
+      note: boarded ? `${approved}/${total} 已批准` : '先完成分镜',
+    },
+    {
+      key: 'render', label: '可出片',
+      state: boarded && allApproved ? 'ready' : 'locked',
+      note: boarded && allApproved ? '全部就绪' : '批准全部提示词后解锁',
+    },
+  ]
+  return { steps, total, approved, allApproved }
+})
+const showGate = computed(() => cards.value.length > 0 || (store.versions || []).length > 0)
+
+// ---------------------------------------------------------------------
+// 花钱动作：在途锁 + 两步确认（第一下变红问「确认？」，5 秒内再点才提交）。
+// 同页多卡：armed/busy 的 key 带「动作:片段」，各卡互不干扰。
 // ---------------------------------------------------------------------
 const busy = reactive({})
 async function run(key, fn) {
@@ -175,15 +218,16 @@ async function confirmRun(key, fn) {
 }
 onBeforeUnmount(() => Object.values(armTimers).forEach(clearTimeout))
 
-function moneyAct(key, fn) {
+function moneyAct(c, kind, fn) {
+  const key = `${kind}:${c.key}`
   return () => {
-    if (!isApproved.value) { notify('请先点提示词文本进审阅器批准', 'info'); return }
+    if (!isApprovedOf(c)) { notify('请先点这段提示词文本进审阅器批准', 'info'); return }
     confirmRun(key, fn)
   }
 }
 
 // ---------------------------------------------------------------------
-// 整集连播播放器：已出片片段按顺序接力，章节刻度 + 胶片条跳转
+// 整集连播播放器：已出片片段按顺序接力，章节刻度；点胶片条/卡片跳位
 // ---------------------------------------------------------------------
 const clips = computed(() => {
   const cs = (ep.value?.cards || []).filter(c => playableUrl(c))
@@ -285,12 +329,20 @@ function onStripWheel(e) {
   }
 }
 
+/** 点卡片 / 胶片条：高亮该片段 + 把它滚进视野 + 连播跳到对应段首。
+ *  不强制播放——用户可能只是想编辑这一段。 */
 function selectCard(c) {
   if (dragged.value) return
   cardKey.value = c.key
+  // getElementById 按字面值匹配（key 里的 : | 不用转义；CSS.escape 是给
+  // querySelector 用的，用在这里反而永远匹配不上）
+  const el = document.getElementById(`seg-${c.key}`)
+  el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   const i = clipOfCard(c.key)
-  if (i >= 0) seekGlobal(segStart.value[i] + 0.01)
-  else notify(`片段 ${String(c.no).padStart(2, '0')} 还没有成片，生成后即可连播`, 'info')
+  if (i >= 0 && i !== idx.value) {
+    idx.value = i
+    nextTick(() => { if (videoEl.value) { videoEl.value.currentTime = 0; curIn.value = 0 } })
+  }
 }
 
 function fmt(t) {
@@ -328,15 +380,28 @@ const hasAny = computed(() => cards.value.length > 0)
             @click="epId = e.id"
           >第 {{ e.no }} 集</button>
         </div>
-        <template v-if="card">
-          <AppIcon name="chevron-right" />
-          <span class="crumb-cur">片段 {{ String(card.no).padStart(2, '0') }}</span>
+        <template v-if="ep">
+          <span class="crumb-cur">共 {{ ep.cards.length }} 个片段</span>
         </template>
       </div>
       <button class="ghost small" type="button" :disabled="loading" @click="refreshAll">
         <AppIcon name="refresh" /> {{ loading ? '刷新中' : '刷新' }}
       </button>
     </header>
+
+    <!-- 出片流程闸门（即梦式：完成每一步才放行下一步） -->
+    <nav v-if="showGate" class="gate" aria-label="出片流程">
+      <template v-for="(s, i) in gate.steps" :key="s.key">
+        <span v-if="i" class="g-sep"><AppIcon name="chevron-right" /></span>
+        <span class="g-step" :class="s.state" :title="s.note">
+          <span class="g-num">{{ i + 1 }}</span>
+          <span class="g-label">{{ s.label }}</span>
+          <span class="g-note">{{ s.note }}</span>
+          <AppIcon v-if="s.state === 'done' || s.state === 'ready'" name="check" class="g-ic" />
+          <AppIcon v-else-if="s.state === 'locked'" name="lock" class="g-ic" />
+        </span>
+      </template>
+    </nav>
 
     <div v-if="loadError" class="cl-error">{{ loadError }}（点刷新重试）</div>
 
@@ -345,94 +410,102 @@ const hasAny = computed(() => cards.value.length > 0)
       <p>还没有分镜——在右侧对话里说「拆解镜头」。</p>
     </div>
 
-    <template v-else-if="card">
+    <template v-else-if="ep">
       <div class="cl-body">
-        <!-- 左：片段编辑卡（即梦形态） -->
-        <section class="editor">
-          <div class="ed-meta">
-            <span class="em-title">片段 {{ String(card.no).padStart(2, '0') }}</span>
-            <span class="em-sub">引用 {{ assetChips.length }} 项资产 · 约 {{ groupTotal(card).toFixed(1) }} 秒 · 由 {{ card.members.length }} 个分镜组成</span>
-            <span class="badge" :class="promptStatusBadge(card).cls">{{ promptStatusBadge(card).label }}</span>
-            <span class="badge" :class="videoBadge(card).cls">{{ videoBadge(card).label }}</span>
-          </div>
+        <!-- 左：本集全部片段，一页摊开（提示词不用再逐个点开看） -->
+        <section class="cards">
+          <article
+            v-for="c in ep.cards" :key="c.key"
+            :id="`seg-${c.key}`"
+            class="seg" :class="{ on: card && c.key === card.key }"
+            @click="selectCard(c)"
+          >
+            <div class="sg-meta">
+              <span class="sg-title">片段 {{ String(c.no).padStart(2, '0') }}</span>
+              <span class="sg-sub">引用 {{ assetChipsOf(c).length }} 项资产 · 约 {{ groupTotal(c).toFixed(1) }} 秒 · {{ c.members.length }} 个分镜</span>
+              <span class="badge" :class="promptStatusBadge(c).cls">{{ promptStatusBadge(c).label }}</span>
+              <span class="badge" :class="videoBadge(c).cls">{{ videoBadge(c).label }}</span>
+            </div>
 
-          <div class="chips">
-            <button
-              v-for="a in assetChips" :key="a.id"
-              class="chip" type="button" :title="`${a.name}（${a.id}）`"
-              @click="store.assetPreview = a"
-            >
-              <img v-if="a.image" :src="a.image" :alt="a.name" />
-              <span v-else class="chip-ph"><AppIcon :name="a.kind === 'location' ? 'folder' : 'user'" /></span>
-              <span class="chip-name">{{ a.name }}</span>
-            </button>
-          </div>
-
-          <p v-if="sceneAnchor" class="scene-line">
-            本片段场景设定在：<AssetRefText :text="sceneAnchor" />。
-          </p>
-
-          <div class="beats">
-            <div v-for="(m, i) in card.members" :key="m.id" class="beat">
-              <div class="beat-head">
-                <span class="beat-no">分镜 {{ i + 1 }}</span>
-                <select
-                  class="dur-chip" :value="m.duration_sec"
-                  :disabled="durBusy[m.id]"
-                  title="时长（改动会建新版本）"
-                  @change="setDuration(m, $event.target.value)"
-                >
-                  <option v-for="d in DUR_OPTS" :key="d" :value="d">{{ d }}s</option>
-                  <option v-if="!DUR_OPTS.includes(Number(m.duration_sec))" :value="m.duration_sec">
-                    {{ m.duration_sec }}s
-                  </option>
-                </select>
-              </div>
-              <div
-                class="beat-prompt" :title="approvalTitle() || '点击编辑并审阅提示词'"
-                @click="openPromptEditor(card.head)"
+            <div class="chips">
+              <button
+                v-for="a in assetChipsOf(c)" :key="a.id"
+                class="chip" type="button" :title="`${a.name}（${a.id}）`"
+                @click.stop="store.assetPreview = a"
               >
-                <AssetRefText :text="m.video_prompt || ''" />
+                <img v-if="a.image" :src="a.image" :alt="a.name" />
+                <span v-else class="chip-ph"><AppIcon :name="a.kind === 'location' ? 'folder' : 'user'" /></span>
+                <span class="chip-name">{{ a.name }}</span>
+              </button>
+            </div>
+
+            <p v-if="sceneAnchorOf(c)" class="scene-line">
+              本片段场景设定在：<AssetRefText :text="sceneAnchorOf(c)" />。
+            </p>
+
+            <div class="beats">
+              <div v-for="(m, i) in c.members" :key="m.id" class="beat">
+                <div class="beat-head" @click.stop>
+                  <span class="beat-no">分镜 {{ i + 1 }}</span>
+                  <select
+                    class="dur-chip" :value="m.duration_sec"
+                    :disabled="durBusy[m.id]"
+                    title="时长（改动会建新版本）"
+                    @change="setDuration(m, $event.target.value)"
+                  >
+                    <option v-for="d in DUR_OPTS" :key="d" :value="d">{{ d }}s</option>
+                    <option v-if="!DUR_OPTS.includes(Number(m.duration_sec))" :value="m.duration_sec">
+                      {{ m.duration_sec }}s
+                    </option>
+                  </select>
+                </div>
+                <div
+                  class="beat-prompt" :title="approvalTitle(c) || '点击编辑并审阅提示词'"
+                  @click.stop="openPromptEditor(c.head)"
+                >
+                  <AssetRefText :text="m.video_prompt || ''" />
+                </div>
               </div>
             </div>
-          </div>
 
-          <ul v-if="card.head.prompt_audit && card.head.prompt_audit.length" class="audits">
-            <li v-for="(a, i) in card.head.prompt_audit" :key="i">
-              <AppIcon name="warning" /> {{ a }}
-            </li>
-          </ul>
+            <ul v-if="c.head.prompt_audit && c.head.prompt_audit.length" class="audits">
+              <li v-for="(a, i) in c.head.prompt_audit" :key="i">
+                <AppIcon name="warning" /> {{ a }}
+              </li>
+            </ul>
 
-          <div class="acts">
-            <button
-              class="icon-btn" type="button"
-              :class="{ danger: armed['r'] }"
-              :disabled="!isApproved || busy['r']"
-              :title="armed['r'] ? '再点一次就真的重出（会提交新任务）' : approvalTitle() || '重出该片段'"
-              @click="moneyAct('r', () => rerollShot(card.head.id))()"
-            >
-              <AppIcon name="refresh" />
-            </button>
-            <button
-              class="small" type="button"
-              :class="{ danger: armed['s'] }"
-              :disabled="!isApproved || busy['s']"
-              :title="armed['s'] ? '再点一次确认提交' : approvalTitle() || '480P 快速验证'"
-              @click="moneyAct('s', () => submitSampleVideo(card.head))()"
-            >
-              <AppIcon name="sparkle" /> {{ busy['s'] ? '提交中' : (armed['s'] ? '确认出样片？' : '生成样片') }}
-            </button>
-            <button
-              class="small primary" type="button"
-              :class="{ danger: armed['f'] }"
-              :disabled="!isApproved || busy['f']"
-              :title="armed['f'] ? '再点一次确认提交' : approvalTitle() || '提交正式出片'"
-              @click="moneyAct('f', () => submitVideoJob(card.head))()"
-            >
-              <AppIcon name="send" /> {{ busy['f'] ? '提交中' : (armed['f'] ? '确认出成片？' : '生成成片') }}
-            </button>
-            <span class="acts-note">约 {{ groupTotal(card).toFixed(1) }} 秒 · 样片为 480P 快速验证</span>
-          </div>
+            <div class="acts" @click.stop>
+              <button
+                class="icon-btn" type="button"
+                :class="{ danger: armed[`r:${c.key}`] }"
+                :disabled="!isApprovedOf(c) || busy[`r:${c.key}`]"
+                :title="armed[`r:${c.key}`] ? '再点一次就真的重出（会提交新任务）' : approvalTitle(c) || '重出该片段'"
+                @click="moneyAct(c, 'r', () => rerollShot(c.head.id))()"
+              >
+                <AppIcon name="refresh" />
+              </button>
+              <button
+                class="small" type="button"
+                :class="{ danger: armed[`s:${c.key}`] }"
+                :disabled="!isApprovedOf(c) || busy[`s:${c.key}`]"
+                :title="armed[`s:${c.key}`] ? '再点一次确认提交' : approvalTitle(c) || '480P 快速验证'"
+                @click="moneyAct(c, 's', () => submitSampleVideo(c.head))()"
+              >
+                <AppIcon name="sparkle" /> {{ busy[`s:${c.key}`] ? '提交中' : (armed[`s:${c.key}`] ? '确认出样片？' : '生成样片') }}
+              </button>
+              <button
+                class="small primary" type="button"
+                :class="{ danger: armed[`f:${c.key}`] }"
+                :disabled="!isApprovedOf(c) || busy[`f:${c.key}`]"
+                :title="armed[`f:${c.key}`] ? '再点一次确认提交' : approvalTitle(c) || '提交正式出片'"
+                @click="moneyAct(c, 'f', () => submitVideoJob(c.head))()"
+              >
+                <AppIcon name="send" /> {{ busy[`f:${c.key}`] ? '提交中' : (armed[`f:${c.key}`] ? '确认出成片？' : '生成成片') }}
+              </button>
+              <span class="acts-note">约 {{ groupTotal(c).toFixed(1) }} 秒 · 样片为 480P 快速验证</span>
+            </div>
+          </article>
+          <p v-if="!ep.cards.length" class="cards-empty">这一集还没有片段。</p>
         </section>
 
         <!-- 右：整集连播播放器（即梦预览位） -->
@@ -479,14 +552,14 @@ const hasAny = computed(() => cards.value.length > 0)
         </aside>
       </div>
 
-      <!-- 底部胶片条：点片段 = 切编辑对象 + 跳连播位置 -->
+      <!-- 底部胶片条：点缩略图 = 滚到对应片段卡 + 连播跳位（可拖动横滚） -->
       <footer
         ref="stripEl" class="strip"
         @pointerdown="onStripDown" @pointermove="onStripMove"
         @pointerup="onStripUp" @pointerleave="onStripUp" @wheel="onStripWheel"
       >
         <button
-          v-for="c in (ep ? ep.cards : [])" :key="c.key"
+          v-for="c in ep.cards" :key="c.key"
           class="strip-item" :class="{ on: card && c.key === card.key }"
           type="button" @click="selectCard(c)"
         >
@@ -495,7 +568,8 @@ const hasAny = computed(() => cards.value.length > 0)
             <AppIcon v-else name="film" />
           </span>
           <span class="strip-label">片段 {{ String(c.no).padStart(2, '0') }} · {{ groupTotal(c).toFixed(0) }}s</span>
-          <span class="dot" :class="videoBadge(c).cls" />
+          <span class="dot" :class="promptStatusBadge(c).cls" title="提示词状态" />
+          <span class="dot v" :class="videoBadge(c).cls" title="出片状态" />
         </button>
       </footer>
     </template>
@@ -524,7 +598,7 @@ const hasAny = computed(() => cards.value.length > 0)
   background: color-mix(in oklch, var(--gold) 9%, transparent);
   box-shadow: inset 0 -2px 0 var(--gold);
 }
-.crumb-cur { color: var(--ink); font-weight: 600; }
+.crumb-cur { color: var(--dim); }
 
 .cl-error {
   margin: 12px 16px; padding: 8px 12px; border-radius: var(--radius-sm);
@@ -537,21 +611,69 @@ const hasAny = computed(() => cards.value.length > 0)
 }
 .cl-empty :deep(svg) { width: 28px; height: 28px; }
 
+/* ---- 出片流程闸门条 ---- */
+.gate {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 9px 16px; flex: none;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in oklch, var(--surface-2) 55%, transparent);
+}
+.g-step {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 10px; border-radius: var(--radius-full);
+  border: 1px solid var(--line); background: var(--surface);
+  font-size: 12px; color: var(--muted);
+}
+.g-num {
+  display: inline-grid; place-items: center;
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  font-family: var(--mono); font-size: 10px; color: var(--dim);
+}
+.g-label { color: var(--ink); font-weight: 600; }
+.g-note { font-size: 11px; color: var(--dim); }
+.g-ic { font-size: 12px; flex: none; }
+.g-step.done { border-color: color-mix(in oklch, var(--ok) 35%, transparent); }
+.g-step.done .g-ic { color: var(--ok); }
+.g-step.done .g-note { color: var(--muted); }
+.g-step.partial { border-color: color-mix(in oklch, var(--warn) 40%, transparent); }
+.g-step.partial .g-note { color: var(--warn); }
+.g-step.locked { opacity: .68; }
+.g-step.locked .g-ic { color: var(--dim); }
+.g-step.ready {
+  border-color: color-mix(in oklch, var(--gold) 55%, transparent);
+  background: color-mix(in oklch, var(--gold) 9%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--gold) 28%, transparent),
+              0 2px 12px color-mix(in oklch, var(--gold) 14%, transparent);
+}
+.g-step.ready .g-ic { color: var(--gold); }
+.g-step.ready .g-note { color: var(--gold); }
+.g-sep { color: var(--dim); display: inline-flex; }
+.g-sep :deep(svg) { width: 10px; height: 10px; }
+
 .cl-body {
   flex: 1; min-height: 0;
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
   gap: 14px; padding: 14px 16px; overflow: hidden;
 }
 
-/* ---- 左：编辑卡 ---- */
-.editor {
-  overflow-y: auto; min-height: 0;
+/* ---- 左：本集全部片段（同页摊开） ---- */
+.cards { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.seg {
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius-lg); padding: 16px 18px;
+  scroll-margin-top: 8px;
+  transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease);
 }
-.ed-meta { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-.em-title { font-size: 16px; font-weight: 700; color: var(--ink); }
-.em-sub { font-size: 11.5px; color: var(--muted); flex: 1; min-width: 160px; }
+.seg.on {
+  border-color: color-mix(in oklch, var(--gold) 55%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in oklch, var(--gold) 26%, transparent),
+    0 2px 14px color-mix(in oklch, var(--gold) 12%, transparent);
+}
+.sg-meta { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.sg-title { font-size: 16px; font-weight: 700; color: var(--ink); }
+.sg-sub { font-size: 11.5px; color: var(--muted); flex: 1; min-width: 160px; }
 .badge {
   font-size: 11px; padding: 2px 8px; border-radius: var(--radius-full);
   border: 1px solid var(--line); color: var(--dim); flex: none;
@@ -606,12 +728,14 @@ const hasAny = computed(() => cards.value.length > 0)
 .icon-btn:disabled, .acts button:disabled { opacity: .45; cursor: not-allowed; }
 .acts button.danger { color: var(--bad); border-color: color-mix(in oklch, var(--bad) 55%, transparent); }
 .acts-note { font-size: 11px; color: var(--dim); margin-left: auto; }
+.cards-empty { padding: 24px; text-align: center; color: var(--dim); font-size: 12.5px; }
 
 /* ---- 右：连播播放器 ---- */
 .viewer {
   display: flex; flex-direction: column; gap: 8px; min-height: 0;
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius-lg); padding: 12px;
+  align-self: start; position: sticky; top: 0;
 }
 .vp { width: 100%; border-radius: var(--radius-md); background: #000; aspect-ratio: 16/9; object-fit: contain; }
 .vp-chapter { font-size: 11.5px; color: var(--muted); }
@@ -637,7 +761,7 @@ const hasAny = computed(() => cards.value.length > 0)
 .vp-none :deep(svg) { width: 26px; height: 26px; }
 .vp-none .dim { color: var(--dim); font-size: 11.5px; }
 
-/* ---- 底部胶片条 ---- */
+/* ---- 底部胶片条（锚点导航，可拖动横滚） ---- */
 .strip {
   flex: none; display: flex; gap: 10px; padding: 12px 16px;
   border-top: 1px solid var(--line);
@@ -665,10 +789,12 @@ const hasAny = computed(() => cards.value.length > 0)
 .thumb video { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .thumb :deep(svg) { width: 22px; height: 22px; color: var(--dim); }
 .strip-label { white-space: nowrap; }
-.dot { position: absolute; top: 8px; right: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--dim); }
+/* 双状态点：左=提示词批准态，右=出片态 */
+.dot { position: absolute; top: 8px; left: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--dim); }
 .dot.ok { background: var(--ok); }
 .dot.warn { background: var(--warn); }
 .dot.bad { background: var(--bad); }
+.dot.v { left: auto; right: 8px; }
 
 @media (max-width: 1100px) {
   .cl-body { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }

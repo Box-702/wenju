@@ -2,11 +2,10 @@
 // =====================================================================
 // ScriptView.vue —— 工作台·剧本页（对标即梦短剧工作室的剧本形态）
 //
-// 四个 tab：
+// 三个 tab（修改历史在左栏，见 ScriptHistoryPanel）：
 //   01 设定   —— 结构化表单卡：集数/受众、核心梗、一句话故事、人物表、事件底线
 //   02 分集大纲—— 每集一张卡 + 底部节拍条（该集事件画成等宽小段）
 //   03 正文   —— 只读 screenplay 排版渲染 viewerScript（不再挂编辑器，改稿走对话）
-//   04 历史修改—— 版本列表 + notes 展开
 //
 // 数据来源全部走全局 store（storyPlan / viewerScript / versions / overview），
 // 进视图时缺什么补什么；编剧笔记仍走 GET/PUT /projects/{pid}/notes，
@@ -18,11 +17,11 @@ import AppIcon from '../AppIcon.vue'
 import { api } from '../../api'
 import { store, notify, loadStoryPlan, loadViewer, toggleAgentPanel } from '../../stores/app'
 
+// 历史修改已迁去左栏（即梦「脚本修改历史」形态，随剧本页联动）——这里只剩三步。
 const TABS = [
   { key: 'settings', num: '01', label: '设定' },
   { key: 'outline', num: '02', label: '分集大纲' },
   { key: 'text', num: '03', label: '正文' },
-  { key: 'history', num: '04', label: '历史修改' },
 ]
 const tab = ref('settings')
 
@@ -224,29 +223,6 @@ onBeforeUnmount(() => {
   clearTimeout(notesTimer)
 })
 
-// =====================================================================
-// 04 历史修改
-// =====================================================================
-// 实际后端取值：generation | agent_adaptation | import | manual_edit（含 agent 别名），
-// 未识别的来源直接原文显示，不猜。
-const SOURCE_LABELS = {
-  generation: '生成',
-  manual: '手改', manual_edit: '手改',
-  agent: '改编', agent_adaptation: '改编',
-  import: '导入',
-}
-function sourceLabel(t) {
-  if (!t) return '生成'
-  return SOURCE_LABELS[t] || t
-}
-
-function fmtMinute(iso) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (isNaN(d)) return String(iso)
-  const p = (x) => String(x).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
-}
 </script>
 
 <template>
@@ -431,24 +407,6 @@ function fmtMinute(iso) {
         </template>
       </template>
 
-      <!-- ============ 04 历史修改 ============ -->
-      <template v-else>
-        <div v-if="!store.versions.length" class="sv-empty">
-          <p>还没有版本记录——生成或改编一次剧本后，这里会留下每一次修改</p>
-        </div>
-        <div v-else class="hist">
-          <details v-for="v in store.versions" :key="v.id" class="hist-row">
-            <summary class="hist-sum">
-              <div class="hist-main">
-                <span class="hist-label">{{ v.label || '（未命名版本）' }}</span>
-                <span class="hist-sub">版本 {{ String(v.id).slice(-6) }} · {{ fmtMinute(v.created_at) }}</span>
-              </div>
-              <span class="badge">{{ sourceLabel(v.source_type) }}</span>
-            </summary>
-            <p class="hist-notes">{{ v.notes || '这一版没有留下说明' }}</p>
-          </details>
-        </div>
-      </template>
     </div>
   </div>
 </template>

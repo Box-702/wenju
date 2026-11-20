@@ -23,6 +23,7 @@ import AssetPreview from './components/AssetPreview.vue'
 import Toast from './components/Toast.vue'
 import IconRail from './components/workbench/IconRail.vue'
 import AssetTree from './components/workbench/AssetTree.vue'
+import ScriptHistoryPanel from './components/workbench/ScriptHistoryPanel.vue'
 import WorkbenchView from './components/workbench/WorkbenchView.vue'
 import AgentPanel from './components/workbench/AgentPanel.vue'
 import { loadTree, loadWorkspace, loadProjectFiles, restorePanelPrefs, toggleRightPanel, toggleAgentPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, loadAssetRefs, closePromptEditor, saveShotPrompt, loadStoryPlan, closeVideo } from './stores/app'
@@ -212,7 +213,9 @@ onUnmounted(() => {
     <div class="stage-wrap">
       <IconRail />
       <div class="ctx-wrap" :class="{ closed: !store.rightOpen }">
-        <AssetTree />
+        <!-- 即梦式：左栏随视图切换——剧本页看修改历史，其余页看资产树 -->
+        <ScriptHistoryPanel v-if="store.wbView === 'script'" />
+        <AssetTree v-else />
       </div>
       <main class="stage">
         <WorkbenchView />

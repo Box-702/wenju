@@ -49,14 +49,17 @@ _LONG = ("林远-β站起来，走到橱柜前，把锡纸仔细折成一个小�
 
 
 def test_动作链过长才拆():
+    """5 秒镜 8 个短语 → 时长地板（2s/段）最多切 2 段：短语上限让位给
+    「每段演得成、片段凑得齐 4 秒」（2026-11-20 真实数据回测的语义修正）。"""
     bds = _bd([_shot(_LONG)])
     n = split_action_chains(bds)
     shots = bds[0].shots
-    assert n == 2                      # 8 个短语 → 3+3+2 → 3 段（多出 2 段）
-    assert len(shots) == 3
-    # 每段最多 3 个短语（一个主动作 + 两笔细节）
+    assert n == 1                      # 8 个短语 → 2 段（多出 1 段）
+    assert len(shots) == 2
     for s in shots:
-        assert len([p for p in s.action.split("，") if p.strip()]) <= 3
+        assert len([p for p in s.action.split("，") if p.strip()]) <= 4
+        assert s.duration_sec >= 2.0   # 每段演得成一件事
+    assert abs(sum(s.duration_sec for s in shots) - 5.0) < 0.01
 
 
 def test_正常分镜不拆():
@@ -69,8 +72,8 @@ def test_拆完总时长守恒():
     bds = _bd([_shot(_LONG, duration_sec=6.0)])
     split_action_chains(bds)
     total = sum(s.duration_sec for s in bds[0].shots)
-    # 守恒（允许每段下限 2 秒带来的小幅上浮，但不得翻倍）
-    assert 6.0 <= total <= 8.0
+    # 守恒：精确均分 + 尾段吃余数，误差只来自两位小数
+    assert abs(total - 6.0) < 0.05
 
 
 def test_运镜只留第一段_末帧只留最后一段():
@@ -113,9 +116,9 @@ def test_拆分后重排order与id不重复():
     assert len(ids) == len(set(ids))          # id 唯一
     orders = [s.order for s in bds[0].shots]
     assert orders == sorted(orders) == list(range(len(orders)))
-    # 拆链兄弟的 beat 标记
-    assert [s.beat_total for s in bds[0].shots[:3]] == [3, 3, 3]
-    assert [s.beat_index for s in bds[0].shots[:3]] == [0, 1, 2]
+    # 拆链兄弟的 beat 标记（5 秒镜 8 短语 → 2 段）
+    assert [s.beat_total for s in bds[0].shots[:2]] == [2, 2]
+    assert [s.beat_index for s in bds[0].shots[:2]] == [0, 1]
 
 
 def test_拆链兄弟落进同一组():
@@ -125,4 +128,6 @@ def test_拆链兄弟落进同一组():
     auto_group_scene(bds)
     gids = {s.group_id for s in bds[0].shots}
     assert len(gids) == 1 and gids != {""}    # 同一组（= 一次生成 = 一个片段）
-    assert [s.group_index for s in bds[0].shots] == [0, 1, 2]
+    assert [s.group_index for s in bds[0].shots] == [0, 1]
+    # 片段合计 = 原时长 ≥4 秒（厂商单次生成下限）
+    assert sum(s.duration_sec for s in bds[0].shots) >= 4.0

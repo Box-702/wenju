@@ -3576,3 +3576,26 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   needs_review。对话工具 `run_script_doctor`（42 个工具）。
 - **涉及文件**：`app/crew/script_doctor.py`（新模块）· `app/chat/tools/screenplay.py`
   （run_script_doctor）· `tests/test_script_doctor.py`（11 例）
+
+### 5.84 真实数据回测逼出两个内核 bug：跨场 beat 错配 + 碎成 1.3 秒的孤儿分镜（2026-11-20）
+
+- **做法**：A1–C3 全部提交后，**零花费**把新内核的确定性环节直接套在上一跑
+  已落库的真实数据上（旧 23 镜方案 + 新台本 + 旧 23 条提示词），看 before/after。
+  这一步比再写十个单测值钱——两个 bug 单测都没抓到。
+- **bug①（repair 台词分叉全错）**：`expected_dialogue` 把全部场景的 beats 混在
+  一起喂 `assign_dialogue_ranges`，但 beat id 是**场内编号**（每场都有 beat_001）
+  → A 场台词配到 B 场镜上 → 真实数据报 4 处「意译」全是跨场错配的假阳性
+  （「黏人」配到「老机器」、「打印机又坏了」配到「喝点水」）。
+  修法：逐场调用（与 dubbing.plan_dubbing 同口径），回测后 4→0。
+- **bug②（拆链造孤儿）**：`split_action_chains` 旧写法 `per=max(2,min(6,d/n))`
+  既破坏时长守恒（105s→132s），又让 4-5 秒镜切 3 段得 1.3-1.67 秒分镜——
+  每段演不成一件事，三段合计 <4 秒凑不成一次生成（auto_group 拒组 →
+  碎成撞厂商 4 秒下限的孤儿单镜）。修法：每段地板 MIN_BEAT_SEC=2.0，
+  段数 `int(dur//2.0)` 封顶，超了就按允许段数**重新均分短语**（尾合并会造
+  [3,5] 不均衡，回测抓到）；时长撑不起拆分（n≤1）的短镜整镜保留不硬拆。
+  回测：23 镜→46 分镜/22 片段，105s 守恒 ✅，片段全部 4.0–6.5s，0 个短片段。
+- **教训**：确定性后处理必须拿**真实落库数据**回测，不能只用构造样本——
+  构造样本的 beat id 不跨场、动作链时长刚好，两个 bug 都藏在真实分布里。
+- **涉及文件**：`app/pipeline/repair.py`（expected_dialogue 逐场）·
+  `app/crew/director.py`（MIN_BEAT_SEC + 段数封顶重均分 + auto_group 拆链头
+  让路接力边界）· `tests/test_beat_granularity.py`（断言随语义更新）

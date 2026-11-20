@@ -607,10 +607,11 @@ _HARD_CUT_RE = re.compile(r"硬切|转场|闪回|插叙|hard\s*cut|flashback|mat
 MAX_PHRASES_PER_BEAT = 3
 # 超过这个短语数就是「动作链过长」，由代码拆成相邻分镜（打回重写太贵）
 MAX_PHRASES_BEFORE_SPLIT = 5
-# 拆出来的分镜各自的时长下限（分镜是提示词单位，出片单位是「片段」= 组）
-MIN_SPLIT_BEAT_SEC = 2.0
-# 拆出来的分镜各自的时长上限（单次生成的片段总时长另有 15s 上限）
-MAX_SPLIT_BEAT_SEC = 6.0
+# 拆出来的每个分镜的时长地板（秒，2026-11-20 真实数据回测定标）：
+# 4-5 秒镜切 3 段 = 1.3-1.67 秒分镜，既演不成一件事、合计又 <4 秒
+# 凑不成一次生成（auto_group 拒组 → 碎成撞厂商下限的孤儿单镜）。
+# 2 秒地板让 4 秒镜最多切 2 段（合计恰 4 秒能成组）；撑不起的短镜不拆。
+MIN_BEAT_SEC = 2.0
 # 台词落点：分镜的动作里出现这些词，说明这一段就是「开口说话」的那段
 _SPEECH_PHRASE_RE = re.compile(
     r"开口|说话|低声|轻声|开口问|应声|回答|念|喊|叫|问道|答道|开口道|轻声说"
@@ -679,10 +680,26 @@ def split_action_chains(breakdowns: list[SceneBreakdown]) -> int:
                 phrases[i:i + MAX_PHRASES_PER_BEAT]
                 for i in range(0, len(phrases), MAX_PHRASES_PER_BEAT)
             ]
+            # 段数受时长约束（2026-11-20 真实数据回测抓到的核心 bug）：
+            # 一个 4-5 秒的镜切 3 段 = 每段 1.3-1.67 秒，既演不成一件事，
+            # 三段合计又 <4 秒凑不成一次生成（auto_group 拒绝成组 → 碎成
+            # 单镜孤儿，撞厂商单次生成 4 秒下限）。所以每段至少 MIN_BEAT_SEC
+            # 秒；装不下就**按允许的段数重新均分短语**（尾合并会造出
+            # [3,5] 的不均衡段，回测抓到）。
+            max_chunks = max(1, int(s.duration_sec // MIN_BEAT_SEC))
+            if len(chunks) > max_chunks:
+                per_p = -(-len(phrases) // max_chunks)      # ceil 均分
+                chunks = [phrases[i:i + per_p] for i in range(0, len(phrases), per_p)]
             n = len(chunks)
-            # 时长守恒：原时长分给各段，钳到 [MIN, MAX]；分不完的给最后一段
+            if n <= 1:
+                # 时长撑不起拆分（太短的镜）：不拆，整镜保留（哪怕动作略挤），
+                # 强拆只会造出演不成的碎片——原样交给导演/闸门处理更诚实。
+                new_shots.append(s)
+                continue
+            # 时长守恒：精确均分，最后一段吃余数（片段合计 = 原时长，
+            # 拆链兄弟同组 → 片段 ≥4 秒能成组，花费与片长都不变）。
             per = s.duration_sec / n
-            per = max(MIN_SPLIT_BEAT_SEC, min(MAX_SPLIT_BEAT_SEC, per))
+            tail_sec = s.duration_sec - per * (n - 1)
             # 台词落点：含「开口/说话」的那一段，否则最后一段
             dlg_idx = n - 1
             for i, ch in enumerate(chunks):
@@ -692,7 +709,7 @@ def split_action_chains(breakdowns: list[SceneBreakdown]) -> int:
             for i, ch in enumerate(chunks):
                 clone = s.model_copy(deep=True)
                 clone.action = "，".join(ch)
-                clone.duration_sec = per
+                clone.duration_sec = round(tail_sec if i == n - 1 else per, 2)
                 clone.beat_index = i
                 clone.beat_total = n
                 # 运镜只给第一段：整段动作的运镜轨迹不能复制到每一段
@@ -826,16 +843,22 @@ def _auto_group_one_scene(bd: SceneBreakdown) -> tuple[int, int]:
         if s is None:
             _flush()
             continue
-        # 硬边界：已属模型给的组 / 显式接力锚——本镜必须独立，不开新 run
-        if s.group_id or s.chain_from is not None:
+        # 硬边界：已属模型给的组——本镜必须独立，不开新 run
+        if s.group_id:
             _flush()
             continue
-        # 拆链兄弟必须同组（2026-11-20）：一个原分镜拆出的 N 段是「一个小
-        # 事件」的多机位，落在同一次生成里；下一段动作（beat_index=0 的新
-        # 兄弟）另起一组，不许把两个不同动作并进一次生成。
+        # 拆链头开新段（2026-11-20 真实数据回测抓到）：一个原分镜拆出的
+        # 兄弟必须同段——但拆链头**继承了原镜的 chain_from**（接力锚锚定的
+        # 正是这段的开头），旧判定把它当「显式接力必须独立成镜」拦成单镜，
+        # 兄弟段没了头就各自碎成 1.3 秒的孤儿片段。接力硬边界只适用于
+        # 非拆链的独立镜。
         if s.beat_total > 1 and s.beat_index == 0:
             _flush()
             run = [s]
+            continue
+        # 硬边界：显式接力锚——本镜必须独立，不开新 run
+        if s.chain_from is not None:
+            _flush()
             continue
         # 软边界：不并入当前 run，但可以自己开新段（它之后的同段镜头跟它）
         soft_break = (

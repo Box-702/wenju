@@ -105,6 +105,9 @@ def expected_dialogue(script: Script, shot_dicts: list[dict[str, Any]]) -> dict[
     """每个镜头「该说的台词」：{shot_id: [(说话人名, 台词原文), ...]}。
 
     权威来源 = 剧本节拍 + assign_dialogue_ranges（与配音/字幕/导演校验同一把尺）。
+    **必须逐场调用**（与 dubbing.plan_dubbing 同口径）：beat id 是场内编号
+    （每场都有 beat_001），全局混着匹配会把 A 场的台词配到 B 场的镜上
+    （2026-11-20 真实数据回测抓到：4 处「意译」分叉全是跨场错配的假阳性）。
     组单元：台词按机位（成员）归属，组头的组提示词应覆盖全组成员的台词——
     这里逐成员列，repair 时把整组成员的台词都并进组提示词。
     """
@@ -112,11 +115,15 @@ def expected_dialogue(script: Script, shot_dicts: list[dict[str, Any]]) -> dict[
 
     shots = [Shot.model_validate(s) for s in shot_dicts if isinstance(s, dict) and s.get("id")]
     char_of = {c.id: c.name for c in (script.characters or [])}
-    ranges = assign_dialogue_ranges(shots, [b for sc in script.scenes for b in sc.beats])
     out: dict[str, list[tuple[str, str]]] = {}
-    for sid, beats in ranges.items():
-        out[sid] = [(char_of.get(b.speaker or "", b.speaker or ""), (b.line or "").strip())
-                    for b in beats if (b.line or "").strip()]
+    for sc in script.scenes:
+        scene_shots = [s for s in shots if s.scene_id == sc.id]
+        if not scene_shots:
+            continue
+        ranges = assign_dialogue_ranges(scene_shots, sc.beats)
+        for sid, beats in ranges.items():
+            out[sid] = [(char_of.get(b.speaker or "", b.speaker or ""), (b.line or "").strip())
+                        for b in beats if (b.line or "").strip()]
     return out
 
 

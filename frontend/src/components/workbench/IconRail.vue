@@ -19,9 +19,12 @@ const VIEWS = [
 
 <template>
   <nav class="icon-rail" aria-label="工作台导航">
-    <button class="rail-home" title="作品总览" :class="{ active: !store.wbView }"
-      @click="store.wbView = null">
-      <span class="home-mark">问</span>
+    <!-- 总览（旧版是品牌字「问」方块——语义不明，2026-11-21 用户指出无意义，
+         改成与其它栏位一致的「图标 + 总览」项） -->
+    <button class="rail-item" :class="{ active: !store.wbView }"
+      title="作品总览" @click="store.wbView = null">
+      <AppIcon name="home" />
+      <span class="rail-label">总览</span>
     </button>
     <div class="rail-sep" />
     <button
@@ -64,17 +67,6 @@ const VIEWS = [
   background: var(--surface);
   height: 100%;
 }
-.rail-home {
-  width: 32px; height: 32px; border-radius: var(--radius-sm);
-  border: 1px solid var(--line-strong); background: transparent;
-  color: var(--ink); cursor: pointer; margin-bottom: 4px;
-  display: grid; place-items: center;
-}
-.rail-home.active {
-  background: var(--sel-bg);
-  border-color: var(--sel-line);
-}
-.home-mark { font-size: 14px; font-weight: 700; }
 .rail-sep { width: 24px; height: 1px; background: var(--line); margin: 4px 0 8px; }
 .rail-item {
   position: relative;

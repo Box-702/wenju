@@ -56,6 +56,7 @@ const ICONS = {
   eye: '<path d="M1.8 8s2.3-4 6.2-4 6.2 4 6.2 4-2.3 4-6.2 4S1.8 8 1.8 8z" /><circle cx="8" cy="8" r="1.9" />',
   sound: '<path d="M3.2 6.4h2.1l2.9-2.5v8.2L5.3 9.6H3.2z" /><path d="M10.9 6.3a2.8 2.8 0 0 1 0 3.4M12.7 4.5a5.2 5.2 0 0 1 0 7" />',
   lock: '<rect x="3.8" y="7.4" width="8.4" height="5.8" rx="1.1" /><path d="M5.8 7.4V5.6a2.2 2.2 0 0 1 4.4 0v1.8" />',
+  home: '<path d="M2.6 7.6L8 3.2l5.4 4.4" /><path d="M4.2 7v5.8h7.6V7" /><path d="M6.9 12.8V9.9h2.2v2.9" />',
 }
 
 const html = computed(() => ICONS[props.name] || ICONS.info)

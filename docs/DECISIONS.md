@@ -2569,6 +2569,42 @@ DEVELOPMENT 5.81 · D-63（集-镜两级）· D-66（定位：前期生产管线
 
 ---
 
+---
+
+## D-72 角色音色：自动选角落库 + 经 reference_audio 传给视频模型 —— 已定（2026-11-20）
+
+**背景**：用户反馈「声音不清不楚，起步就没做好音色规范」。查实三个缺口
+（DEVELOPMENT 5.82 同源，A3）：① `cast_script` 自动选角每次现算、从不落库，
+改画风/换勾选池下一轮就换嗓子，没有「每角色一把嗓子」的持久规范；
+② Seedance 2.0 的音色通道是 `content[].audio_url` role=`reference_audio`
+（官方：≤3 段、单段 2–15s、2.0 必须同时带 ≥1 图/视频），但适配器 `_content()`
+漏了这一支，`params.reference_audios` 在 provider 边界被静默丢弃——文件头注释
+一直声称支持；③ native 成片人声完全由模型自由发挥，与资产库音色无关。
+
+**选项**：① 只做 dub（TTS 覆盖，音色可控但无口型同步）；② 只做 native
+音色桥（保口型，音色只是「贴近」）；③ **双轨**：native 桥为主（每角色一把
+嗓子，经 reference_audio 传给模型），dub 保留为「台词必响」选项。
+
+**决定**：选 ③。落库 `cast_and_persist`（只补没指定过的角色，人工指定的不动）；
+`voice_audios_for` 提交侧合成样音入库（按 角色×音色 缓存，一生一次），
+比对侧 `synthesize=False` 纯读；幂等口径对齐（老任务 params 无该键的
+按「存过为空一律同意图」豁免，否则重开批次会重烧上线前的成功镜头）。
+
+**理由**：① 用户北极星是「微调即出片」，native 保口型是观感底线；
+② reference_audio 是 Seedance 唯一能传音色的通道，不用等于放弃；
+③ dub 链路本就完整，保留不冲突；④ 落库只填空不覆盖，尊重 D-43「AI 提议、人决定」。
+
+**什么时候该推翻**：① 若厂商后续开放 voice_id 直控，桥可退化为直传；
+② 若 reference_audio 实测对成片音色无改善（待充值后小批验证），
+则改「默认 dub」并重估这条决策。
+
+**相关**：`app/video/providers/seedance.py`（_content audio_url 分支）·
+`app/video/service.py`（voice_audios_for / _voice_sample / 幂等豁免）·
+`app/media/casting.py`（cast_and_persist / resolve_casting）·
+`tests/test_voice_casting.py` · DEVELOPMENT 5.82 · D-40（BYOK）· D-43（批准闸门）
+
+---
+
 ## 记录新决策的模板
 
 ```markdown

@@ -11,7 +11,7 @@
 资产与版本全部落库。
 
 ```
-用户 ←→ 对话 Agent（手写工具循环，41 个工具）
+用户 ←→ 对话 Agent（手写工具循环，42 个工具）
           ├── 改编工作流（LangGraph 7 节点 + interrupt 人审）→ 剧本版本
           ├── 剧组三函数（导演 → 美术 → 摄影）→ 分镜 / 视觉锚 / 视频提示词
           ├── 出片（Provider 抽象 → 队列 → 巡检 → 拼接 → 配音字幕）
@@ -42,7 +42,7 @@
 | 想改 | 去哪 |
 |---|---|
 | 写作 / 分镜规则 | `app/skills/*/SKILL.md`（不用动代码，改完跑 `python -m evals.run`） |
-| 对话行为与工具 | `app/chat/loop.py`（内核）+ `app/chat/tools/*`（41 个工具按域拆） |
+| 对话行为与工具 | `app/chat/loop.py`（内核）+ `app/chat/tools/*`（42 个工具按域拆） |
 | 改编流程 | `app/agent/graph.py` + `nodes.py` |
 | 模型厂商 | `app/llm/providers.py` 加一条 `ProviderSpec` |
 | 出片供应商 | `app/video/providers/` + `registry.py` |
@@ -85,7 +85,7 @@ N2D/                          小说→成片直跑工作流（体检/批处理�
 | 包 / 模块 | 行数 | 说明 |
 |---|---|---|
 | `video/` | 4417 | Provider 适配 + 队列 + 巡检 + 拼接 + 合成 + 质检 + 用量摘要 |
-| `chat/` | 4063 | 内核 + 编排 + **41 个工具实现**（按域拆 10 个模块） |
+| `chat/` | 4063 | 内核 + 编排 + **42 个工具实现**（按域拆 10 个模块） |
 | `media/` | 3300 | 参考资产 / 配音 / 字幕 / 白模施工 / 资产实体层 |
 | `api/` | 3462 | 10 个域模块（+ common/schemas/deps），**100 条路由** |
 | `pipeline/` | 3499 | 内容生产线：导入、两阶段生成、patch、评审、题材画像、建图、提示词包 |
@@ -248,7 +248,7 @@ OpenAI 兼容服务都支持它——**MiniMax 实测报 `2013 unknown response_
 
 先给结论，因为这块最容易想歪：
 
-> **只有一个 LLM Agent（对话编排层），调度 41 个工具。剧组三个「角色」是函数，不是进程。**
+> **只有一个 LLM Agent（对话编排层），调度 42 个工具。剧组三个「角色」是函数，不是进程。**
 > **「按需加载」只发生在主 Agent 那一层；剧组三个角色的技能是每次全量拼进系统提示的。**
 
 为什么不做进程级多 Agent（每个角色独立上下文、独立工具集、互相通信）：它们各自只做
@@ -260,7 +260,7 @@ OpenAI 兼容服务都支持它——**MiniMax 实测报 `2013 unknown response_
 
 | Agent | 角色 | 职责 |
 |---|---|---|
-| **ChatConductor** | 前厅 / 调度 | 绑定 41 个工具理解用户意图，把请求路由到确定性流水线或后台剧组任务 |
+| **ChatConductor** | 前厅 / 调度 | 绑定 42 个工具理解用户意图，把请求路由到确定性流水线或后台剧组任务 |
 
 **内核是手写的显式循环**（`app/chat/loop.py`，2026-11-05 替换掉 LangGraph 的 StateGraph + ToolNode）：
 
@@ -282,7 +282,7 @@ for step in range(max_steps):        # 上限 8 轮，防止无限工具调用
 系统提示分两层：**触发器留在提示词**（决定该调哪个工具，每轮都要用），**执行细则进技能**
 （`audience: main` 的五个 SKILL.md，由 `load_skill` 工具按需拉）。见 [`DECISIONS.md` D-14](DECISIONS.md)。
 
-41 个工具的实现按域拆在 `app/chat/tools/`（conductor 只留编排，`build_chat_tools` 是装配壳）：
+42 个工具的实现按域拆在 `app/chat/tools/`（conductor 只留编排，`build_chat_tools` 是装配壳）：
 `screenplay.py`（项目与改编）/ `source.py`（读原文）/ `script_reader.py`（读作品）/
 `production.py`（一键流水线）/ `crew.py`（剧组）/ `asset.py`（资产与音色）/
 `video.py`（出片与素材）/ `memory_tools.py`（记忆与技能），

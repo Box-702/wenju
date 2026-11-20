@@ -364,6 +364,48 @@ def build(ctx: ToolContext) -> list:
         )
 
     @tool
+    def run_script_doctor(project_id: str) -> str:
+        """剧本医生：进制作（拆解/出片）前对当前剧本做一次确定性体检，产出质量分/等级/送审建议报告（结构、事件覆盖、台词、开场钩子、过审风险）。用户问「这个剧本能不能拍/有没有问题/体检一下」时调用。零花费、不改数据。参数：project_id=项目 id。"""
+        from ...crew.script_doctor import doctor_script
+        from ...pipeline.story_plan import StoryPlan
+
+        p = ctx.project(project_id)
+        v = store.latest_version(p)
+        if v is None:
+            return "还没有剧本版本，先「生成初稿」（有故事提案的话先确认提案）。"
+        plan = None
+        if (p.story_plan or {}).get("understanding"):
+            try:
+                plan = StoryPlan.model_validate(p.story_plan)
+            except Exception:  # noqa: BLE001
+                plan = None
+        rep = doctor_script(v.script, plan)
+        # 报告全文可能长，对话里给「结论 + 必须修」，完整 md 让模型转述
+        head = (
+            f"质量分 {rep.score}/100（{rep.grade}）；可用性：{rep.usability}；"
+            f"建议：{rep.submission}。评估范围：{rep.stats.get('scenes', 0)} 场 / "
+            f"{rep.stats.get('beats', 0)} 节拍 / {rep.stats.get('dialogue', 0)} 句台词"
+            + (f" / 对照提案事件 {rep.stats.get('events', 0)} 件" if rep.stats.get("events") else "")
+        )
+        errs = [i for i in rep.issues if i.severity == "error"]
+        warns = [i for i in rep.issues if i.severity == "warn"]
+        if not rep.issues:
+            return head + "\n\n各项检查通过，可以直接进制作（拆解镜头 → 出片）。"
+        lines = [head, ""]
+        if errs:
+            lines.append(f"必须修（{len(errs)}）：")
+            lines += [f"  · [{i.area}] {i.text}" for i in errs[:8]]
+            if len(errs) > 8:
+                lines.append(f"  … 另有 {len(errs) - 8} 处")
+        if warns:
+            lines.append(f"建议修（{len(warns)}）：")
+            lines += [f"  · [{i.area}] {i.text}" for i in warns[:6]]
+            if len(warns) > 6:
+                lines.append(f"  … 另有 {len(warns) - 6} 处")
+        lines.append("要我逐条修的话说一声（结构问题走改编，事件丢失走重新扩写，过审风险走改写）。")
+        return "\n".join(lines)
+
+    @tool
     def ask(project_id: str, question: str) -> str:
         """就剧本 / 改编创作提问（参考剧本概况与作者风格），给出有依据的回答。参数：project_id=项目 id，question=问题。"""
         from ...pipeline.knowledge import format_author_style
@@ -397,4 +439,4 @@ def build(ctx: ToolContext) -> list:
         return f"（未配置模型，以下为直接信息）\n{style_text}"
 
     return [create_project, map_novel, propose_arcs, plan_story, confirm_story_plan,
-            generate_script, run_adaptation, ask]
+            generate_script, run_adaptation, run_script_doctor, ask]

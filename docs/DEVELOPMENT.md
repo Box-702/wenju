@@ -3558,3 +3558,21 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   组单元只查组头一次（提交的是组提示词，覆盖全组机位）。
 - **涉及文件**：`app/pipeline/repair.py`（新模块）· `app/chat/tools/video.py`
   （+3 工具，41 个）· `tests/test_repair.py`（14 例）
+
+### 5.83 剧本医生：兜底话判据要前缀匹配，不能全等（2026-11-20，C3）
+
+- **症状**：给剧本医生写「目的没填」检查时，判据写成 `"推进情节" == sc.purpose`
+  全等，测试 `test_兜底目的亮黄灯` 直接不亮——兜底文本抓不到。
+- **根因**：场景目的的兜底默认值来自 `_SceneIn`，实际值是「推进情节。」
+  （**带句号**），全等比较 `== "推进情节"` 永远差一个标点。这类「默认值带不带
+  标点」的坑在回填/审计里反复出现（5.78 的场次标题兜底「第 N 场」同款）。
+- **解法**：判据改成「空 或 以兜底前缀开头」——`startswith("推进情节")`，
+  模型照抄默认值（带任何后缀）都能抓到。剧本医生 `app/crew/script_doctor.py`
+  全部确定性规则：结构（validate_script + 空节拍 + 兜底目的 + 缺昼夜）、
+  事件覆盖（对照 story_plan 清单，探针取事件最长片段命中节拍文本）、
+  台词（无说话人 error、单场口播超 30s warn）、开场钩子（头两节拍无对白
+  无位移级动作 warn）、过审词表（直陈暴力/裸露/药品 warn → pass_with_check）。
+  质量分 100−error×12−warn×4，等级 A/B/C，送审建议 pass / pass_with_check /
+  needs_review。对话工具 `run_script_doctor`（42 个工具）。
+- **涉及文件**：`app/crew/script_doctor.py`（新模块）· `app/chat/tools/screenplay.py`
+  （run_script_doctor）· `tests/test_script_doctor.py`（11 例）

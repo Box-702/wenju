@@ -46,6 +46,129 @@ _VERDICT_FAIL = re.compile(r"VERDICT\s*[:：]\s*FAIL", re.IGNORECASE)
 _VERDICT_PASS = re.compile(r"VERDICT\s*[:：]\s*PASS", re.IGNORECASE)
 _ISSUE_LINE = re.compile(r"^\s*ISSUE\s*[:：]\s*(.+)$", re.MULTILINE | re.IGNORECASE)
 
+# ---- 声音闸门（2026-11-20《替身v2》复盘 A4）----
+#
+# 视觉质检看不见声音：native 音画同生下台词镜约一半根本没出人声
+# （14 个成片实测：4 个台词镜只有 2 个语音频段有能量；006_024 字幕写着
+# 「辛苦了，喝点水吧」而音轨 mean −33.4dB = 纯环境噪声），一路漏到成片。
+#
+# 阈值按同一批成片校准（不是拍的）：语音频段（200–3500Hz 带通）
+# mean_volume > −32dB 算有人声。分界干净——有人声的台词镜 −19～−30dB，
+# 没人声的台词镜 −35.9dB 正落在无台词镜的噪声区（−33～−44dB）。
+VOICE_MIN_DB = -32.0
+_SPEECH_BAND_FILTER = "highpass=f=200,lowpass=f=3500,volumedetect"
+# 官方音画台词句式（与 dp._OFFICIAL_DLG_RE 同判据）：冒号挂引号才算台词。
+# 招牌引用（写下「…」）不带冒号，不该被要求出人声。
+_PROMPT_DIALOGUE_RE = re.compile(r"[:：]\s*[「『“\"]")
+
+
+def prompt_has_dialogue(prompt: str) -> bool:
+    """这条提示词（单镜或组提示词）里有没有该出人声的台词。"""
+    return bool(_PROMPT_DIALOGUE_RE.search(prompt or ""))
+
+
+def _download_clip(video_url: str, dest: Path) -> bool:
+    try:
+        with httpx.Client(timeout=120, follow_redirects=True,
+                          trust_env=False) as client:
+            with client.stream("GET", video_url) as resp:
+                resp.raise_for_status()
+                with dest.open("wb") as f:
+                    for chunk in resp.iter_bytes():
+                        f.write(chunk)
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.warning("声音检测下载失败（按跳过处理）：%s", e)
+        return False
+
+
+def _speech_band_mean_db(path: Path) -> float | None:
+    """语音频段平均音量（dB）。ffmpeg 缺失或测量失败 → None（按跳过处理）。"""
+    ffmpeg = _ffmpeg()
+    if not ffmpeg:
+        return None
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            [ffmpeg, "-hide_banner", "-i", str(path),
+             "-af", _SPEECH_BAND_FILTER, "-f", "null", "-"],
+            capture_output=True, text=True, timeout=120,
+            encoding="utf-8", errors="replace",
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("声音检测失败（按跳过处理）：%s", e)
+        return None
+    m = re.search(r"mean_volume:\s*(-?[\d.]+) dB", r.stderr)
+    return float(m.group(1)) if m else None
+
+
+def _has_audio_stream(path: Path) -> bool | None:
+    """成片有没有音频流：True 有 / False 没有 / None 探测不可用。"""
+    probe = _ffprobe()
+    if not probe:
+        # 便携版常缺 ffprobe：回退解析 ffmpeg -i 的 Stream # 行。
+        ffmpeg = _ffmpeg()
+        if not ffmpeg:
+            return None
+        import subprocess
+
+        try:
+            r = subprocess.run([ffmpeg, "-i", str(path)],
+                               capture_output=True, text=True, timeout=30,
+                               encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            return None
+        return "Audio:" in (r.stderr or "")
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            [probe, "-v", "quiet", "-show_entries", "stream=codec_type",
+             "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if r.returncode != 0:
+        return None
+    return "audio" in (r.stdout or "")
+
+
+def voice_check(video_url: str) -> dict[str, Any]:
+    """台词镜的声音存在性检测（确定性，零 LLM 零花费）。
+
+    返回 {"verdict": "pass"|"fail"|"skipped", "mean_db": float|None, "note": str}。
+    video_url 可为本地路径（离线/测试用）。ffmpeg 缺失 → skipped
+    （与视觉质检同口径：工具不齐不阻断任务）。
+    """
+    if not _ffmpeg():
+        return {"verdict": "skipped", "mean_db": None, "note": "找不到 ffmpeg"}
+    try:
+        with tempfile.TemporaryDirectory(prefix="voice_qa_") as tmp:
+            local = Path(video_url)
+            if local.exists():
+                clip = local
+            else:
+                clip = Path(tmp) / "clip.mp4"
+                if not _download_clip(video_url, clip):
+                    return {"verdict": "skipped", "mean_db": None, "note": "下载失败"}
+            mean = _speech_band_mean_db(clip)
+            if mean is None:
+                # 读不出 mean：要么没有音轨，要么测量异常。
+                # 没有音轨的台词镜必然「有字幕没声音」→ fail；异常保守按 skipped
+                #（误重 roll 花钱，误放过有人工复核）。
+                if _has_audio_stream(clip) is False:
+                    return {"verdict": "fail", "mean_db": None, "note": "成片没有音轨"}
+                return {"verdict": "skipped", "mean_db": None, "note": "音量测量异常"}
+    except Exception as e:  # noqa: BLE001
+        log.warning("声音检测异常（按跳过处理）：%s", e)
+        return {"verdict": "skipped", "mean_db": None, "note": str(e)[:80]}
+    if mean < VOICE_MIN_DB:
+        return {"verdict": "fail", "mean_db": mean,
+                "note": f"语音频段平均 {mean:.1f}dB（≤{VOICE_MIN_DB}dB 噪声底），台词没出人声"}
+    return {"verdict": "pass", "mean_db": mean, "note": ""}
+
 
 def _ffmpeg() -> str | None:
     from ..config import get_settings
@@ -464,7 +587,19 @@ def reroll_if_needed(
 
     duration = float(params.get("duration_sec") or 0)
     segments = _group_segments(job, store)
+
+    # 声音闸门（A4，2026-11-20）：台词镜先查「人声到底出没出」——视觉抽帧
+    # 看不见声音，006_024 那种「有字幕没声音」的漏过整条质检链路。
+    # 确定性测量（ffmpeg 带通 + volumedetect），零 LLM 零花费。
+    voice = voice_check(job.video_url) if prompt_has_dialogue(job.prompt) else None
+
     result = qa_check(job.video_url, duration_sec=duration)
+    if voice is not None:
+        result = dict(result)
+        result["voice"] = voice
+        if voice["verdict"] == "fail":
+            result["verdict"] = "fail"
+            result["issues"] = [f"声音：{voice['note']}"] + list(result.get("issues") or [])
     params["qa"] = result
     store.update_video_job(job_id, params=params)
 
@@ -483,10 +618,17 @@ def reroll_if_needed(
         return None
 
     # 反馈驱动：重 roll 不是原样重抽，而是按缺陷改写提示词后再抽。
-    new_prompt = rewrite_prompt_for_retry(
-        job.prompt, result["issues"],
-        segments=segments, duration_sec=duration, frame_count=result.get("frames"),
-    )
+    # 例外——**纯声音缺陷**（画面合格、只是台词没出人声）改写没有着力点：
+    # 台词文字本来就在提示词里，音画同生的出声是随机事件，同参数重抽即可
+    # （孔乙己实测同参数重 roll 治的就是这类随机性；构图降级规则帮不上）。
+    visual_issues = [i for i in (result.get("issues") or []) if not i.startswith("声音：")]
+    if voice is not None and voice["verdict"] == "fail" and not visual_issues:
+        new_prompt = job.prompt
+    else:
+        new_prompt = rewrite_prompt_for_retry(
+            job.prompt, result["issues"],
+            segments=segments, duration_sec=duration, frame_count=result.get("frames"),
+        )
     rewritten = new_prompt != job.prompt
     new_job = store.create_video_job(
         project_id=job.project_id,

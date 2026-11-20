@@ -31,6 +31,15 @@ EST_LINE_GAP_SEC = 0.15
 EST_LEAD_SEC = 0.4       # 镜头开始后多久出第一句（与配音 LINE_LEAD_SEC 一致）
 
 
+def _shot_lead(lines: list, shot_dur: float) -> float:
+    """该镜字幕的起始偏移：台词带 dialogue_at（DubLine.at_sec）就用它，
+    钳进 [EST_LEAD_SEC, 镜长-留尾]；没有就退回 EST_LEAD_SEC（旧行为）。"""
+    at = next((ln.at_sec for ln in lines if getattr(ln, "at_sec", None) is not None), None)
+    if at is None:
+        return EST_LEAD_SEC
+    return max(EST_LEAD_SEC, min(float(at), max(EST_LEAD_SEC, shot_dur - 1.3)))
+
+
 @dataclass
 class SubEntry:
     """一条字幕：起止时刻（成片内绝对毫秒）+ 文本。"""
@@ -148,7 +157,12 @@ def timeline_estimated(
         durs = [max(EST_LINE_MIN_SEC, len(ln.text) / CHARS_PER_SEC) for ln in lines]
         need = sum(durs) + EST_LINE_GAP_SEC * (len(lines) - 1)
         scale = min(1.0, window / need) if need > 0 else 1.0
-        cursor = base + EST_LEAD_SEC
+        # 开口时刻与配音同口径（2026-11-20 修）：导演给了 dialogue_at 就用它，
+        # 没给才落 EST_LEAD_SEC。旧写法一律 EST_LEAD_SEC，导致同一份片子
+        # 切 native/dub 两种模式时字幕与台词的相对位置不一样——dub 实测轨道
+        # 尊重 dialogue_at，估算轨道却把它吞了（画面里人物第 3 秒才张嘴，
+        # 字幕第 0.4 秒就出来了）。
+        cursor = base + _shot_lead(lines, shot_dur.get(shot_id, 5.0))
         for ln, d in zip(lines, durs, strict=True):
             dur = max(0.5, d * scale)
             entries.append(SubEntry(

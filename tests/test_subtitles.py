@@ -109,6 +109,34 @@ def test_estimated_timeline_without_dialogue_is_empty():
     assert timeline_estimated(script, _shots()) == []
 
 
+def test_estimated_timeline_respects_dialogue_at():
+    """估算字幕起始对齐 dialogue_at（A4，2026-11-20）：dub 实测轨道一直尊重
+    它，估算轨道旧写法一律 0.4s 吞掉了 → 同一份片子切 native/dub 字幕位置
+    不一致（画面里人物第 3 秒才张嘴，字幕第 0.4 秒就出来）。
+
+    段对齐把两句对白都落到第二镜（动作段→镜1，对话段→镜2）。"""
+    shots = [
+        Shot(id="shot_scene_001_001", scene_id="scene_001", order=0,
+             duration_sec=6, dialogue_at=None),
+        Shot(id="shot_scene_001_002", scene_id="scene_001", order=1,
+             duration_sec=8, dialogue_at=3.0),
+    ]
+    entries = timeline_estimated(_script(), shots)
+    in_shot2 = [e for e in entries if e.shot_id == "shot_scene_001_002"]
+    assert len(in_shot2) == 2
+    # 镜2 起始 = 6.0s（镜1 时长）+ dialogue_at 3.0 → 字幕不早于 9.0s
+    assert all(e.start_ms >= 9000 for e in in_shot2)
+    # 仍不出窗口（6–14s）
+    assert all(e.end_ms <= 14000 for e in in_shot2)
+
+
+def test_estimated_timeline_without_dialogue_at_keeps_legacy_lead():
+    """没给 dialogue_at 的镜头行为逐字节不变：0.4s 起（旧口径）。"""
+    entries = timeline_estimated(_script(), _shots())
+    in_shot2 = [e for e in entries if e.shot_id == _shots()[1].id]
+    assert in_shot2 and in_shot2[0].start_ms == int((6.0 + 0.4) * 1000)
+
+
 # ---------- 配音时间轴 ----------
 
 

@@ -164,7 +164,7 @@ onBeforeUnmount(() => {
       <template v-if="tab === 'settings'">
         <div v-if="!sp" class="sv-empty">
           <AppIcon name="edit" class="empty-ic" />
-          <p>还没有故事提案——在右侧对话里说「读原文做分集提案」</p>
+          <p>还没有故事提案——点左栏「对话」回去说「读原文做分集提案」</p>
         </div>
 
         <template v-else>
@@ -240,7 +240,7 @@ onBeforeUnmount(() => {
       <template v-else-if="tab === 'outline'">
         <div v-if="!sp" class="sv-empty">
           <AppIcon name="edit" class="empty-ic" />
-          <p>还没有分集提案——在右侧对话里说「读原文做分集提案」</p>
+          <p>还没有分集提案——点左栏「对话」回去说「读原文做分集提案」</p>
         </div>
         <div v-else-if="!(sp.episodes || []).length" class="sv-empty">
           <p>提案里还没有分集条目</p>
@@ -271,7 +271,7 @@ onBeforeUnmount(() => {
           @saved="loadViewer()"
         />
         <div v-else class="sv-empty">
-          <p>还没有剧本正文——在右侧对话里说「按提案写第 1 集剧本」</p>
+          <p>还没有剧本正文——点左栏「对话」回去说「按提案写第 1 集剧本」</p>
         </div>
       </template>
 

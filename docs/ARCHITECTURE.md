@@ -88,7 +88,7 @@ N2D/                          小说→成片直跑工作流（体检/批处理�
 | `chat/` | 4063 | 内核 + 编排 + **42 个工具实现**（按域拆 10 个模块） |
 | `media/` | 3300 | 参考资产 / 配音 / 字幕 / 白模施工 / 资产实体层 |
 | `api/` | 3462 | 10 个域模块（+ common/schemas/deps），**100 条路由** |
-| `pipeline/` | 3499 | 内容生产线：导入、两阶段生成、patch、评审、题材画像、建图、提示词包 |
+| `pipeline/` | 4064 | 内容生产线：导入、两阶段生成、patch、评审、题材画像、建图、提示词包、故事规划、台词修复 |
 | `crew/` | 3537 | 三个剧组角色的编排（提示词正文已外置到 `skills/`） |
 | `store.py` | 2084 | **19 张表**的持久化层（含出片意图 claim 表 `video_job_claims`，见 D-38） |
 | `agent/` | 1780 | 7 节点图 + 后台任务运行器 |
@@ -419,11 +419,16 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
   pipeline/importer.py    编码容错解析 → 原文 + 章节结构
 
 ② 生成初稿          pipeline/generation.py（两阶段，防退化）
+  前置（可选）  pipeline/story_plan.py   理解卡 + 分集提案（D-71）：
+                plan_story 提案 → 用户确认 → generate_script(story_plan=) 按集扩写
   Stage 1  _stage_bible    故事圣经：人物 / 地点 / 主题 / 梗概
   Stage 2  _stage_scenes   按戏剧单元拆场（一地 + 连续时间 + 一个目标 + 一场冲突）
                            → Script：scenes（目的/冲突/入出状态）+ beats（动作/对白）
   ★ 容错层：模型 id 不合规 / 结构错位 / 多章塌成一场，都有兼容与退化护栏
   ★ 别名索引：模型用 id 指代人物时认回本人，不凭空多出假角色（D-69 / 5.78）
+  ★ 台词一致性：pipeline/repair.py 剧本↔提示词逐镜比对，分叉定位/按原文修复/
+    带上下文替换（对话工具 find_prompt_divergence / repair_prompt_dialogue /
+    replace_in_prompts）；体检报告 crew/script_doctor.py（质量分/送审建议）
   ★ 剧本型原文：pipeline/screenplay.py 解析「第N场·标题」「内景·地点·时间」，
     按地点名对齐后**只补空不覆盖**地回填场次标题与昼夜（D-70 / 5.78）
 

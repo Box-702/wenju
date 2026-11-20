@@ -212,7 +212,7 @@ function scrollToCard(key) {
 
       <div v-else-if="!cards.length" class="clips-empty">
         <AppIcon name="film" class="empty-ic" />
-        <p>还没有分镜——在右侧对话里说「拆解镜头」</p>
+        <p>还没有分镜——点左栏「对话」回去说「拆解镜头」</p>
       </div>
 
       <section

@@ -315,6 +315,92 @@ def build(ctx: ToolContext) -> list:
                 f"状态重置为待审，等用户批准后才可以出片。{tail}")
 
     @tool
+    def find_prompt_divergence(project_id: str) -> str:
+        """检查「剧本台词」与「镜头提示词里的台词」是否一致（用户说「台词和剧本对不上」「配音念的不是这句」「字幕和画面说的不一样」时先调这个）。确定性比对、零花费：逐提交单元列出漏写/被改写的台词。参数：project_id=项目 id。"""
+        from ...pipeline.repair import find_divergences
+
+        p = ctx.project(project_id)
+        v = ctx.latest_video_version(p)
+        sv = store.latest_version(p)
+        if v is None or not v.shots:
+            return "还没有镜头提示词，先拆解镜头并生成提示词。"
+        if sv is None:
+            return "没有剧本版本，无法比对台词（比对的前提是剧本权威）。"
+        shots = [dict(s) for s in v.shots if isinstance(s, dict)]
+        rep = find_divergences(sv.script, shots)
+        if not rep.divergences:
+            return f"台词一致性检查通过：{rep.checked} 个提交单元的提示词台词与剧本逐字一致。"
+        lines = [f"发现 {len(rep.divergences)} 处台词分叉（查了 {rep.checked} 个提交单元）："]
+        for d in rep.divergences[:12]:
+            mark = "漏写" if d.kind == "missing" else "改写"
+            lines.append(f"  · {d.shot_id}（{mark}）{d.detail}")
+        if len(rep.divergences) > 12:
+            lines.append(f"  … 另有 {len(rep.divergences) - 12} 处")
+        lines.append("要我按剧本原文修复吗？（修复后这些镜头会回到待审，需要重新批准才能出片。）")
+        return "\n".join(lines)
+
+    @tool
+    def repair_prompt_dialogue(project_id: str) -> str:
+        """把提示词里漏写/被改写的台词修复成剧本原文（逐字），修复的提交单元打回待审。用户确认修复后调用；配合 find_prompt_divergence 使用。参数：project_id=项目 id。"""
+        from ...crew.dramaturgy import refresh_prompt_audits
+        from ...pipeline.repair import repair_dialogue
+
+        p = ctx.project(project_id)
+        v = ctx.latest_video_version(p)
+        sv = store.latest_version(p)
+        if v is None or not v.shots or sv is None:
+            return "缺少镜头方案或剧本版本，无法修复。"
+        shots = [dict(s) for s in v.shots if isinstance(s, dict)]
+        rep = repair_dialogue(sv.script, shots)
+        if not rep.repaired_shots:
+            return "台词与剧本一致，不需要修复。"
+        style_ctx = str((v.style_guide or {}).get("camera_style") or "")
+        refresh_prompt_audits(shots, style_context=style_ctx)
+        version = store.create_video_version(
+            project_id=p.id, shots=shots, style_guide=v.style_guide,
+            source_type="manual", label="台词一致性修复",
+            notes="；".join(rep.notes), parent_version_id=v.id,
+        )
+        done = [d for d in rep.divergences]
+        return (
+            f"已修复 {len(rep.repaired_shots)} 个提交单元的台词（新镜头版本 {version.id}）："
+            f"漏写 {sum(1 for d in done if d.kind == 'missing')} 处、改写 {sum(1 for d in done if d.kind == 'wrong')} 处。"
+            "这些镜头已回到待审——需要重新批准才能出片；已出片且想换版本的，说「重出这几镜」。"
+        )
+
+    @tool
+    def replace_in_prompts(project_id: str, old_text: str, new_text: str, context: str = "") -> str:
+        """在所有镜头提示词里做精确文字替换（用户点名「把 X 改成 Y」但不是台词分叉时，如场景道具名、称谓）。规则：某镜头内唯一匹配才动；出现多次必须带 context（紧邻的上下文片段）定位，工具不猜。改过的镜头打回待审。参数：project_id=项目 id；old_text=被替换文字；new_text=替换成；context=上下文片段（多处匹配时必填）。"""
+        from ...crew.dramaturgy import refresh_prompt_audits
+        from ...pipeline.repair import replace_text
+
+        p = ctx.project(project_id)
+        v = ctx.latest_video_version(p)
+        if v is None or not v.shots:
+            return "还没有镜头提示词，先拆解镜头并生成提示词。"
+        shots = [dict(s) for s in v.shots if isinstance(s, dict)]
+        changed, rejected = replace_text(shots, old_text, new_text, context=context)
+        if not changed and not rejected:
+            return f"没有镜头的提示词包含「{old_text[:30]}」，没有改动。"
+        tail = ""
+        if rejected:
+            tail = "\n没动的镜头：" + "；".join(rejected[:5]) + "（带上下文再来一次）"
+        if not changed:
+            return "因多处匹配需要精确定位，这次没有改动。" + tail
+        style_ctx = str((v.style_guide or {}).get("camera_style") or "")
+        refresh_prompt_audits(shots, style_context=style_ctx)
+        version = store.create_video_version(
+            project_id=p.id, shots=shots, style_guide=v.style_guide,
+            source_type="manual", label="提示词文字替换",
+            notes=f"「{old_text[:40]}」→「{new_text[:40]}」", parent_version_id=v.id,
+        )
+        return (
+            f"已在 {len(changed)} 个镜头的提示词里完成替换（新镜头版本 {version.id}），"
+            f"这些镜头回到待审：{'、'.join(changed[:8])}"
+            + ("…" if len(changed) > 8 else "") + "。" + tail
+        )
+
+    @tool
     def cancel_video_job(project_id: str, shot_id: str) -> str:
         """取消某个镜头正在进行的视频生成任务（排队中/生成中）。用户说「取消/停掉这一镜」时调用；对成片不满意想立刻重出时，先取消再 rerun_video。参数：project_id=项目 id；shot_id=镜头 id。"""
         p = ctx.project(project_id)
@@ -462,6 +548,9 @@ def build(ctx: ToolContext) -> list:
         generate_video,
         rerun_video,
         edit_shot_prompt,
+        find_prompt_divergence,
+        repair_prompt_dialogue,
+        replace_in_prompts,
         cancel_video_job,
         finalize_film,
     ]

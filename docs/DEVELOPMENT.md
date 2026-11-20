@@ -3537,3 +3537,24 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   （story_plan 参数 + scope_note 注入三处调用点）· `app/store.py`
   （story_plan_json 列 + 迁移 + set_story_plan）· `app/chat/tools/screenplay.py`
   （两个新工具，38 个）· `tests/test_story_plan.py`（13 例，含工具层闭环）
+
+### 5.82 台词一致性修复：意译分叉要靠顺序配对，不能靠包含关系（2026-11-20，C2）
+
+- **症状**（对标即梦实操记录发现的能力缺口）：DP 的 prompt_body 是 LLM 写的，
+  它会把剧本台词**意译**成另一句（「不出一月，定然还清」写成「一个月肯定还你」），
+  或整段漏写；native 模式下台词文字就是成片人声与字幕的唯一来源——分叉 =
+  用户看到的「台词和剧本对不上」「配音念的不是这句」。即梦的 Agent 能定位
+  这种分叉并按原文精确替换、只重出受影响片段，我们此前完全没有这条路。
+- **根因**：比对判据若用「归一后子串包含」，意译句与原文往往**零公共子串**
+  （上面那对就是），永远判不出来；只有「该漏写」和「该改写」两种状态。
+- **解法**：`app/pipeline/repair.py` 确定性比对——剧本节拍经
+  `assign_dialogue_ranges` 得到每镜「该说的」，提示词按官方句式抽出「写了的」，
+  **按顺序配对**：逐字命中=干净；有未配对的实际台词=意译（wrong）；
+  没有=漏写（missing）。修复只动台词句（wrong 整段换回原文句式、missing
+  按 A2 的口径插动作链中段），改过的单元打回 needs_review。
+  工具层三件套：`find_prompt_divergence`（查）、`repair_prompt_dialogue`（修）、
+  `replace_in_prompts`（带上下文精确替换——即梦记录里「工具按唯一匹配逐处替换
+  改不动，改用带上下文精确定位」的同款坑，多处匹配无 context 一律拒绝不猜）。
+  组单元只查组头一次（提交的是组提示词，覆盖全组机位）。
+- **涉及文件**：`app/pipeline/repair.py`（新模块）· `app/chat/tools/video.py`
+  （+3 工具，41 个）· `tests/test_repair.py`（14 例）

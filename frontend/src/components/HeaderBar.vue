@@ -56,7 +56,7 @@ function openWorkbench() {
     <!-- 顶栏按钮 = 右侧栏的视图开关：默认不显式（无边框），
          正显示这个视图时才有边框；右侧栏收起就没有边框。 -->
     <button
-      :class="['ghost', 'page-btn', { on: store.rightOpen && store.sideView === 'assets' }]"
+      :class="['ghost', 'page-btn', { on: store.wbView === 'roles' }]"
       title="资产库（角色 / 场景 / 素材）"
       @click="emit('switch-view', 'assets')"
     >
@@ -64,7 +64,7 @@ function openWorkbench() {
     </button>
 
     <button
-      :class="['ghost', 'page-btn', { on: store.rightOpen && store.sideView === 'skills' }]"
+      :class="['ghost', 'page-btn', { on: store.overlay === 'skills' }]"
       title="技能"
       @click="emit('switch-view', 'skills')"
     >
@@ -72,7 +72,7 @@ function openWorkbench() {
     </button>
 
     <button
-      :class="['ghost', 'page-btn', { on: store.rightOpen && store.sideView === 'shots' }]"
+      :class="['ghost', 'page-btn', { on: store.wbView === 'clips' }]"
       title="产出（镜头与提示词）"
       @click="emit('switch-view', 'shots')"
     >

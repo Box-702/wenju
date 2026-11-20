@@ -1230,12 +1230,33 @@ class Store:
             s.refresh(a)
             return a
 
-    def list_assets(self, project_id: str, kind: str | None = None) -> list[MediaAsset]:
+    def list_assets(self, project_id: str, kind: str | None = None) -> list[Any]:
+        """素材列表（**不加载文件本体**，返回轻量属性对象）。
+
+        content 是几十 MB 的 BLOB：整列加载 + created_at 排序会让 SQLite
+        把行溢出到临时文件再打开失败——2026-11-20 实测 4 条成片 video
+        （20MB×4）`select * ... order by` 直接 503「unable to open database
+        file」。列表页只需要元数据 + 大小，本体走 get_asset 单条取。
+        返回 SimpleNamespace（保持 .id/.kind/.url 属性访问不破），多带一个
+        content_size（字节，SQL 层 length() 算好）；**没有 content**。
+        """
+        from types import SimpleNamespace
+
+        from sqlalchemy import func
+
         with self.session() as s:
-            q = s.query(MediaAsset).filter_by(project_id=project_id)
+            q = s.query(
+                MediaAsset.id, MediaAsset.project_id, MediaAsset.kind,
+                MediaAsset.name, MediaAsset.source, MediaAsset.url,
+                MediaAsset.file_path,
+                func.length(MediaAsset.content).label("content_size"),
+                MediaAsset.duration_sec, MediaAsset.width, MediaAsset.height,
+                MediaAsset.created_at,
+            ).filter(MediaAsset.project_id == project_id)
             if kind:
-                q = q.filter_by(kind=kind)
-            return q.order_by(MediaAsset.created_at.desc()).all()
+                q = q.filter(MediaAsset.kind == kind)
+            rows = q.order_by(MediaAsset.created_at.desc()).all()
+            return [SimpleNamespace(**dict(r._mapping)) for r in rows]
 
     def get_asset(self, asset_id: str) -> MediaAsset | None:
         with self.session() as s:

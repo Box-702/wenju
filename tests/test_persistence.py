@@ -133,3 +133,33 @@ def test_attach_storage_after_construction(store):
             break
         time.sleep(0.01)
     assert store.get_subagent_task(task_id)["name"] == "后置挂载"
+
+
+def test_list_assets_不加载大本体_带content_size(store):
+    """list_assets 曾经 select * 把 content BLOB 全拉进内存再排序：
+    2026-11-20 实测 4 条 20MB 成片让 SQLite 排序溢出临时文件失败，接口 503
+    「unable to open database file」。契约：列表返回轻量对象——元数据齐全、
+    带 content_size（SQL 层 length 算好）、**没有 content 属性**。
+    本体单条取仍走 get_asset（回放接口依赖它）。"""
+    p = store.create_project(title="本体测试", adaptation_type="short_drama", language="zh-CN", raw_text="x")
+    big = b"M" * (3 * 1024 * 1024)
+    a1 = store.add_asset(p.id, kind="video", name="v1.mp4", source="finalize",
+                        url="/api/assets/file/x1", id="asset_x1", content=big)
+    a2 = store.add_asset(p.id, kind="audio", name="a1.mp3", source="upload",
+                         url="/api/assets/file/x2", id="asset_x2", content=b"AAA")
+
+    rows = store.list_assets(p.id, kind="video")
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.id == "asset_x1" and r.kind == "video" and r.name == "v1.mp4"
+    assert r.content_size == len(big)          # 大小在 SQL 层算好
+    assert not hasattr(r, "content"), "列表不许带本体（大 BLOB 排序撑爆 SQLite）"
+
+    # 全量列表：排序 created_at 倒序，轻量
+    allrows = store.list_assets(p.id)
+    assert [x.id for x in allrows] == ["asset_x2", "asset_x1"] or \
+           {x.id for x in allrows} == {"asset_x1", "asset_x2"}
+
+    # 本体单条取仍完整（回放链路不破）
+    full = store.get_asset("asset_x1")
+    assert full is not None and full.content and len(full.content) == len(big)

@@ -3641,3 +3641,22 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   彻底解法是后端统一输出带 Z 的 ISO（涉及全部接口与既有前端消费方，单独排期）；
   本次先修新代码，别再往裸串上叠新调用。
 - **涉及文件**：`frontend/src/components/workbench/AgentPanel.vue`（fmtRel）
+
+### 5.86 list_assets 把大 BLOB 全加载再排序撑爆 SQLite：视频接口 503（2026-11-20）
+
+- **症状**：即梦式资产库页四个类型 tab 计数全 0；单独 curl `assets?kind=video`
+  稳定 503「unable to open database file」，而 image/audio 200。裸 sqlite3 复现：
+  `select id,length(content)` 正常、`select * ... order by created_at` 必炸。
+- **根因**：`list_assets` 用 ORM `select *` 把 `content`（文件本体 BLOB）整列
+  加载，再按 created_at 排序。这个库里有 4 条成片 video（20MB×4），SQLite 排序
+  时把大行溢出到临时文件、再打开失败——只有 video 类带大本体所以只有它炸。
+  列表接口根本不需要本体（`_asset_dict` 就没读 content）。
+- **解法**：`list_assets` 改为只 select 元数据列 + `func.length(content) AS
+  content_size`（SQL 层算大小，不搬运字节），返回 SimpleNamespace（保持调用方
+  `.id/.kind/.url` 属性访问不破，多带 content_size、**没有 content**）；本体
+  单条取仍走 `get_asset`（回放链路不破）。消费方 asset.py 的 `len(a.content)`
+  改用 content_size。加回归测试锁契约（大本体列表不加载 + get_asset 仍完整）。
+- **教训**：列表查询里任何「整列加载 BLOB/大文本」都是定时炸弹，行数一多或
+  单行一大就撞 SQLite 排序溢出；列表只要元数据，大小用 SQL 的 length() 算。
+- **涉及文件**：`app/store.py`（list_assets）· `app/chat/tools/asset.py`（content_size）·
+  `tests/test_persistence.py`（回归）

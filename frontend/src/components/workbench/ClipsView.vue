@@ -257,7 +257,36 @@ function onScrubClick(e) {
   const frac = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width))
   seekGlobal(frac * totalSec.value)
 }
+// 拖动中抑制 click：拖完 0px 内才算点击（selectCard 开头判 dragged）
+const stripEl = ref(null)
+let dragOrigin = null
+const dragged = ref(false)
+function onStripDown(e) {
+  if (e.button !== 0 || !stripEl.value) return
+  dragOrigin = { x: e.clientX, left: stripEl.value.scrollLeft }
+  dragged.value = false
+}
+function onStripMove(e) {
+  if (!dragOrigin || !stripEl.value) return
+  const dx = e.clientX - dragOrigin.x
+  if (Math.abs(dx) > 6) dragged.value = true
+  if (dragged.value) stripEl.value.scrollLeft = dragOrigin.left - dx
+}
+function onStripUp() {
+  dragOrigin = null
+  // click 在 pointerup 之后触发，留一拍让 selectCard 读到 dragged 再复位
+  setTimeout(() => { dragged.value = false }, 0)
+}
+function onStripWheel(e) {
+  // 竖向滚轮/触控板纵滚映射为横滚（胶片条是横向溢出）
+  if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && stripEl.value) {
+    e.preventDefault()
+    stripEl.value.scrollLeft += e.deltaY
+  }
+}
+
 function selectCard(c) {
+  if (dragged.value) return
   cardKey.value = c.key
   const i = clipOfCard(c.key)
   if (i >= 0) seekGlobal(segStart.value[i] + 0.01)
@@ -451,7 +480,11 @@ const hasAny = computed(() => cards.value.length > 0)
       </div>
 
       <!-- 底部胶片条：点片段 = 切编辑对象 + 跳连播位置 -->
-      <footer class="strip">
+      <footer
+        ref="stripEl" class="strip"
+        @pointerdown="onStripDown" @pointermove="onStripMove"
+        @pointerup="onStripUp" @pointerleave="onStripUp" @wheel="onStripWheel"
+      >
         <button
           v-for="c in (ep ? ep.cards : [])" :key="c.key"
           class="strip-item" :class="{ on: card && c.key === card.key }"
@@ -606,14 +639,17 @@ const hasAny = computed(() => cards.value.length > 0)
 
 /* ---- 底部胶片条 ---- */
 .strip {
-  flex: none; display: flex; gap: 8px; padding: 10px 16px;
-  border-top: 1px solid var(--line); overflow-x: auto;
+  flex: none; display: flex; gap: 10px; padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  overflow-x: auto; scrollbar-width: thin;
+  cursor: grab; user-select: none; touch-action: pan-y;
 }
+.strip:active { cursor: grabbing; }
 .strip-item {
-  position: relative; flex: none; display: flex; flex-direction: column; gap: 4px;
-  padding: 6px 8px; border-radius: var(--radius-sm);
+  position: relative; flex: none; display: flex; flex-direction: column; gap: 5px;
+  padding: 7px 8px; border-radius: var(--radius-md);
   border: 1px solid var(--line); background: var(--surface);
-  color: var(--muted); font-size: 11px; cursor: pointer;
+  color: var(--muted); font-size: 11.5px; cursor: pointer;
 }
 .strip-item.on {
   border-color: color-mix(in oklch, var(--gold) 65%, transparent);
@@ -623,11 +659,11 @@ const hasAny = computed(() => cards.value.length > 0)
     0 2px 12px color-mix(in oklch, var(--gold) 16%, transparent);
 }
 .thumb {
-  display: grid; place-items: center; width: 84px; height: 47px;
-  border-radius: 4px; overflow: hidden; background: #000;
+  display: grid; place-items: center; width: 150px; height: 84px;
+  border-radius: 6px; overflow: hidden; background: #000;
 }
 .thumb video { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
-.thumb :deep(svg) { width: 16px; height: 16px; color: var(--dim); }
+.thumb :deep(svg) { width: 22px; height: 22px; color: var(--dim); }
 .strip-label { white-space: nowrap; }
 .dot { position: absolute; top: 8px; right: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--dim); }
 .dot.ok { background: var(--ok); }

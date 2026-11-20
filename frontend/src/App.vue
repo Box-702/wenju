@@ -11,7 +11,6 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import HeaderBar from './components/HeaderBar.vue'
 import HomePage from './components/HomePage.vue'
 import AssetPanel from './components/AssetPanel.vue'
-import ContextPanel from './components/ContextPanel.vue'
 import ViewerPanel from './components/ViewerPanel.vue'
 import PageShell from './components/PageShell.vue'
 import SkillsPage from './components/SkillsPage.vue'
@@ -23,56 +22,53 @@ import PromptEditor from './components/video/PromptEditor.vue'
 import AssetPreview from './components/AssetPreview.vue'
 import Toast from './components/Toast.vue'
 import IconRail from './components/workbench/IconRail.vue'
+import AssetTree from './components/workbench/AssetTree.vue'
 import WorkbenchView from './components/workbench/WorkbenchView.vue'
 import AgentPanel from './components/workbench/AgentPanel.vue'
 import { loadTree, loadWorkspace, loadProjectFiles, restorePanelPrefs, toggleRightPanel, toggleAgentPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, loadAssetRefs, closePromptEditor, saveShotPrompt, loadStoryPlan, closeVideo } from './stores/app'
 import { initNav, pushNav } from './nav'
 import { importProject } from './api'
 
-// ---- 侧边栏自动弹出（通用上下文侧边栏的核心行为） ----
-// 出片时：用户此刻最想看的是刚生成的东西 —— 自动弹出并切到「镜头」。
-// 改编产出时：切到「大纲」，让用户看到刚才改了什么。
-function autoOpenSidebar(kind) {
-  store.rightOpen = true
-  if (kind) store.sideView = kind
+// ---- 事件驱动的视图引导（即梦式布局改版） ----
+// 第二列现在是资产树（AssetTree），没有 tab 体系了：
+// 「出片/改编发生时把用户带到该看的东西」改成了「把主区切到对应工作台视图」。
+// 规矩：**只在用户还没主动选视图（wbView=null）时引导**——
+// 用户已经停在剧本页时，批次跑完不能把他劫持到分镜页。
+function guideView(view) {
+  if (store.mode !== 'workspace') return
+  if (store.wbView) return
+  store.wbView = view
 }
 
-// 监听：批次开始跑 / 跑完 → 弹到「镜头」
+// 监听：批次开始跑 / 跑完 → 引导到「分镜」（刚生成的东西都在那看）
 watch(
   () => store.videoBatch?.status,
   (st) => {
-    if (st === 'running' || st === 'succeeded') autoOpenSidebar('shots')
+    if (st === 'running' || st === 'succeeded') guideView('clips')
   },
 )
 
-// 监听：**版本号变了** → 弹到「大纲」
-// 这是「用户让你帮忙改编」的那一刻——他要看的正是改成了什么样。
-//
-// 注意不能挂在 viewerScript 上：进入任何一个已有剧本的项目都会重载它，
-// 那样侧边栏就是「默认打开」。这里只在版本号**变化**时弹，
-// 首次加载项目不弹（侧边栏默认是关的）。
+// 监听：**版本号变了** → 引导到「剧本」（用户让你改编的那一刻，
+// 他要看的正是改成了什么样）。首次加载项目不引导。
 let _seenVersionId = null
 watch(
   () => (store.versions[0]?.id) || '',
   (id) => {
     if (!id) { _seenVersionId = null; return }
-    if (_seenVersionId === null) { _seenVersionId = id; return }  // 首次加载：不弹
+    if (_seenVersionId === null) { _seenVersionId = id; return }  // 首次加载：不引导
     if (id !== _seenVersionId) {
       _seenVersionId = id
-      autoOpenSidebar('outline')
+      guideView('script')
     }
   },
 )
 
-/** 顶栏按钮 = 右侧栏视图开关：点一下右栏展开并切到对应视图；
-    再点同一个则收起（侧栏收起时按钮也回到无边框的样子）。 */
+/** 顶栏按钮 = 工作台视图开关：资产库→角色页、产出→分镜页；
+    再点同一个回总览。技能仍是全屏页。 */
 function switchSideView(view) {
-  if (store.rightOpen && store.sideView === view) {
-    store.rightOpen = false
-    return
-  }
-  store.sideView = view
-  store.rightOpen = true
+  const target = view === 'assets' ? 'roles' : view === 'shots' ? 'clips' : null
+  if (!target) { store.overlay = 'skills'; return }
+  store.wbView = store.wbView === target ? null : target
 }
 
 /** 保存提示词审阅结果（编辑器在 App 层，产出页与右侧栏共用同一份）。 */
@@ -216,11 +212,7 @@ onUnmounted(() => {
     <div class="stage-wrap">
       <IconRail />
       <div class="ctx-wrap" :class="{ closed: !store.rightOpen }">
-        <ContextPanel
-          @open-assets="store.overlay = 'assets'"
-          @open-skills="store.overlay = 'skills'"
-          @open-output="store.overlay = 'output'"
-        />
+        <AssetTree />
       </div>
       <main class="stage">
         <WorkbenchView />

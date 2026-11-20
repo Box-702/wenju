@@ -1,88 +1,338 @@
 <script setup>
 // =====================================================================
-// RolesView.vue —— 工作台·角色页（对标即梦资产库）
+// RolesView.vue —— 工作台·角色页（即梦「资产库」形态）
 //
-// 主体直接复用 AssetPanel（section="assets"）：角色定妆照 / 场景图 /
-// 音色试听 / 克隆 / 缺口徽标 / 演员库都在它里面。本页只加一层页头
-// （标题 + 概览计数 + 音色规范说明）和「没选作品」的空态引导。
+// 即梦的资产库页一句话能说完：**类型 tab（带计数）+ 缺口横幅 + 大卡网格**。
+// 本页照这个形态重做（旧版只是包一层 AssetPanel，观感差距太大）：
+//   - tab：角色 / 场景 / 图片 / 视频 / 音频，计数来自 library + assets；
+//   - 缺口横幅：「有 N 个形象未生成」+「生成」按钮（POST reference-assets
+//     后台批量出图，按张计费——title 里如实说明，D-53 不显示 ¥）；
+//   - 大卡网格：角色卡 = 定妆照大图 + 名字 + 音色 chip + 缺图虚线占位 +
+//     本地上传绑定（images/upload → PATCH library）；场景卡同构；媒体卡直接预览。
+// 音色试听/克隆/演员库等深功能仍在「完整资产库」（AssetPanel 全屏页）里，
+// 本页是即梦式的第一眼视图。
 // =====================================================================
-import { computed, onMounted, watch } from 'vue'
-import AssetPanel from '../AssetPanel.vue'
-import { store, loadOverview } from '../../stores/app'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import AppIcon from '../AppIcon.vue'
+import { api } from '../../api'
+import { store, notify } from '../../stores/app'
 
-/** 副标题：角色数 / 定妆图数，数字全部来自后端 overview；为 null 时显示空。 */
-const subtitle = computed(() => {
-  const o = store.overview
-  if (!o) return ''
-  return `${o.characters ?? 0} 个角色 · ${o.reference_images ?? 0} 张定妆图`
-})
+const chars = ref([])
+const locs = ref([])
+const warnings = ref([])
+const assets = ref([])
+const loading = ref(false)
+const tab = ref('characters')
 
-function refreshOverview() {
-  if (store.pid) loadOverview()
+async function refresh() {
+  if (!store.pid) { chars.value = []; locs.value = []; assets.value = []; warnings.value = []; return }
+  loading.value = true
+  try {
+    const [lib, imgs, vids, auds] = await Promise.all([
+      api(`/projects/${store.pid}/library`),
+      api(`/projects/${store.pid}/assets?kind=image`),
+      api(`/projects/${store.pid}/assets?kind=video`),
+      api(`/projects/${store.pid}/assets?kind=audio`),
+    ])
+    chars.value = lib.characters || []
+    locs.value = lib.locations || []
+    warnings.value = lib.warnings || []
+    assets.value = [...(imgs || []), ...(vids || []), ...(auds || [])]
+  } catch (e) {
+    notify(`资产加载失败：${e.message}`, 'error')
+  } finally {
+    loading.value = false
+  }
+}
+onMounted(refresh)
+watch(() => store.pid, refresh)
+watch(() => store.assetRefreshSeq, refresh)
+
+const TABS = [
+  { key: 'characters', label: '角色' },
+  { key: 'locations', label: '场景' },
+  { key: 'image', label: '图片' },
+  { key: 'video', label: '视频' },
+  { key: 'audio', label: '音频' },
+]
+const counts = computed(() => ({
+  characters: chars.value.length,
+  locations: locs.value.length,
+  image: assets.value.filter(a => a.kind === 'image').length,
+  video: assets.value.filter(a => a.kind === 'video').length,
+  audio: assets.value.filter(a => a.kind === 'audio').length,
+}))
+const shown = computed(() =>
+  tab.value === 'characters' ? chars.value
+  : tab.value === 'locations' ? locs.value
+  : assets.value.filter(a => a.kind === tab.value))
+
+const missingImages = computed(() =>
+  chars.value.filter(c => !c.has_image).length + locs.value.filter(l => !l.has_image).length)
+
+// ---- 批量生成资产图（按张计费，后台任务，轮询到完成自动刷新） ----
+const generating = ref(false)
+let genTaskId = ''
+let pollTimer = null
+async function generateAll() {
+  if (!store.pid || generating.value) return
+  generating.value = true
+  try {
+    const r = await api(`/projects/${store.pid}/reference-assets`, 'POST')
+    genTaskId = r.task_id || ''
+    notify('已启动形象图生成（按张计费，后台进行，完成后自动刷新）', 'ok')
+    pollTimer = setInterval(pollGenTask, 4000)
+    pollGenTask()
+  } catch (e) {
+    notify(`启动失败：${e.message}`, 'error')
+    generating.value = false
+  }
+}
+async function pollGenTask() {
+  if (!genTaskId) return
+  try {
+    const t = await api(`/tasks/${genTaskId}`)
+    if (t.status === 'done' || t.status === 'failed' || t.status === 'cancelled') {
+      clearInterval(pollTimer); pollTimer = null
+      generating.value = false
+      if (t.status === 'done') notify(t.result || '形象图生成完成', 'ok')
+      else notify(`形象图生成${t.status === 'failed' ? '失败' : '已取消'}${t.error ? '：' + t.error : ''}`, t.status === 'done' ? 'ok' : 'error')
+      await refresh()
+      store.assetRefreshSeq += 1
+    }
+  } catch {
+    clearInterval(pollTimer); pollTimer = null
+    generating.value = false
+    await refresh()
+  }
+}
+onBeforeUnmount(() => clearInterval(pollTimer))
+
+// ---- 本地上传绑定到角色/场景（即梦卡上的「上传」路） ----
+const fileInput = ref(null)
+const bindTarget = ref(null) // {id, kind, name}
+function pickUpload(target) {
+  bindTarget.value = target
+  fileInput.value?.click()
+}
+async function onFilePicked(e) {
+  const file = e.target.files?.[0]
+  e.target.value = ''
+  if (!file || !bindTarget.value || !store.pid) return
+  const t = bindTarget.value
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const asset = await api(`/projects/${store.pid}/images/upload`, 'POST', fd)
+    const body = t.kind === 'character'
+      ? { characters: { [t.id]: { image: asset.url } } }
+      : { locations: { [t.id]: { image: asset.url } } }
+    await api(`/projects/${store.pid}/library`, 'PATCH', body)
+    notify(`已把图片绑定到「${t.name}」`, 'ok')
+    await refresh()
+    store.assetRefreshSeq += 1
+  } catch (err) {
+    notify(`上传绑定失败：${err.message}`, 'error')
+  }
 }
 
-onMounted(refreshOverview)
-watch(() => store.pid, refreshOverview)
+function previewOf(a) {
+  const isChar = 'char_id' in a
+  const isLoc = 'loc_id' in a
+  if (isChar || isLoc) {
+    return { name: a.name, kind: isChar ? 'character' : 'location', image: a.image || '', id: isChar ? a.char_id : a.loc_id }
+  }
+  return {
+    name: a.name, kind: a.kind, id: a.id,
+    image: a.kind === 'image' ? a.url : '',
+    video: a.kind === 'video' ? a.url : '',
+    audio: a.kind === 'audio' ? a.url : '',
+  }
+}
 </script>
 
 <template>
-  <div class="roles-view">
-    <header class="roles-head">
-      <h2 class="title">角色</h2>
-      <p v-if="subtitle" class="subtitle">{{ subtitle }}</p>
-      <p class="voice-note">
-        每个角色一把嗓子：在对话里说「给 X 指定音色 Y」，出片的人声会向它靠。
-      </p>
+  <div class="roles">
+    <input ref="fileInput" type="file" accept="image/*" hidden @change="onFilePicked" />
+
+    <header class="rl-head">
+      <div class="rl-tabs seg-tabs">
+        <button
+          v-for="(t, i) in TABS" :key="t.key"
+          class="seg-tab" :class="{ active: tab === t.key }"
+          @click="tab = t.key"
+        >
+          <span class="seg-num">{{ String(i + 1).padStart(2, '0') }}</span>
+          {{ t.label }} <em class="cnt">{{ counts[t.key] }}</em>
+        </button>
+      </div>
+      <div class="rl-acts">
+        <button class="ghost small" type="button" title="完整资产库：音色试听/克隆、演员库、导入"
+          @click="store.overlay = 'assets'">
+          完整资产库
+        </button>
+      </div>
     </header>
 
-    <!-- 主体：复用资产库面板（它自己在内部滚动） -->
-    <div v-if="store.pid" class="panel-host">
-      <AssetPanel section="assets" />
+    <!-- 缺口横幅（即梦：「有 N 个未有完整形象图，可手动上传或 AI 批量生成」） -->
+    <div v-if="tab === 'characters' || tab === 'locations'" class="gap-bar" :class="{ clean: !missingImages }">
+      <template v-if="missingImages">
+        <AppIcon name="warning" />
+        <span>有 {{ missingImages }} 个形象未生成，你可以逐卡上传，或者 AI 批量生成</span>
+        <button class="small primary" type="button" :disabled="generating"
+          title="用生图模型批量补全（按张计费，后台进行）" @click="generateAll">
+          <AppIcon name="sparkle" /> {{ generating ? '生成中…' : '批量生成' }}
+        </button>
+      </template>
+      <template v-else>
+        <AppIcon name="check" />
+        <span>全部形象已就位</span>
+      </template>
+    </div>
+    <p v-for="(w, i) in warnings" :key="'w' + i" class="warn-line">
+      <AppIcon name="info" /> {{ w }}
+    </p>
+
+    <p v-if="loading" class="rl-state">加载中…</p>
+    <div v-else-if="!store.pid" class="rl-state">还没有进入作品。</div>
+
+    <!-- 角色 / 场景：大卡网格 -->
+    <div v-else-if="tab === 'characters' || tab === 'locations'" class="grid">
+      <article v-for="a in shown" :key="a.char_id || a.loc_id" class="card">
+        <button class="card-media" type="button"
+          :title="a.image ? '点开大图' : '还没有形象图'"
+          @click="a.image && (store.assetPreview = previewOf(a))">
+          <img v-if="a.image" :src="a.image" :alt="a.name" loading="lazy" />
+          <span v-else class="ph">
+            <AppIcon :name="tab === 'characters' ? 'user' : 'folder'" />
+            <em>{{ tab === 'characters' ? '缺定妆照' : '缺场景图' }}</em>
+          </span>
+        </button>
+        <div class="card-body">
+          <p class="card-name">
+            {{ a.name }}
+            <em v-if="tab === 'characters' && a.role === 'protagonist'" class="tag-lead">主角</em>
+          </p>
+          <p class="card-sub">
+            <span v-if="tab === 'characters'" class="voice-chip">
+              <AppIcon name="sound" /> {{ a.voice_label || '未配音色' }}
+            </span>
+            <span v-else>{{ a.scenes || 0 }} 场戏</span>
+          </p>
+          <div class="card-foot">
+            <button class="mini" type="button"
+              :title="tab === 'characters' ? '本地上传图片并绑定为该角色形象' : '本地上传图片并绑定为该场景图'"
+              @click="pickUpload({ id: a.char_id || a.loc_id, kind: tab === 'characters' ? 'character' : 'location', name: a.name })">
+              <AppIcon name="upload" /> {{ tab === 'characters' ? '上传形象' : '上传场景图' }}
+            </button>
+          </div>
+        </div>
+      </article>
+      <p v-if="!shown.length" class="rl-state">
+        还没有{{ tab === 'characters' ? '角色——在对话里生成初稿后自动建档' : '场景' }}。
+      </p>
     </div>
 
-    <!-- 没选作品：空态引导 -->
-    <div v-else class="empty">
-      <p class="empty-title">还没有进入作品</p>
-      <p class="empty-sub">回到对话里选一部作品（或新建一部），角色定妆照和音色都会在这里出现。</p>
+    <!-- 媒体资产：图片 / 视频 / 音频 -->
+    <div v-else class="grid">
+      <article v-for="a in shown" :key="a.id" class="card">
+        <button class="card-media" type="button" title="点开预览" @click="store.assetPreview = previewOf(a)">
+          <img v-if="a.kind === 'image'" :src="a.url" :alt="a.name" loading="lazy" />
+          <video v-else-if="a.kind === 'video'" :src="a.url + '#t=0.1'" preload="metadata" muted playsinline />
+          <span v-else class="ph"><AppIcon name="sound" /><em>音频</em></span>
+        </button>
+        <div class="card-body">
+          <p class="card-name">{{ a.name }}</p>
+          <p class="card-sub">{{ a.source === 'upload' ? '上传素材' : '生成产物' }}</p>
+        </div>
+      </article>
+      <p v-if="!shown.length" class="rl-state">还没有{{ TABS.find(t => t.key === tab)?.label }}资产。</p>
     </div>
   </div>
 </template>
 
 <style scoped>
-.roles-view {
+.roles { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
+.rl-head {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 10px;
+  padding: 14px 18px 0; flex: none;
+}
+.rl-tabs { flex: 1; min-width: 0; }
+.cnt { font-style: normal; color: var(--gold); font-family: var(--mono); font-size: 10px; margin-left: 4px; }
+.rl-acts { flex: none; padding-bottom: 6px; }
+
+.gap-bar {
+  display: flex; align-items: center; gap: 10px;
+  margin: 12px 18px 0; padding: 9px 12px; flex: none;
+  border: 1px solid color-mix(in oklch, var(--warn) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklch, var(--warn) 7%, transparent);
+  color: var(--ink); font-size: 12.5px;
+}
+.gap-bar.clean {
+  border-color: color-mix(in oklch, var(--ok) 35%, transparent);
+  background: color-mix(in oklch, var(--ok) 6%, transparent);
+  color: var(--muted);
+}
+.gap-bar span { flex: 1; }
+.gap-bar :deep(svg) { width: 14px; height: 14px; color: var(--warn); flex: none; }
+.gap-bar.clean :deep(svg) { color: var(--ok); }
+.warn-line {
+  display: flex; gap: 8px; align-items: baseline;
+  margin: 8px 18px 0; font-size: 11.5px; color: var(--dim);
+}
+.warn-line :deep(svg) { width: 11px; height: 11px; flex: none; }
+.rl-state { padding: 24px; text-align: center; color: var(--dim); font-size: 12.5px; }
+
+.grid {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 14px; padding: 14px 18px 20px;
+}
+.card {
   display: flex; flex-direction: column;
-  flex: 1; min-height: 0; height: 100%;
-  overflow: hidden;
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  background: var(--surface); overflow: hidden;
+  transition: border-color 150ms var(--ease);
 }
-.roles-head {
-  flex: none;
-  padding: var(--space-4) var(--space-5) var(--space-3);
-  border-bottom: 1px solid color-mix(in oklch, var(--line) 55%, transparent);
+.card:hover { border-color: var(--line-strong); }
+.card-media {
+  display: block; width: 100%; aspect-ratio: 4/3; padding: 0;
+  border: none; background: #000; cursor: zoom-in;
 }
-.title {
-  margin: 0; font-size: var(--fs-xl); font-weight: 650; color: var(--ink);
+.card-media img, .card-media video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ph {
+  width: 100%; height: 100%; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px;
+  background: var(--surface-2); color: var(--dim);
 }
-.subtitle {
-  margin: var(--space-1) 0 0;
-  font-size: var(--fs-sm); color: var(--muted);
+.ph :deep(svg) { width: 22px; height: 22px; }
+.ph em { font-style: normal; font-size: 11px; }
+.card-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+.card-name {
+  margin: 0; font-size: 13px; font-weight: 600; color: var(--ink);
+  display: flex; align-items: center; gap: 6px;
 }
-.voice-note {
-  margin: var(--space-2) 0 0;
-  font-size: var(--fs-xs); color: var(--dim); line-height: 1.6;
+.tag-lead {
+  font-style: normal; font-size: 10px; color: var(--gold);
+  padding: 1px 6px; border-radius: 3px;
+  border: 1px solid color-mix(in oklch, var(--gold) 45%, transparent);
 }
-.panel-host {
-  flex: 1; min-height: 0;
-  display: flex; flex-direction: column;
-  padding: 0 var(--space-5);
-  overflow: hidden;
+.card-sub { margin: 0; font-size: 11.5px; color: var(--muted); }
+.voice-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border-radius: var(--radius-full);
+  border: 1px solid var(--line); background: var(--surface-2);
+  font-size: 11px; color: var(--muted);
 }
-.empty {
-  flex: 1; min-height: 0;
-  display: grid; place-content: center; justify-items: center;
-  gap: var(--space-2);
-  padding: var(--space-6);
-  text-align: center;
+.voice-chip :deep(svg) { width: 11px; height: 11px; }
+.card-foot { margin-top: 2px; }
+.mini {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 8px; border-radius: var(--radius-sm);
+  border: 1px solid var(--line); background: transparent;
+  color: var(--muted); font-size: 11px; cursor: pointer;
 }
-.empty-title { margin: 0; font-size: var(--fs-lg); color: var(--muted); }
-.empty-sub { margin: 0; font-size: var(--fs-sm); color: var(--dim); line-height: 1.6; max-width: 34em; }
+.mini:hover { color: var(--ink); border-color: var(--line-strong); }
+.mini :deep(svg) { width: 11px; height: 11px; }
 </style>

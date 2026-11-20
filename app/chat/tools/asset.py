@@ -24,7 +24,10 @@ def build_asset_tools(ctx: ToolContext) -> list[Any]:
             lines = [f"【素材】{len(assets)} 条："]
             for a in assets[:30]:
                 label = {"video": "视频", "audio": "音频", "image": "图片"}.get(a.kind, a.kind)
-                size = f"（{len(a.content) // 1024} KB）" if getattr(a, "content", None) else ""
+                # list_assets 不再加载 content 本体（大 BLOB 排序会撑爆 SQLite），
+                # 大小用 SQL 层算好的 content_size。
+                cs = getattr(a, "content_size", None)
+                size = f"（{cs // 1024} KB）" if cs else ""
                 lines.append(f"- [{a.id}] {label}《{a.name or '未命名'}》{size}")
             if len(assets) > 30:
                 lines.append(f"（其余 {len(assets) - 30} 条略）")

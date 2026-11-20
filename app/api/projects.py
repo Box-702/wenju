@@ -78,6 +78,8 @@ def get_project(project_id: str) -> dict[str, Any]:
     p = common.get_project(project_id)
     data = common.project_dict(p)
     data["novel_map"] = p.novel_map  # 完整章节地图（列表接口只给章节数）
+    # 故事规划（理解卡 + 分集提案，D-71）：工作台剧本页读它渲染提案与确认态
+    data["story_plan"] = p.story_plan
     return data
 
 

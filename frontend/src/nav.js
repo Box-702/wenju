@@ -8,7 +8,8 @@
 // 返回键触发 popstate → 按 hash 还原视图。没有引入路由库（保持零依赖）。
 //
 //   #/                       首页
-//   #/works/<项目 id>          工作区
+//   #/works/<项目 id>          工作区（对话主栏）
+//   #/works/<id>/wb/<视图>     工作台主栏（script | clips | roles | episodes）
 //   #/assets                 资产库
 //   #/skills                 技能
 //   #/output                 产出
@@ -17,11 +18,17 @@
 import { store, selectProject } from './stores/app'
 
 const OVERLAYS = ['assets', 'skills', 'output', 'tasks']
+export const WB_VIEWS = ['script', 'clips', 'roles', 'episodes']
 
-/** 当前视图的标识：overlay 优先，其次工作区，最后首页。 */
+/** 当前视图的标识：overlay 优先，其次工作区（含工作台子视图），最后首页。 */
 export function currentView() {
   if (store.overlay && OVERLAYS.includes(store.overlay)) return store.overlay
-  if (store.mode === 'workspace' && store.pid) return `works/${store.pid}`
+  if (store.mode === 'workspace' && store.pid) {
+    if (store.wbView && WB_VIEWS.includes(store.wbView)) {
+      return `works/${store.pid}/wb/${store.wbView}`
+    }
+    return `works/${store.pid}`
+  }
   return 'home'
 }
 
@@ -29,6 +36,8 @@ function viewFromHash() {
   const h = (location.hash || '').replace(/^#\/?/, '').trim()
   if (!h) return 'home'
   if (OVERLAYS.includes(h)) return h
+  const wb = h.match(/^works\/([^/]+)\/wb\/([a-z]+)$/)
+  if (wb && WB_VIEWS.includes(wb[2])) return h
   if (h.startsWith('works/')) return h
   return 'home'
 }
@@ -42,13 +51,16 @@ async function applyView(view) {
     return
   }
   store.overlay = null
+  const wb = (view || '').match(/^works\/([^/]+)\/wb\/([a-z]+)$/)
   if (view.startsWith('works/')) {
-    const pid = view.slice('works/'.length)
+    const pid = wb ? wb[1] : view.slice('works/'.length)
     if (pid && pid !== store.pid) {
+      // selectProject 会把 wbView 清掉（切项目回对话），所以之后重新设
       await selectProject(pid)
     } else if (store.mode !== 'workspace') {
       store.mode = 'workspace'
     }
+    if (wb) store.wbView = wb[2]
     return
   }
   store.mode = 'home'
@@ -57,7 +69,7 @@ async function applyView(view) {
 /** 初始化：接上返回键 / 前进键。 */
 export function initNav() {
   last = currentView()
-  // 首屏按 URL 恢复（比如刷新时停在资产库页）
+  // 首屏按 URL 恢复（比如刷新时停在资产库页或工作台某视图）
   const v = viewFromHash()
   if (v !== 'home') applyView(v)
 

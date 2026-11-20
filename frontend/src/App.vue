@@ -23,7 +23,9 @@ import PatchDrawer from './components/PatchDrawer.vue'
 import PromptEditor from './components/video/PromptEditor.vue'
 import AssetPreview from './components/AssetPreview.vue'
 import Toast from './components/Toast.vue'
-import { loadTree, loadWorkspace, loadProjectFiles, restorePanelPrefs, toggleRightPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, loadAssetRefs, closePromptEditor, saveShotPrompt } from './stores/app'
+import WorkbenchRail from './components/workbench/WorkbenchRail.vue'
+import WorkbenchView from './components/workbench/WorkbenchView.vue'
+import { loadTree, loadWorkspace, loadProjectFiles, restorePanelPrefs, toggleRightPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, loadAssetRefs, closePromptEditor, saveShotPrompt, loadStoryPlan } from './stores/app'
 import { initNav, pushNav } from './nav'
 import { importProject } from './api'
 
@@ -196,8 +198,8 @@ function onResize() {
   clampAll()
 }
 // 窄屏下选中项目 / 对话 → 收起抽屉（内容已切到中间列，面板挡视线）
-// 视图变化（首页 / 工作区 / 各个页面）写进浏览器历史，返回键就能退回去
-watch(() => [store.mode, store.pid, store.overlay], () => {
+// 视图变化（首页 / 工作区 / 工作台视图 / 各个页面）写进浏览器历史，返回键就能退回去
+watch(() => [store.mode, store.pid, store.overlay, store.wbView], () => {
   pushNav()
 })
 
@@ -273,11 +275,16 @@ onUnmounted(() => {
         </div>
       </div>
     </Transition>
-    <!-- 对话是主体，右侧是随上下文变化的通用侧边栏 -->
+    <!-- 对话是主体，右侧是随上下文变化的通用侧边栏；
+         左侧竖排栏切换工作台四视图（D-73），工作台激活时主栏换成视图 -->
     <div class="stage-wrap">
+      <WorkbenchRail />
       <main class="stage">
-        <ChatThread />
-        <ChatComposer @open-skills="store.overlay = 'skills'" />
+        <WorkbenchView v-if="store.wbView" />
+        <template v-else>
+          <ChatThread />
+          <ChatComposer @open-skills="store.overlay = 'skills'" />
+        </template>
       </main>
       <div class="ctx-wrap" :class="{ closed: !store.rightOpen }">
         <ContextPanel

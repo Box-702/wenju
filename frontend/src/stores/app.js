@@ -46,6 +46,10 @@ export const store = reactive({
 
   // 右侧作品工作台：剧本（默认）/ 场景 / 视频
   view: 'video',   // 工作区化默认：右侧直接展示产出（提示词 + 视频）；剧本/场景一键切回
+  // 工作台主栏视图（D-73 对标即梦四栏）：null=对话；script/clips/roles/episodes=工作台。
+  // 对话仍是主入口（D-66），工作台是「看与调」的并列主栏，左侧竖排栏切换。
+  wbView: null,
+  storyPlan: null,     // 当前作品的故事规划（理解卡 + 分集提案，D-71）
   viewerText: '',      // 最新版本剧本全文（纯文本，供复制）
   viewerScript: null,  // 最新版本结构化剧本（供剧本排版渲染）
 
@@ -305,6 +309,8 @@ export async function selectProject(pid) {
   store.mode = 'workspace'
   // 从「我的作品」这类整页进来时，把整页关掉——否则工作区被盖在下面
   store.overlay = null
+  // 切作品回对话主栏：工作台视图不跨作品保留（每个作品的镜头方案不同）
+  store.wbView = null
   // 中止进行中的流式回复：流属于旧会话，继续写只会产生孤儿数据。
   if (_streamAbort) _streamAbort.abort()
   store.pid = pid
@@ -410,6 +416,24 @@ export async function loadViewer(token = _navSeq) {
 /** 切换查看面板 tab。 */
 export function showView(name) {
   store.view = name
+}
+
+/** 拉当前作品的故事规划（理解卡 + 分集提案，D-71）。工作台剧本页与提案卡都读它。 */
+export async function loadStoryPlan(token = _navSeq) {
+  if (!store.pid) { store.storyPlan = null; return }
+  try {
+    const p = await api(`/projects/${store.pid}`)
+    if (!_isCurrent(token)) return
+    store.storyPlan = p.story_plan && Object.keys(p.story_plan).length ? p.story_plan : null
+  } catch {
+    if (!_isCurrent(token)) return
+    store.storyPlan = null
+  }
+}
+
+/** 切换工作台主栏视图（D-73）：null=回对话，其余进对应工作台。 */
+export function setWbView(view) {
+  store.wbView = store.wbView === view ? null : view
 }
 
 // ---------------------------------------------------------------------

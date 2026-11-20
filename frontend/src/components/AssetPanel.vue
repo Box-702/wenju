@@ -916,11 +916,11 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 }
 .proj-item:hover { background: color-mix(in oklch, var(--ink) 5%, transparent); color: var(--ink); }
 .proj-item.active {
-  background: color-mix(in oklch, var(--gold) 9%, transparent); color: var(--ink);
+  background: var(--sel-bg); color: var(--ink);
 }
 .proj-item.active::before {
   content: ''; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px;
-  border-radius: 2px; background: var(--gold);
+  border-radius: 2px; background: var(--sel-bar);
 }
 .proj-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proj-empty { padding: 10px 14px; font-size: 12px; color: var(--dim); line-height: 1.7; }

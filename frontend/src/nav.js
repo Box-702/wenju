@@ -12,12 +12,11 @@
 //   #/works/<id>/wb/<视图>     工作台主栏（script | clips | roles | episodes）
 //   #/assets                 资产库
 //   #/skills                 技能
-//   #/output                 产出
 //   #/tasks                  我的作品
 // =====================================================================
 import { store, selectProject } from './stores/app'
 
-const OVERLAYS = ['assets', 'skills', 'output', 'tasks']
+const OVERLAYS = ['assets', 'skills', 'tasks']
 export const WB_VIEWS = ['script', 'clips', 'roles', 'episodes']
 
 /** 当前视图的标识：overlay 优先，其次工作区（含工作台子视图），最后首页。 */

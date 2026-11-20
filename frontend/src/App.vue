@@ -11,7 +11,6 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import HeaderBar from './components/HeaderBar.vue'
 import HomePage from './components/HomePage.vue'
 import AssetPanel from './components/AssetPanel.vue'
-import ViewerPanel from './components/ViewerPanel.vue'
 import PageShell from './components/PageShell.vue'
 import SkillsPage from './components/SkillsPage.vue'
 import NewProjectModal from './components/NewProjectModal.vue'
@@ -26,7 +25,7 @@ import AssetTree from './components/workbench/AssetTree.vue'
 import ScriptHistoryPanel from './components/workbench/ScriptHistoryPanel.vue'
 import WorkbenchView from './components/workbench/WorkbenchView.vue'
 import AgentPanel from './components/workbench/AgentPanel.vue'
-import { loadTree, loadWorkspace, loadProjectFiles, restorePanelPrefs, toggleRightPanel, toggleAgentPanel, notify, store, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, loadAssetRefs, closePromptEditor, saveShotPrompt, loadStoryPlan, closeVideo } from './stores/app'
+import { store, loadTree, loadWorkspace, loadProjectFiles, restorePanelPrefs, toggleAgentPanel, notify, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, loadAssetRefs, closePromptEditor, saveShotPrompt, loadStoryPlan, closeVideo } from './stores/app'
 import { initNav, pushNav } from './nav'
 import { importProject } from './api'
 
@@ -64,15 +63,7 @@ watch(
   },
 )
 
-/** 顶栏按钮 = 工作台视图开关：资产库→角色页、产出→分镜页；
-    再点同一个回总览。技能仍是全屏页。 */
-function switchSideView(view) {
-  const target = view === 'assets' ? 'roles' : view === 'shots' ? 'clips' : null
-  if (!target) { store.overlay = 'skills'; return }
-  store.wbView = store.wbView === target ? null : target
-}
-
-/** 保存提示词审阅结果（编辑器在 App 层，产出页与右侧栏共用同一份）。 */
+/** 保存提示词审阅结果（编辑器在 App 层，右侧栏与分镜页共用同一份）。 */
 async function onPromptReview(payload) {
   await saveShotPrompt(payload, payload.decision, payload.prompt_review_note)
 }
@@ -115,16 +106,9 @@ async function onDrop(e) {
   }
 }
 
-// Ctrl+I 切换上下文侧栏（大纲 / 镜头 / 资产）
-function globalKey(e) {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
-    e.preventDefault()
-    toggleRightPanel()
-  }
-}
-
 // ---- 响应式：≤1023px 面板抽屉化 ----
-// 桌面（≥1024px）：左/中/右三栏 + 拖拽分隔条（原行为）。
+// 桌面（≥1024px）：左/中/右三栏；上下文侧栏常驻（不再支持关闭），
+// 拖右缘调宽（240–480px，见下方拖拽逻辑）。
 // 平板/移动（≤1023px）：左右面板变成覆盖式抽屉（fixed + 遮罩），
 // 选中项目 / 对话后自动收起，任何视口不出现横向溢出。
 const isNarrow = ref(window.innerWidth < 1024)
@@ -147,10 +131,34 @@ watch(() => [store.pid, store.convId], () => {
   store.rightOpen = false
   store.agentOpen = false
 })
-// 窄屏下右栏视图切换（如场景聚焦）同理收起左栏
-watch(() => store.view, () => {
-  if (isNarrow.value && store.rightOpen) store.agentOpen = false
-})
+
+// ---- 上下文侧栏宽度：拖右缘调宽（2026-11-21 用户要求：不可关闭、可拉动、有上限）----
+// 240px 起（再窄资产树缩略图挤爆），480px 封顶（再宽主区就没内容了）。
+// 记忆在 localStorage；窄屏抽屉走媒体查询的 !important 宽度，不吃这份内联样式。
+const CTX_MIN = 240
+const CTX_MAX = 480
+const ctxW = ref(Math.min(CTX_MAX, Math.max(CTX_MIN, Number(localStorage.getItem('sw-ctx-w')) || 300)))
+const ctxDragging = ref(false)
+let ctxDrag = null
+function onCtxHandleDown(e) {
+  if (e.button !== 0) return
+  e.preventDefault()
+  ctxDrag = { x: e.clientX, w: ctxW.value }
+  ctxDragging.value = true
+  window.addEventListener('pointermove', onCtxHandleMove)
+  window.addEventListener('pointerup', onCtxHandleUp)
+}
+function onCtxHandleMove(e) {
+  if (!ctxDrag) return
+  ctxW.value = Math.min(CTX_MAX, Math.max(CTX_MIN, ctxDrag.w + (e.clientX - ctxDrag.x)))
+}
+function onCtxHandleUp() {
+  ctxDrag = null
+  ctxDragging.value = false
+  window.removeEventListener('pointermove', onCtxHandleMove)
+  window.removeEventListener('pointerup', onCtxHandleUp)
+  localStorage.setItem('sw-ctx-w', String(ctxW.value))
+}
 
 // ---- 左栏：作品 + 资产库（工作区化：对话收敛为每作品一个）----
 
@@ -164,7 +172,6 @@ onMounted(async () => {
     store.agentOpen = false
   }
   window.addEventListener('resize', onResize)
-  window.addEventListener('keydown', globalKey)
   await loadWorkspace()
   await loadTree()
   await loadProjectFiles()
@@ -175,7 +182,8 @@ onMounted(async () => {
 })
 onUnmounted(() => {
   window.removeEventListener('resize', onResize)
-  window.removeEventListener('keydown', globalKey)
+  window.removeEventListener('pointermove', onCtxHandleMove)
+  window.removeEventListener('pointerup', onCtxHandleUp)
 })
 </script>
 
@@ -192,10 +200,7 @@ onUnmounted(() => {
       <span class="blob blob-red"></span>
       <span class="grain"></span>
     </div>
-    <HeaderBar
-      @switch-view="switchSideView"
-      @open-tasks="store.overlay = 'tasks'"
-    />
+    <HeaderBar />
     <!-- 拖拽导入覆盖层 -->
     <Transition name="fade">
       <div v-if="dragging" class="drop-overlay" @dragleave="onDragLeave" @drop="onDrop">
@@ -212,11 +217,22 @@ onUnmounted(() => {
          我们照做；收起后右下角浮标能再打开。 -->
     <div class="stage-wrap">
       <IconRail />
-      <div class="ctx-wrap" :class="{ closed: !store.rightOpen }">
+      <!-- 上下文侧栏：常驻不可关（2026-11-21 用户要求），桌面拖右缘调宽
+           （240–480px，记忆在 localStorage）；窄屏仍走抽屉媒体查询。 -->
+      <div
+        class="ctx-wrap" :class="{ closed: isNarrow && !store.rightOpen, resizing: ctxDragging }"
+        :style="isNarrow ? null : { width: ctxW + 'px' }"
+      >
         <!-- 即梦式：左栏随视图切换——剧本页看修改历史，其余页看资产树 -->
         <ScriptHistoryPanel v-if="store.wbView === 'script'" />
         <AssetTree v-else />
       </div>
+      <div
+        v-if="!isNarrow"
+        class="ctx-handle" :class="{ on: ctxDragging }"
+        title="拖动调宽（240–480px）"
+        @pointerdown="onCtxHandleDown"
+      />
       <main class="stage">
         <WorkbenchView />
       </main>
@@ -250,15 +266,6 @@ onUnmounted(() => {
   <SkillsPage v-if="store.overlay === 'skills'" @close="store.overlay = null" />
 
   <PageShell
-    v-if="store.overlay === 'output'"
-    title="产出"
-    subtitle="剧本 · 场景 · 视频"
-    @close="store.overlay = null"
-  >
-    <ViewerPanel class="page-viewer" />
-  </PageShell>
-
-  <PageShell
     v-if="store.overlay === 'tasks'"
     title="我的作品"
     subtitle="每部作品一个对话"
@@ -286,8 +293,7 @@ onUnmounted(() => {
   />
   <PatchDrawer />
 
-  <!-- 全局视频播放器：任何视图设 store.playingVideo 都能弹（即梦式行内/浮层预览）。
-       以前只挂在 VideoWorkbench，工作台的「播放」点了没反应就是这个原因。 -->
+  <!-- 全局视频播放器：任何视图设 store.playingVideo 都能弹（即梦式行内/浮层预览）。 -->
   <div v-if="store.playingVideo" class="modal-backdrop" @click.self="closeVideo()">
     <div class="modal-card wide">
       <VideoPlayer
@@ -322,26 +328,42 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-/* 第二列上下文栏（IconRail 右边）：定宽，收起时 width:0。
-   即梦式布局里它是「文件/资产」列，不该吃掉主区——300px 定宽。
+/* 第二列上下文栏（IconRail 右边）：常驻不可关，宽度由拖拽手柄决定
+   （240–480px，默认 300px，记忆在 localStorage）。
    position:relative 必给：.aurora 是 fixed z:0 的光斑层，static 的列会被
    整个盖黑（2026-11-20 截图验收抓到：图标栏/上下文栏整列发黑，内容其实都在）。 */
 .ctx-wrap {
   position: relative;
   flex: none;
-  width: 300px;
+  width: 300px; /* 兜底值；实际宽度走内联样式（拖拽记忆） */
   min-height: 0;
   animation: ctx-slide-in 240ms var(--ease) backwards;
-  transition: width 200ms var(--ease), opacity 200ms var(--ease);
+  transition: width 160ms var(--ease), opacity 200ms var(--ease);
   overflow: hidden;
   border-right: 1px solid var(--line);
   background: var(--surface);
 }
+/* 拖动中关掉宽度过渡，否则手柄和列会互相追着跑 */
+.ctx-wrap.resizing { transition: none; }
 .ctx-wrap.closed {
   width: 0;
   opacity: 0;
   pointer-events: none;
 }
+
+/* 拖宽手柄：叠在侧栏右缘的细命中区（净占宽 0），hover/拖动时亮出竖线 */
+.ctx-handle {
+  position: relative; flex: none; width: 7px;
+  margin-left: -4px; margin-right: -3px;
+  cursor: col-resize; z-index: 5;
+}
+.ctx-handle::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px;
+  border-radius: 1px; background: transparent;
+  transition: background 130ms var(--ease);
+}
+.ctx-handle:hover::after { background: var(--sel-line); }
+.ctx-handle.on::after { background: var(--sel-bar); }
 
 /* 右侧 Agent 对话面板（即梦式常驻右栏）：收起时 width:0，主区自动补位。
    同 ctx-wrap：必须 relative，否则光斑层盖住面板底。 */
@@ -381,14 +403,6 @@ onUnmounted(() => {
   min-width: 0;
   min-height: 0;
   position: relative;
-}
-
-/* 产出页里的面板撑满 */
-.page-viewer {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  width: 100%;
 }
 
 /* 拖拽导入覆盖层 */

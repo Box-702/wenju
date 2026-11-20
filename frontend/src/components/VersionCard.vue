@@ -6,7 +6,7 @@
 // =====================================================================
 
 import { computed } from 'vue'
-import { loadViewer, showView } from '../stores/app'
+import { loadViewer, store } from '../stores/app'
 
 const props = defineProps({
   payload: { type: Object, required: true }, // { type, version_id, validation_issues, fallback }
@@ -16,10 +16,11 @@ const props = defineProps({
 const errorCount = computed(() =>
   (props.payload.validation_issues || []).filter((i) => i.severity === 'error').length)
 
-/** 刷新并切到「剧本」tab。 */
+/** 刷新并跳到工作台剧本页（旧产出页已删，2026-11-21）。 */
 async function viewScript() {
   await loadViewer()
-  await showView('editor')
+  store.overlay = null
+  store.wbView = 'script'
 }
 </script>
 

@@ -11,11 +11,17 @@
 // =====================================================================
 
 import { computed, ref } from 'vue'
-import { resolveApproval, submitApprovedBatch, store, showView } from '../stores/app'
+import { resolveApproval, submitApprovedBatch, store } from '../stores/app'
 
 const props = defineProps({
   payload: { type: Object, required: true }, // { type, approval_id, shot_ids, status }
 })
+
+/** 「看进度 / 合成成片」直达分镜页（旧产出页已删，2026-11-21）。 */
+function goClips() {
+  store.overlay = null
+  store.wbView = 'clips'
+}
 
 const status = computed(() => props.payload.status || 'pending')
 const shotCount = computed(() => (props.payload.shot_ids || []).length)
@@ -92,7 +98,7 @@ const batchFailNote = computed(() => batch.value?.error || '批次中断（常�
       <template v-else-if="filmPhase === 'running' && !batchDone && !batchFailed">
         <span class="mono run">生成中 {{ batchProgress }} 段 · 前一段完成自动接后一段</span>
         <span class="flex1"></span>
-        <button class="btn ghost small" @click="showView('video')">看进度</button>
+        <button class="btn ghost small" @click="goClips">看进度</button>
       </template>
       <template v-else-if="batchFailed">
         <span class="mono err">{{ batchFailNote }}</span>
@@ -102,7 +108,7 @@ const batchFailNote = computed(() => batch.value?.error || '批次中断（常�
       <template v-else>
         <span class="mono ok">✓ 全部镜头已出片</span>
         <span class="flex1"></span>
-        <button class="btn ghost small" @click="showView('video')">合成成片</button>
+        <button class="btn ghost small" @click="goClips">合成成片</button>
       </template>
     </div>
   </div>

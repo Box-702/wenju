@@ -595,8 +595,8 @@ const hasAny = computed(() => cards.value.length > 0)
 }
 .ep-tab.on {
   color: var(--ink);
-  background: color-mix(in oklch, var(--gold) 9%, transparent);
-  box-shadow: inset 0 -2px 0 var(--gold);
+  background: var(--sel-bg);
+  box-shadow: inset 0 -2px 0 var(--sel-bar);
 }
 .crumb-cur { color: var(--dim); }
 
@@ -641,13 +641,11 @@ const hasAny = computed(() => cards.value.length > 0)
 .g-step.locked { opacity: .68; }
 .g-step.locked .g-ic { color: var(--dim); }
 .g-step.ready {
-  border-color: color-mix(in oklch, var(--gold) 55%, transparent);
-  background: color-mix(in oklch, var(--gold) 9%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in oklch, var(--gold) 28%, transparent),
-              0 2px 12px color-mix(in oklch, var(--gold) 14%, transparent);
+  border-color: var(--sel-line);
+  background: var(--sel-bg);
 }
-.g-step.ready .g-ic { color: var(--gold); }
-.g-step.ready .g-note { color: var(--gold); }
+.g-step.ready .g-ic { color: var(--ink); }
+.g-step.ready .g-note { color: var(--ink); }
 .g-sep { color: var(--dim); display: inline-flex; }
 .g-sep :deep(svg) { width: 10px; height: 10px; }
 
@@ -666,10 +664,8 @@ const hasAny = computed(() => cards.value.length > 0)
   transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease);
 }
 .seg.on {
-  border-color: color-mix(in oklch, var(--gold) 55%, transparent);
-  box-shadow:
-    0 0 0 1px color-mix(in oklch, var(--gold) 26%, transparent),
-    0 2px 14px color-mix(in oklch, var(--gold) 12%, transparent);
+  border-color: var(--sel-line);
+  box-shadow: inset 3px 0 0 0 var(--sel-bar);
 }
 .sg-meta { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .sg-title { font-size: 16px; font-weight: 700; color: var(--ink); }
@@ -776,11 +772,9 @@ const hasAny = computed(() => cards.value.length > 0)
   color: var(--muted); font-size: 11.5px; cursor: pointer;
 }
 .strip-item.on {
-  border-color: color-mix(in oklch, var(--gold) 65%, transparent);
+  border-color: var(--sel-line);
   color: var(--ink);
-  box-shadow:
-    0 0 0 1px color-mix(in oklch, var(--gold) 40%, transparent),
-    0 2px 12px color-mix(in oklch, var(--gold) 16%, transparent);
+  box-shadow: inset 0 2px 0 0 var(--sel-bar);
 }
 .thumb {
   display: grid; place-items: center; width: 150px; height: 84px;

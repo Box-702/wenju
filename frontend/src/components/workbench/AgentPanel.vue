@@ -164,9 +164,9 @@ function fmtRel(iso) {
 }
 .ap-btn :deep(svg) { width: 14px; height: 14px; flex: none; }
 .ap-btn:hover { color: var(--ink); background: var(--surface-2); }
-/* 选中态语言：淡金底 + 图标转金（不用硬边） */
-.ap-btn.on { color: var(--ink); background: color-mix(in oklch, var(--gold) 10%, transparent); }
-.ap-btn.on :deep(svg) { color: var(--gold); }
+/* 选中态语言（白条亮字，同 IconRail）：白 8% 底 + 图标转纯白 */
+.ap-btn.on { color: var(--ink); background: var(--sel-bg); }
+.ap-btn.on :deep(svg) { color: var(--ink); }
 .ap-conv-wrap { position: relative; }
 .ap-conv-cur {
   max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -192,15 +192,14 @@ function fmtRel(iso) {
   background: transparent; color: var(--muted); font-size: 12.5px; cursor: pointer;
 }
 .ap-item:hover { background: var(--surface-2); color: var(--ink); }
-/* 选中会话：左侧圆角金色竖条 + 淡金底 */
+/* 选中会话：白 8% 底 + 左侧 2px 白条（不发光） */
 .ap-item.on {
   color: var(--ink);
-  background: color-mix(in oklch, var(--gold) 9%, transparent);
+  background: var(--sel-bg);
 }
 .ap-item.on::before {
   content: ''; position: absolute; left: 3px; top: 6px; bottom: 6px;
-  width: 3px; border-radius: 2px; background: var(--gold);
-  box-shadow: 0 0 6px color-mix(in oklch, var(--gold) 55%, transparent);
+  width: 2px; border-radius: 2px; background: var(--sel-bar);
 }
 .ap-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ap-item-time { flex: none; font-size: 10.5px; color: var(--dim); }

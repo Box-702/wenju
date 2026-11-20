@@ -50,8 +50,13 @@
   --rose: oklch(0.66 0.09 8);
   --rose-soft: color-mix(in oklch, var(--rose) 10%, transparent);
 
-  /* 选中态：半透明白（不再是实心灰块） */
+  /* 选中态（2026-11-21 重做「白条亮字」，用户否掉金底金条光晕）：
+     --sel-bg 选中底（白 8%）· --sel-bar 选中条/勾（近白，不发光）·
+     --sel-line 选中卡边。全站选中/当前项统一按这套走。 */
   --select: rgba(255, 255, 255, .1);
+  --sel-bg: rgba(255, 255, 255, .08);
+  --sel-bar: rgba(255, 255, 255, .92);
+  --sel-line: rgba(255, 255, 255, .32);
 
   /* 语义色（低饱和，深底可读） */
   --ok: rgba(255, 255, 255, 0.88);
@@ -126,7 +131,7 @@ body {
   font-size: 14px;
   font-feature-settings: "tnum";
 }
-::selection { background: color-mix(in oklch, var(--gold) 30%, transparent); }
+::selection { background: rgba(255, 255, 255, .25); }
 
 /* 滚动条 */
 * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
@@ -199,7 +204,7 @@ input:focus, textarea:focus, select:focus {
   box-shadow: 0 0 0 2px rgba(255, 255, 255, .12);
 }
 textarea { resize: vertical; }
-input[type="checkbox"] { accent-color: var(--gold); }
+input[type="checkbox"] { accent-color: var(--sel-bar); }
 /* 下拉：统一控件高度与箭头（分类选择一律用下拉，不用胶囊） */
 select {
   appearance: none;

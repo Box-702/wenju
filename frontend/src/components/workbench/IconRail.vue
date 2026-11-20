@@ -7,7 +7,7 @@
 // 对话不在这里——对话是右侧常驻面板（AgentPanel），会话功能自持在那张卡片右上角。
 // =====================================================================
 import AppIcon from '../AppIcon.vue'
-import { store, toggleRightPanel, toggleAgentPanel } from '../../stores/app'
+import { store, toggleAgentPanel } from '../../stores/app'
 
 const VIEWS = [
   { key: 'script', label: '剧本', icon: 'file' },
@@ -41,9 +41,10 @@ const VIEWS = [
     <button class="rail-item" title="我的作品" @click="store.overlay = 'tasks'">
       <AppIcon name="folder" />
     </button>
-    <button class="rail-item" :class="{ active: store.rightOpen }"
-      title="上下文栏（大纲 / 镜头 / 资产 / 白模）" @click="toggleRightPanel()">
-      <AppIcon name="panel" />
+    <button class="rail-item" :class="{ active: store.overlay === 'skills' }"
+      title="技能" @click="store.overlay = 'skills'">
+      <AppIcon name="sparkle" />
+      <span class="rail-label">技能</span>
     </button>
     <button class="rail-item" title="设置" @click="store.showSettings = true">
       <AppIcon name="gear" />
@@ -70,9 +71,8 @@ const VIEWS = [
   display: grid; place-items: center;
 }
 .rail-home.active {
-  background: color-mix(in oklch, var(--gold) 10%, transparent);
-  border-color: color-mix(in oklch, var(--gold) 55%, transparent);
-  box-shadow: 0 0 8px color-mix(in oklch, var(--gold) 22%, transparent);
+  background: var(--sel-bg);
+  border-color: var(--sel-line);
 }
 .home-mark { font-size: 14px; font-weight: 700; }
 .rail-sep { width: 24px; height: 1px; background: var(--line); margin: 4px 0 8px; }
@@ -86,17 +86,17 @@ const VIEWS = [
 }
 .rail-item :deep(svg) { width: 1.5em; height: 1.5em; }
 .rail-item:hover { color: var(--ink); background: var(--surface-2); }
-/* 选中态统一语言：淡金底 + 左侧圆角金条带微光 + 图标转金（2026-11-20
-   用户反馈旧的 inset 硬线不美观）。全站工作台视图都按这套走。 */
+/* 选中态统一语言（2026-11-21 重做「白条亮字」，金底金条光晕全废）：
+   白 8% 底 + 左侧 2px 白条（不发光）+ 图标文字转纯白。
+   令牌在 style.css（--sel-bg / --sel-bar），全站选中都按这套走。 */
 .rail-item.active {
   color: var(--ink);
-  background: color-mix(in oklch, var(--gold) 9%, transparent);
+  background: var(--sel-bg);
 }
-.rail-item.active :deep(svg) { color: var(--gold); }
+.rail-item.active :deep(svg) { color: var(--ink); }
 .rail-item.active::before {
   content: ''; position: absolute; left: 2px; top: 7px; bottom: 7px;
-  width: 3px; border-radius: 2px; background: var(--gold);
-  box-shadow: 0 0 8px color-mix(in oklch, var(--gold) 55%, transparent);
+  width: 2px; border-radius: 2px; background: var(--sel-bar);
 }
 .rail-spacer { flex: 1; }
 </style>

@@ -79,7 +79,11 @@ const versions = computed(() => store.versions || [])
   border: 1px solid var(--line); border-radius: var(--radius-sm);
   background: var(--surface); margin-bottom: 6px; overflow: hidden;
 }
-.hp-row.on { border-color: color-mix(in oklch, var(--gold) 45%, transparent); }
+.hp-row.on {
+  border-color: var(--sel-line);
+  background: var(--sel-bg);
+  box-shadow: inset 2px 0 0 0 var(--sel-bar);
+}
 .hp-sum {
   display: flex; flex-direction: column; gap: 3px;
   padding: 8px 10px; cursor: pointer; list-style: none;

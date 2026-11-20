@@ -7,15 +7,21 @@
 // 看不到进度。这张卡把批次进度就地显示出来，不用切走去看。
 //
 // 进度数据源是全局批次轮询（store.videoBatch / ensureBatchPolling），
-// 与产出页（VideoWorkbench）读的是同一份，不会出现两处数字打架。
+// 与分镜页（ClipsView）读的是同一份，不会出现两处数字打架。
 // =====================================================================
 
 import { computed } from 'vue'
-import { showView, store } from '../stores/app'
+import { store } from '../stores/app'
 
 const props = defineProps({
   payload: { type: Object, required: true }, // { type, batch_id, project_id }
 })
+
+/** 「看进度」直达分镜页（旧产出页已删，2026-11-21）。 */
+function goClips() {
+  store.overlay = null
+  store.wbView = 'clips'
+}
 
 const batch = computed(() => store.videoBatch)
 
@@ -52,7 +58,7 @@ const failed = computed(
       保证人物与光线连贯。
     </p>
     <div class="actions">
-      <button class="btn ghost small" @click="showView('video')">看进度</button>
+      <button class="btn ghost small" @click="goClips">看进度</button>
     </div>
   </div>
 </template>

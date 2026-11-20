@@ -152,8 +152,8 @@ function open(a) {
   background: transparent; cursor: pointer;
 }
 .node:hover { background: var(--surface-2); }
-/* 选中态统一语言：淡金底 + 圆角金条 */
-.node:active { background: color-mix(in oklch, var(--gold) 10%, transparent); }
+/* 按下瞬间（白 8% 底，同全站选中语言） */
+.node:active { background: var(--sel-bg); }
 .thumb {
   width: 34px; height: 34px; flex: none; border-radius: 6px; overflow: hidden;
   display: grid; place-items: center;

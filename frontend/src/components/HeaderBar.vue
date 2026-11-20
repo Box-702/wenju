@@ -1,19 +1,18 @@
 <script setup>
-
-const emit = defineEmits(['switch-view', 'open-tasks'])
 // =====================================================================
-// HeaderBar.vue —— 顶栏
+// HeaderBar.vue —— 顶栏（2026-11-21 收敛）
 //
-// 品牌 + 批次状态徽标 + 面板开关。命令面板与模型入口已按「简化 UI」
-// 方向移除：模型状态放在输入区工具行，模型配置在设置弹窗里。
-// 桌面端使用原生窗口标题栏，不需要自定义窗口控制按钮。
+// 只剩 品牌字标 + 批次状态徽标。导航全部归最左图标栏（IconRail）：
+// 资产库/产出/我的作品在图标栏有同名入口，顶栏那排是旧「右栏视图开关」
+// 设计的残留（产出键还把人引到已删除的产出页），已按用户要求清掉。
+// 上下文侧栏不再支持关闭（可拖右缘调宽），自然也没有开关按钮。
 // =====================================================================
 
 import { computed } from 'vue'
-import { store, toggleRightPanel, exitWorkspace } from '../stores/app'
+import { store, exitWorkspace } from '../stores/app'
 import AppIcon from './AppIcon.vue'
 
-// 批次状态徽标：批次在跑（running / awaiting_approval）时显示，点击直达视频工作台。
+// 批次状态徽标：批次在跑（running / awaiting_approval）时显示，点击直达分镜页。
 const batchBadge = computed(() => {
   const b = store.videoBatch
   if (!b) return null
@@ -24,22 +23,13 @@ const batchBadge = computed(() => {
 })
 
 function openWorkbench() {
-  store.view = 'video'
-  if (!store.rightOpen) toggleRightPanel()
+  store.overlay = null
+  store.wbView = 'clips'
 }
 </script>
 
 <template>
   <header>
-    <!-- 我的作品（点开是一个页面，不再是常驻侧栏） -->
-    <button
-      class="ghost nav-toggle"
-      title="我的作品"
-      @click="emit('open-tasks')"
-    >
-      <AppIcon name="folder-open" />
-    </button>
-
     <h1 class="brand" title="回到首页" @click="exitWorkspace">
       <span class="brand-name">问剧</span>
     </h1>
@@ -47,46 +37,10 @@ function openWorkbench() {
     <button
       v-if="batchBadge"
       :class="['batch-chip', batchBadge.status]"
-      title="打开视频工作台"
+      title="打开分镜页"
       @click="openWorkbench"
     >
       <span class="dot" aria-hidden="true"></span>{{ batchBadge.text }}
-    </button>
-
-    <!-- 顶栏按钮 = 右侧栏的视图开关：默认不显式（无边框），
-         正显示这个视图时才有边框；右侧栏收起就没有边框。 -->
-    <button
-      :class="['ghost', 'page-btn', { on: store.wbView === 'roles' }]"
-      title="资产库（角色 / 场景 / 素材）"
-      @click="emit('switch-view', 'assets')"
-    >
-      <AppIcon name="folder" /> <span>资产库</span>
-    </button>
-
-    <button
-      :class="['ghost', 'page-btn', { on: store.overlay === 'skills' }]"
-      title="技能"
-      @click="emit('switch-view', 'skills')"
-    >
-      <AppIcon name="sparkle" /> <span>技能</span>
-    </button>
-
-    <button
-      :class="['ghost', 'page-btn', { on: store.wbView === 'clips' }]"
-      title="产出（镜头与提示词）"
-      @click="emit('switch-view', 'shots')"
-    >
-      <AppIcon name="film" /> <span>产出</span>
-    </button>
-
-    <button
-      class="ghost panel-toggle"
-      :class="{ on: store.rightOpen }"
-      title="上下文侧栏（大纲 / 镜头 / 资产）"
-      aria-label="切换上下文侧栏"
-      @click="toggleRightPanel()"
-    >
-      <AppIcon name="panel" />
     </button>
   </header>
 </template>
@@ -110,45 +64,6 @@ h1 {
   font-size: 15px; font-weight: 600; letter-spacing: 0.06em;
   color: var(--ink);
 }
-header button {
-  position: relative;
-  flex: none; white-space: nowrap; height: var(--control-h); padding: 0 10px;
-  display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px;
-}
-/* 可视 36px，命中区外扩到 ≥44px（伪元素承接点击） */
-header button::after { content: ''; position: absolute; inset: -4px -6px; }
-
-/* 导航开关 */
-.nav-toggle { padding: 0 8px; width: 32px; }
-.nav-toggle .app-ic { width: 14px; height: 14px; }
-.nav-toggle.on { color: var(--ink); }
-
-/* 顶栏按钮：平时不显式（透明底、无边框），右侧栏正显示它时才有边框；
-   右侧栏收起 → 又回到无边框的样子。 */
-.page-btn {
-  display: inline-flex; align-items: center; gap: 5px;
-  height: var(--control-h); padding: 0 10px;
-  color: var(--muted); font-size: 12.5px;
-  border-color: transparent;
-  background: transparent;
-  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease),
-              background var(--dur) var(--ease);
-}
-.page-btn:hover {
-  color: var(--ink);
-  border-color: var(--line);
-  background: rgba(255, 255, 255, .06);
-}
-.page-btn.on {
-  color: var(--ink);
-  border-color: var(--line-strong);
-  background: rgba(255, 255, 255, .09);
-}
-.page-btn .app-ic { width: 13px; height: 13px; }
-
-.panel-toggle { margin-left: auto; }
-.panel-toggle .app-ic { width: 13px; height: 13px; }
-.panel-toggle.on { background: var(--select); border-color: var(--line-strong); color: var(--ink); }
 
 /* 批次状态：安静的文字状态，不用彩色胶囊 */
 .batch-chip {

@@ -19,7 +19,6 @@ export const store = reactive({
   // 项目树数据
   projects: [],        // 项目列表 [{ id, title, version_count }]
   convMap: {},         // pid -> 对话列表（懒加载缓存）
-  scenesMap: {},       // pid -> 场景列表 [{id, title, characters, beats_count}]（懒加载）
   expanded: {},        // pid -> 是否展开
 
   // 全局对话（不绑定项目；在对话里创建项目后自动归档到该项目组下）
@@ -38,19 +37,15 @@ export const store = reactive({
   // 应用模式：home=品牌首页（作品列表） / workspace=创作工作区（三栏）
   mode: 'home',
   // 场景聚焦模式（点击左侧场景时设置，第二栏显示单个场景详情）
-  focusedSceneId: null,
   // 第二列上下文栏开关（即梦式：大纲 / 镜头 / 资产 / 白模）：默认开
   rightOpen: localStorage.getItem('sw-layout:rightOpen') !== '0',
 
-  // 作品工作台：剧本（默认）/ 场景 / 视频
-  view: 'video',
   // 工作台主区视图（D-73 对标即梦四栏）：null=作品总览；script/clips/roles/episodes=工作台。
   // 对话是右侧常驻面板（AgentPanel），主区让给工作台——即梦式布局。
   wbView: null,
   // 右侧 Agent 对话面板（即梦式常驻右栏）：默认开，记忆在 localStorage
   agentOpen: localStorage.getItem('sw-agent-open') !== '0',
   storyPlan: null,     // 当前作品的故事规划（理解卡 + 分集提案，D-71）
-  viewerText: '',      // 最新版本剧本全文（纯文本，供复制）
   viewerScript: null,  // 最新版本结构化剧本（供剧本排版渲染）
 
   // 杂项标记
@@ -67,7 +62,6 @@ export const store = reactive({
   showNewProject: false,        // 新建作品弹窗开关
   showSettings: false,
   overlay: null,   // 全屏页面：assets | skills | output | tasks（null=关闭）
-  sideView: 'assets',  // 侧栏视图：outline（大纲）| shots（镜头/提示词）| assets（资产）| skills（技能）
   assets: [],          // 当前项目的资产（角色/场景/素材/成片）——最终归宿
   providers: [],       // 可用模型列表（输入区「模型」胶囊下拉用）
   chatPref: null,       // 对话模型偏好 {provider_id, model_name} —— 下拉里标出当前选中
@@ -200,35 +194,11 @@ export async function deleteProject(pid) {
 // ---------------------------------------------------------------------
 // 右侧查看面板开关
 // ---------------------------------------------------------------------
-/** 聚焦到单个场景（右栏显示场景详情）。传 null 退出聚焦。
- *  必须带上场景所属项目：右栏的剧本文本（viewerScript）可能还没加载，
- *  或停留在另一个项目上——只设 focusedSceneId 会渲染出空白。 */
-export async function focusScene(sceneId, projectId) {
-  store.focusedSceneId = sceneId
-  if (sceneId && !store.rightOpen) {
-    store.rightOpen = true
-    localStorage.setItem('sw-layout:rightOpen', '1')
-  }
-  if (sceneId) store.view = 'scene'
-  if (!sceneId) return
-  // 场景所属项目与当前右栏上下文不一致（或尚未加载）时，先切过去再取剧本。
-  if (projectId && store.pid !== projectId) {
-    store.pid = projectId
-    store.convId = null // 旧对话不属于新项目，交给后端回落到该项目默认对话
-    await loadViewer()
-  } else if (!store.viewerScript) {
-    await loadViewer()
-  }
-}
-/** 开/右侧查看面板；偏好记忆在 localStorage（默认收起）。 */
-export function toggleRightPanel() {
-  store.rightOpen = !store.rightOpen
-  localStorage.setItem('sw-layout:rightOpen', store.rightOpen ? '1' : '0')
-}
-/** 恢复上次的面板开关偏好（App 挂载时调用）。 */
+/** 恢复面板偏好（App 挂载时调用）。
+ *  上下文侧栏 2026-11-21 起常驻不可关：rightOpen 只剩窄屏抽屉的自动开合用，
+ *  桌面永远为 true、不再读旧记忆。Agent 面板仍记忆开关偏好。 */
 export function restorePanelPrefs() {
-  // 第二列上下文栏 / Agent 面板：即梦式布局默认都开，只有显式关过才收起
-  store.rightOpen = localStorage.getItem('sw-layout:rightOpen') !== '0'
+  store.rightOpen = true
   store.agentOpen = localStorage.getItem('sw-agent-open') !== '0'
 }
 
@@ -279,49 +249,6 @@ export async function createConversation(pid) {
   } catch (e) {
     notify(`新建会话失败：${e.message}`, 'error')
     return null
-  }
-}
-
-/** 展开时懒加载某项目的场景列表（从最新版本提取）。 */
-export async function loadScenes(pid) {
-  try {
-    const versions = await api(`/projects/${pid}/versions`)
-    if (versions.length) {
-      const v = await api(`/versions/${versions[0].id}`)
-      const scenes = (v.script?.scenes || []).map((s) => ({
-        id: s.id,
-        title: s.title || s.id,
-        characters: s.characters || [],
-        beats_count: (s.beats || []).length,
-        purpose: s.purpose || '',
-      }))
-      store.scenesMap[pid] = scenes
-    } else {
-      store.scenesMap[pid] = []
-    }
-  } catch { store.scenesMap[pid] = [] }
-}
-
-/** 场景拖拽排序：乐观更新本地，落库为新版本；失败回滚重拉。 */
-export async function reorderScenes(fromId, toId) {
-  const pid = store.pid
-  const scenes = store.scenesMap[pid] || []
-  const fromIdx = scenes.findIndex((s) => s.id === fromId)
-  const toIdx = scenes.findIndex((s) => s.id === toId)
-  if (fromIdx < 0 || toIdx < 0) return
-  const reordered = [...scenes]
-  const [moved] = reordered.splice(fromIdx, 1)
-  reordered.splice(toIdx, 0, moved)
-  store.scenesMap[pid] = reordered
-  const versionId = store.versions[0]?.id
-  if (!versionId) { notify('没有可排序的剧本版本'); return }
-  try {
-    await api(`/versions/${versionId}/scene_order`, 'POST', { scene_ids: reordered.map((s) => s.id) })
-    await Promise.all([loadViewer(), loadScenes(pid)])
-    notify('场景顺序已更新', 'ok')
-  } catch (e) {
-    notify('排序失败：' + e.message)
-    await loadScenes(pid)
   }
 }
 
@@ -410,22 +337,18 @@ export async function loadHistory(token = _navSeq) {
 // ---------------------------------------------------------------------
 /** 加载最新版本全文 + 结构化剧本；token 过期时不写入。 */
 export async function loadViewer(token = _navSeq) {
-  if (!store.pid) { store.viewerText = ''; store.viewerScript = null; return }
+  if (!store.pid) { store.viewerScript = null; return }
   try {
     const versions = await api(`/projects/${store.pid}/versions`)
     if (!_isCurrent(token)) return
     store.versions = versions
     if (versions.length) {
-      const t = await api(`/versions/${versions[0].id}/text`)
-      if (!_isCurrent(token)) return
-      store.viewerText = t.text
       try {
         const full = await api(`/versions/${versions[0].id}`)
         if (!_isCurrent(token)) return
         store.viewerScript = full.script || null
       } catch { store.viewerScript = null }
     } else {
-      store.viewerText = ''
       store.viewerScript = null
     }
   } catch (e) {
@@ -433,11 +356,6 @@ export async function loadViewer(token = _navSeq) {
     store.viewerScript = null
     notify('剧本内容加载失败：' + e.message)
   }
-}
-
-/** 切换查看面板 tab。 */
-export function showView(name) {
-  store.view = name
 }
 
 /** 拉当前作品的故事规划（理解卡 + 分集提案，D-71）。工作台剧本页与提案卡都读它。 */

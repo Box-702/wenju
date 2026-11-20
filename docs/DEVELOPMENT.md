@@ -2834,6 +2834,33 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   `app/skills/director-breakdown/SKILL.md`（两条新规则）·
   `tests/test_director_budget.py`（新增 7 条）
 
+### 5.87 重排 import 行丢了 `store`：HMR 掩护下页面「看着正常」，全量刷新白屏（2026-11-21）
+
+- **症状**：侧栏拖宽功能做完后浏览器整棵白屏（#app 空），但 build 通过、
+  vite 转换全 200、且此前 HMR 下的热更新一直「看起来正常」。
+- **根因**：手改 `App.vue` 的 import 行（删 `toggleRightPanel`）时把 `store`
+  一起弄丢了。`<script setup>` 里 watch 与模板都在引用裸 `store`——Vue 对
+  setup/watch 里的 ReferenceError 有 catch，dev server 又一直用旧模块热更，
+  于是只表现为「部分交互静默失效」，直到整页 reload 才炸成白屏。
+- **解法**：页面空白时别猜，直接在当前页 `evaluate` 里动态
+  `import('/src/main.js').catch(e => e.stack)` 抓到第一手调用栈（5 分钟定位）；
+  补回 `store` 导入。**纪律**：动 import 行后必须做一次全量 reload 验证，
+  不能信「HMR 还活着 = 没改坏」。
+- **涉及文件**：`frontend/src/App.vue`（import 行）
+
+### 5.88 后台标签页 rAF 冻结：width 过渡停在起点，「量出来永远是旧值」（2026-11-21）
+
+- **症状**：侧栏拖宽逻辑全部生效（localStorage 记忆、钳制都对），但
+  `getBoundingClientRect().width` 永远量回 300px——内联 style 明明已是 420px，
+  computed 还是 300。手改 `el.style.width='500px'` 同步读也「不生效」。
+- **根因**：`.ctx-wrap` 有 `transition: width 160ms`；自动化验证跑在**后台
+  标签页**里，Chromium 冻结 rAF，过渡永远停在起始帧——量到的是动画起点，
+  不是最终值。CSS 本身没有任何问题。
+- **解法**：验证时把过渡临时禁掉（`el.style.transition='none'` 再改宽度同步
+  读 computed），或接受「内联 style + localStorage 才是事实源」。**教训**：
+  后台页里任何「量渲染结果」的断言都可能被动画/过渡冻住，量之前先关动画。
+- **涉及文件**：`frontend/src/App.vue`（.ctx-wrap 拖宽）
+
 ## 六、排查手册（症状 → 先查什么）
 ## 六、排查手册（症状 → 先查什么）
 

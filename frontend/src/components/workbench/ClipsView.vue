@@ -486,7 +486,11 @@ const hasAny = computed(() => cards.value.length > 0)
   border: none; background: transparent; color: var(--muted);
   font-size: 12.5px; padding: 3px 8px; border-radius: var(--radius-sm); cursor: pointer;
 }
-.ep-tab.on { color: var(--ink); background: var(--surface-2); }
+.ep-tab.on {
+  color: var(--ink);
+  background: color-mix(in oklch, var(--gold) 9%, transparent);
+  box-shadow: inset 0 -2px 0 var(--gold);
+}
 .crumb-cur { color: var(--ink); font-weight: 600; }
 
 .cl-error {
@@ -611,7 +615,13 @@ const hasAny = computed(() => cards.value.length > 0)
   border: 1px solid var(--line); background: var(--surface);
   color: var(--muted); font-size: 11px; cursor: pointer;
 }
-.strip-item.on { border-color: var(--gold); color: var(--ink); }
+.strip-item.on {
+  border-color: color-mix(in oklch, var(--gold) 65%, transparent);
+  color: var(--ink);
+  box-shadow:
+    0 0 0 1px color-mix(in oklch, var(--gold) 40%, transparent),
+    0 2px 12px color-mix(in oklch, var(--gold) 16%, transparent);
+}
 .thumb {
   display: grid; place-items: center; width: 84px; height: 47px;
   border-radius: 4px; overflow: hidden; background: #000;

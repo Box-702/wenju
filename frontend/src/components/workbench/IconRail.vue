@@ -4,7 +4,7 @@
 //
 // 上段：当前视图的文件导航（剧本/分镜/角色/分集，图标 + 短字）。
 // 下段：作品、新建、辅助面板、设置。
-// 与旧 WorkbenchRail 的区别：对话不在这里——对话是右侧常驻面板（AgentPanel）。
+// 对话不在这里——对话是右侧常驻面板（AgentPanel），会话功能自持在那张卡片右上角。
 // =====================================================================
 import AppIcon from '../AppIcon.vue'
 import { store, toggleRightPanel, toggleAgentPanel } from '../../stores/app'
@@ -69,10 +69,15 @@ const VIEWS = [
   color: var(--ink); cursor: pointer; margin-bottom: 4px;
   display: grid; place-items: center;
 }
-.rail-home.active { background: var(--surface-2); border-color: var(--gold); }
+.rail-home.active {
+  background: color-mix(in oklch, var(--gold) 10%, transparent);
+  border-color: color-mix(in oklch, var(--gold) 55%, transparent);
+  box-shadow: 0 0 8px color-mix(in oklch, var(--gold) 22%, transparent);
+}
 .home-mark { font-size: 14px; font-weight: 700; }
 .rail-sep { width: 24px; height: 1px; background: var(--line); margin: 4px 0 8px; }
 .rail-item {
+  position: relative;
   display: flex; flex-direction: column; align-items: center; gap: 3px;
   width: 44px; padding: 8px 2px; border: none; border-radius: var(--radius-sm);
   background: transparent; color: var(--muted);
@@ -81,6 +86,17 @@ const VIEWS = [
 }
 .rail-item :deep(svg) { width: 1.5em; height: 1.5em; }
 .rail-item:hover { color: var(--ink); background: var(--surface-2); }
-.rail-item.active { color: var(--ink); background: var(--surface-2); box-shadow: inset 2px 0 0 var(--gold); }
+/* 选中态统一语言：淡金底 + 左侧圆角金条带微光 + 图标转金（2026-11-20
+   用户反馈旧的 inset 硬线不美观）。全站工作台视图都按这套走。 */
+.rail-item.active {
+  color: var(--ink);
+  background: color-mix(in oklch, var(--gold) 9%, transparent);
+}
+.rail-item.active :deep(svg) { color: var(--gold); }
+.rail-item.active::before {
+  content: ''; position: absolute; left: 2px; top: 7px; bottom: 7px;
+  width: 3px; border-radius: 2px; background: var(--gold);
+  box-shadow: 0 0 8px color-mix(in oklch, var(--gold) 55%, transparent);
+}
 .rail-spacer { flex: 1; }
 </style>

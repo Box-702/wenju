@@ -3629,3 +3629,15 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **涉及文件**：`app/pipeline/repair.py`（expected_dialogue 逐场）·
   `app/crew/director.py`（MIN_BEAT_SEC + 段数封顶重均分 + auto_group 拆链头
   让路接力边界）· `tests/test_beat_granularity.py`（断言随语义更新）
+
+### 5.85 裸 UTC 时间戳在前端被按本地解析：「刚刚」显示成「8 小时前」（2026-11-20）
+
+- **症状**：AgentPanel 会话浮层里刚建的会话显示「8 小时前」。
+- **根因**：后端 `_now()` 返回 `datetime.now(UTC)`（aware），但接口序列化用
+  `isoformat()`——**输出不带 Z/偏移**（`2026-11-20T06:12:33.8`）。前端
+  `new Date(iso)` 对无时区后缀的串按**本地时间**解析（ECMAScript 规定），
+  东八区就整体差 8 小时。
+- **解法**：前端相对时间格式化处补 Z（`/[zZ]|[+-]\d{2}:?\d{2}$/` 判重后再补）。
+  彻底解法是后端统一输出带 Z 的 ISO（涉及全部接口与既有前端消费方，单独排期）；
+  本次先修新代码，别再往裸串上叠新调用。
+- **涉及文件**：`frontend/src/components/workbench/AgentPanel.vue`（fmtRel）

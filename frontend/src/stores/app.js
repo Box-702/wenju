@@ -267,6 +267,21 @@ export async function loadConversations(pid, token = null) {
   }
 }
 
+/** 在当前作品下新建一个会话并切进去（AgentPanel 头部「＋」用）。 */
+export async function createConversation(pid) {
+  if (!pid) return null
+  try {
+    const conv = await api(`/projects/${pid}/conversations`, 'POST', { title: '新对话' })
+    await loadConversations(pid)
+    await selectConversation(pid, conv.id)
+    notify('已开新会话（上下文独立）', 'ok')
+    return conv
+  } catch (e) {
+    notify(`新建会话失败：${e.message}`, 'error')
+    return null
+  }
+}
+
 /** 展开时懒加载某项目的场景列表（从最新版本提取）。 */
 export async function loadScenes(pid) {
   try {

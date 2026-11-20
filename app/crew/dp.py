@@ -139,6 +139,42 @@ def _light_phrase(env: str) -> str:
     return m.group(1).strip("，。, ") if m else ""
 
 
+_SENT_SPLIT_RE = re.compile(r"([^。！？!?\n]+[。！？!?]?)")
+
+
+def _insert_dialogue(body: str, line: str, shot: Shot, language: str) -> str:
+    """把台词句插进动作链中段（2026-11-20《替身v2》复盘）。
+
+    旧兜底把 `角色说话：「…」` 直接拼在 body 末尾——实测 4 个台词镜只有 2 个
+    真出了人声（006_024 平均音量 −33dB，纯环境声级）：长提示词的尾部指令最
+    容易被模型忽略，而即梦的写法是台词嵌在动作链中间（「…低声自语：'996的
+    破日子'。切至手部近景…」）。
+
+    插入点：导演给了 dialogue_at（台词在镜内第几秒开口）就按它在镜头时长里的
+    比例折算到第几句之后；没给就插第一句之后。body 只有一句时退化为追加末尾
+    （与旧行为一致）。final_frame 兜底在其后照常收尾，台词不在句尾。
+    """
+    body = body.strip().rstrip("。")
+    if not body:
+        return line
+    sentences = [s for s in _SENT_SPLIT_RE.findall(body) if s.strip()]
+    if len(sentences) <= 1:
+        return f"{body}。{line}"
+    idx = 1
+    at = getattr(shot, "dialogue_at", None)
+    dur = float(shot.duration_sec or 0)
+    if at is not None and dur > 0:
+        ratio = max(0.0, min(1.0, float(at) / dur))
+        idx = max(1, min(len(sentences) - 1, round(ratio * len(sentences))))
+    sep = "" if language == "zh" else " "
+    head = "。".join(s.rstrip("。") for s in sentences[:idx])
+    tail = "。".join(s.rstrip("。") for s in sentences[idx:])
+    out = f"{head}。{line}"
+    if tail:
+        out += f"{sep}{tail}"
+    return out
+
+
 def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
                         *, language: str, provider: str = "",
                         spatial_anchors: dict[str, str] | None = None) -> None:
@@ -762,10 +798,13 @@ class DPAgent(CrewAgent):
                     if b.id == ref and (b.line or "").strip():
                         speaker = char_map.get(b.speaker or "", b.speaker or "")
                         verb = "角色说话" if language == "zh" else "says"
-                        body = (f"{body.strip().rstrip('。')}。{speaker}{verb}："
-                                f"「{b.line.strip()}」" if language == "zh" else
-                                f"{body.strip().rstrip('.')}. {speaker} {verb}: "
-                                f"\u201c{b.line.strip()}\u201d")
+                        line = f"{speaker}{verb}：「{b.line.strip()}」" if language == "zh" \
+                            else f"{speaker} {verb}: \u201c{b.line.strip()}\u201d"
+                        # 台词插在动作链中段，不拼句尾（2026-11-20《替身v2》实测：
+                        # 台词在 770 字提示词的末尾，4 个台词镜只有 2 个真出了人声，
+                        # −33dB 的镜就是「有字幕没声音」那类——尾部指令最容易被忽略）。
+                        # 插入点：dialogue_at 落在第几句之后；没给就插第一句后。
+                        body = _insert_dialogue(body, line, shot, language)
                         break
 
             # 最终画面兜底（U11）：模型把最后一帧当情绪目的地，body 必须以

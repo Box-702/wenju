@@ -618,6 +618,26 @@ def audit_video_prompt(shot: dict[str, Any], *, style_context: str = "") -> list
     issues: list[str] = []
     if len(prompt) < 20:
         issues.append("提示词过短：没有给模型可渲染的物理事实，几乎必然自由发挥")
+    # 提示词过长（2026-11-20《替身v2》复盘）：实测 770 字/镜里锚占 500+ 字，
+    # 尾部台词与动作被模型忽略（4 个台词镜只有 2 个真出人声）。新粒度目标
+    # 一个分镜 ≤250 字（锚已瘦身，见 style-guide 字数预算）。组提示词（多机位）
+    # 按机位数放宽：每多一个机位多 200 字预算。
+    _n_cam = max(len(re.findall(r"镜头\d+（\d+秒）", prompt)),
+                 len(re.findall(r"\[Shot \d+\]", prompt)), 1)
+    _cap = 250 + max(0, _n_cam - 1) * 200
+    if len(prompt) > _cap:
+        issues.append(
+            f"提示词过长（{len(prompt)} 字，单分镜预算 {_cap} 字）：锚墙重述会让模型"
+            "只执行前几句、忽略尾部台词与动作——压缩环境/人物锚，一个分镜只写一个小事件"
+        )
+    # 台词在句尾（旧兜底的位置病）：官方句式出现在最后 30 字内，模型最容易漏。
+    # 新兜底把台词插进动作链中段，这里只提醒人工编辑时别又挪回末尾。
+    _dlg_m = re.search(r"[:：]\s*[「『“\"]", prompt)
+    if _dlg_m and len(prompt) - _dlg_m.start() < 30 and len(prompt) > 80:
+        issues.append(
+            "台词贴在句尾：模型对尾部指令执行最弱（实测有字幕没声音），"
+            "把 `角色说话：「…」` 挪进动作链中间"
+        )
     slop = find_slop_words(prompt)
     if slop:
         issues.append(f"含渲染不出来的占位词：{'、'.join(sorted(set(slop)))}——请换成具体的物理细节")

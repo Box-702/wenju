@@ -3515,3 +3515,25 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
   `POST .../video/shots/{id}/reroll`）· `app/video/service.py::reroll_shot`
   （业务体：失败重试 / 已批准合法重出 / 未批准 409 / 组感知归组头）·
   `tests/test_workbench_backend.py`（8 例）
+
+### 5.81 扩写流：预算从「装不下就删」翻成「事件定集数」（2026-11-20，D-71）
+
+- **症状**：《替身v2》跑批的台本事件被闸门删掉 16 镜（苏晴核心台词整句消失）；
+  用户拿即梦对比后发现根子在**编排**：即梦先出「理解卡 + 分集提案」
+  （同一篇拆 5 集 × 60–95 秒，7600 字扩成 14180 字），用户确认后才写剧本；
+  我们拿到原文直接开拆，集数被固定 120 秒预算隐性决定，装不下就删事件。
+- **根因**：`duration_budget` 是类型常数不看内容量；生成链路没有「事件清单」
+  这个概念，删事件与压时长在代码里是同一个动作。
+- **解法**：新增 `app/pipeline/story_plan.py`——`plan_story()` 一次结构化调用
+  产出理解卡（logline/人物/冲突/**关键事件全清单**）+ 分集提案（每集事件归属、
+  钩子、scenes_hint），`normalized()` 确定性纠偏（集号连续、事件越界并入末集、
+  id 补号）；提案落 `projects.story_plan_json`（status=proposed）。
+  对话工具 `plan_story` / `confirm_story_plan` 走「Agent 提案、用户确认」；
+  确认后 `generate_script(story_plan=…)` 把每集任务书（事件底线 + 钩子 +
+  归集规则）注入 `_stage_scenes` 的 scope_note，场次 chapter_refs 填 ep_00N
+  → D-63 集-镜两级直接认账。内容比例预算（A1）是同一方向的另一半：
+  预算 = max(类型预算, 场数×24s)，超一集自动拆集。
+- **涉及文件**：`app/pipeline/story_plan.py`（新模块）· `app/pipeline/generation.py`
+  （story_plan 参数 + scope_note 注入三处调用点）· `app/store.py`
+  （story_plan_json 列 + 迁移 + set_story_plan）· `app/chat/tools/screenplay.py`
+  （两个新工具，38 个）· `tests/test_story_plan.py`（13 例，含工具层闭环）

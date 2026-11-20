@@ -136,6 +136,9 @@ class Project(Base):
     novel_map_json: Mapped[str] = mapped_column(default="{}")
     # 连载进度锚：已改编到的章号（0 = 还没按章选段生成过）
     adapted_until: Mapped[int] = mapped_column(default=0)
+    # ---- 故事规划（D-71 扩写流）----
+    # 理解卡 + 分集提案：{"understanding":{...},"episodes":[...],"status":"proposed|confirmed"}
+    story_plan_json: Mapped[str] = mapped_column(default="{}")
     created_at: Mapped[datetime] = mapped_column(default=_now)
     updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
 
@@ -148,6 +151,10 @@ class Project(Base):
     @property
     def novel_map(self) -> dict[str, Any]:
         return _json_load(self.novel_map_json, {})
+
+    @property
+    def story_plan(self) -> dict[str, Any]:
+        return _json_load(self.story_plan_json, {})
 
 
 class ScriptVersion(Base):
@@ -674,6 +681,8 @@ class Store:
                     conn.execute(text("ALTER TABLE projects ADD COLUMN novel_map_json VARCHAR DEFAULT '{}'"))
                 if "adapted_until" not in cols_proj:
                     conn.execute(text("ALTER TABLE projects ADD COLUMN adapted_until INTEGER DEFAULT 0"))
+                if "story_plan_json" not in cols_proj:
+                    conn.execute(text("ALTER TABLE projects ADD COLUMN story_plan_json VARCHAR DEFAULT '{}'"))
 
             # ---- script_versions 表 ----
             cols_ver = {c["name"] for c in insp.get_columns("script_versions")} if "script_versions" in tables else set()
@@ -917,6 +926,18 @@ class Store:
             if not p:
                 return None
             p.adapted_until = int(chapter_index)
+            p.updated_at = _now()
+            s.commit()
+            s.refresh(p)
+            return p
+
+    def set_story_plan(self, project_id: str, story_plan: dict[str, Any]) -> Project | None:
+        """保存故事规划（理解卡 + 分集提案，D-71 扩写流）。"""
+        with self.session() as s:
+            p = s.get(Project, project_id)
+            if not p:
+                return None
+            p.story_plan_json = json.dumps(story_plan, ensure_ascii=False)
             p.updated_at = _now()
             s.commit()
             s.refresh(p)

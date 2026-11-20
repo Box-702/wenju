@@ -154,6 +154,56 @@ def build(ctx: ToolContext) -> list:
         )
 
     @tool
+    def plan_story(project_id: str, episodes: str = "", notes: str = "") -> str:
+        """读原文产出「理解卡 + 分集提案」（D-71 扩写流，生成剧本前先做这一步）。
+        理解卡：故事内核/人物/核心冲突/关键事件全清单（扩写底线，之后一集都不删事件）；
+        分集提案：做几集、每集讲什么事件、结尾钩子——由用户确认后才开始写剧本。
+        参数：project_id=项目 id；episodes=用户已指定集数时填数字（可选，默认由提案决定）；
+        notes=用户的额外要求（如「结尾留白」「压缩到 60 秒」，可选）。"""
+        from ...pipeline.story_plan import StoryPlan, plan_story as _plan
+
+        p = ctx.project(project_id)
+        if not llm.available:
+            return "故事提案需要对话模型（当前不可用），请先在设置里配置模型。"
+        hint = None
+        if str(episodes).strip():
+            try:
+                hint = max(1, int(episodes))
+            except ValueError:
+                return "episodes 需要是集数数字（如 3）。"
+        sp = _plan(llm, title=p.title, raw_text=p.raw_text or "",
+                   episodes_hint=hint, notes=notes.strip())
+        if sp is None:
+            return "这次没能形成故事提案（模型输出不合格），可以让我再试一次，或直接告诉我你想做几集。"
+        store.set_story_plan(p.id, sp.model_dump())
+        n_ev = len(sp.understanding.events)
+        return (
+            f"{sp.to_card()}\n\n"
+            f"（提案已存为待确认状态。确认这套分集就开始按集扩写生成剧本；"
+            f"想改集数、改某集的钩子或事件归属，直接告诉我。）"
+        )
+
+    @tool
+    def confirm_story_plan(project_id: str) -> str:
+        """确认当前故事提案（理解卡 + 分集），之后「生成初稿」会按提案扩写、事件一个不删。
+        只在用户明确认可提案后调用。参数：project_id=项目 id。"""
+        from ...pipeline.story_plan import StoryPlan
+
+        p = ctx.project(project_id)
+        raw = p.story_plan or {}
+        if not raw.get("episodes"):
+            return "还没有故事提案，先让我「读原文做分集提案」。"
+        if raw.get("status") == "confirmed":
+            return "这套提案已经是确认状态，直接说「生成初稿」即可按集扩写。"
+        sp = StoryPlan.model_validate(raw)
+        sp.status = "confirmed"
+        store.set_story_plan(p.id, sp.model_dump())
+        return (
+            f"提案已确认：共 {len(sp.episodes)} 集、{len(sp.understanding.events)} 件关键事件。"
+            f"现在生成初稿会按集扩写（薄的事件加戏，不删事件）。"
+        )
+
+    @tool
     def generate_script(project_id: str, from_chapter: str = "", to_chapter: str = "") -> str:
         """为指定项目生成剧本初稿（生成流水线：故事圣经 -> 场景/节拍）。
 
@@ -188,6 +238,17 @@ def build(ctx: ToolContext) -> list:
                 return f"选段失败：{e}"
             if a > 1:
                 prior_context = previous_context(p.novel_map, a - 1)
+
+        # 已确认的故事提案（D-71 扩写流）：带进生成，事件底线注入场景阶段，
+        # 场次按提案归集（chapter_refs=ep_00N → D-63 集-镜直接认账）。
+        story_plan = None
+        if (p.story_plan or {}).get("status") == "confirmed" and (p.story_plan or {}).get("episodes"):
+            from ...pipeline.story_plan import StoryPlan
+
+            try:
+                story_plan = StoryPlan.model_validate(p.story_plan)
+            except Exception:  # noqa: BLE001
+                story_plan = None
         script, artifacts = run_generation(
             llm,
             get_settings(),
@@ -196,14 +257,18 @@ def build(ctx: ToolContext) -> list:
             adaptation_type=p.adaptation_type,
             language=p.language,
             prior_context=prior_context,
+            story_plan=story_plan,
         )
         version_label = f"初始生成（{span_label}）" if span_label else "初始生成"
+        if story_plan is not None:
+            version_label = f"按提案扩写（{len(story_plan.episodes)} 集）"
         version = store.create_version(
             p,
             script,
             source_type="generation",
             label=version_label,
-            notes=f"生成模式：{artifacts.get('mode', 'n/a')}",
+            notes=f"生成模式：{artifacts.get('mode', 'n/a')}"
+                  + (f"；故事提案：{artifacts.get('story_plan')}" if artifacts.get("story_plan") else ""),
             parent_version_id=p.current_version_id,
             set_current=True,
         )
@@ -331,4 +396,5 @@ def build(ctx: ToolContext) -> list:
                 log.warning("ask 组装回答失败：%s", e)
         return f"（未配置模型，以下为直接信息）\n{style_text}"
 
-    return [create_project, map_novel, propose_arcs, generate_script, run_adaptation, ask]
+    return [create_project, map_novel, propose_arcs, plan_story, confirm_story_plan,
+            generate_script, run_adaptation, ask]

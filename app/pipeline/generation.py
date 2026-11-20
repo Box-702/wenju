@@ -349,11 +349,15 @@ def _stage_bible(llm: LLM, settings: Settings, *, title: str, excerpts: list[str
     )
 
 
-def _stage_scenes(llm: LLM, settings: Settings, *, bible: Bible, excerpts: list[str], prof: dict[str, Any], language: str, chunks: list[str], critique: str = "", prior_context: str = "") -> ScenePlan:
+def _stage_scenes(llm: LLM, settings: Settings, *, bible: Bible, excerpts: list[str], prof: dict[str, Any], language: str, chunks: list[str], critique: str = "", prior_context: str = "", scope_note: str = "") -> ScenePlan:
     """第二阶段：生成场景与节拍流（动作 / 对白 / cue）。
 
     核心是「影视剧的场景划分逻辑」：一场戏 = 同一地点 + 连续时间 + 一个戏剧目标
     + 一场冲突 + 人物状态变化。严禁把整段原著塞进一场戏。
+
+    ``scope_note``：故事规划（D-71）的事件底线 + 分集归属。给了就注入——
+    事件清单是「一不许删」的硬约束，chapter_refs 要填所属集号（ep_00N），
+    让 D-63 的集-镜两级结构与分集导出直接认账。
     """
     from .profiles import profile_prompt
 
@@ -374,6 +378,8 @@ def _stage_scenes(llm: LLM, settings: Settings, *, bible: Bible, excerpts: list[
         "  不要只写「他说」「他想了想」这类拍不出来的内容——下游会直接把动作节拍变成视频提示词。\n"
         "- 对白节拍之间与前后，要有可见的动作或空间信息，方便转成画面。\n"
     )
+    if scope_note:
+        prompt += f"\n{scope_note}\n"
     if critique:
         prompt += f"\n上一版存在以下问题，请修正后重新输出：\n{critique}\n"
     prompt += _prior_block(prior_context)
@@ -428,14 +434,30 @@ def generate_script(
     adaptation_type: str,
     language: str,
     prior_context: str = "",
+    story_plan: Any = None,
 ) -> tuple[Script, dict[str, Any]]:
     """生成剧本。返回 (Script, artifacts)。失败时回退最小剧本。
 
     prior_context：连载选段时的「前情提要」（已改编章节摘要），
     仅供模型保持人物与情节衔接，不进入本次剧本内容。
+
+    story_plan（D-71 扩写流）：已确认的 StoryPlan。给了就按集扩写——
+    事件底线注入场景阶段提示词，场次按提案归集（chapter_refs=ep_00N），
+    D-63 的集-镜两级与分集导出直接认账。
     """
     prof = profile_for(adaptation_type)
     artifacts: dict[str, Any] = {"mode": "local-fallback"}
+
+    scope_note = ""
+    if story_plan is not None and getattr(story_plan, "status", "") == "confirmed":
+        from .story_plan import episode_brief
+
+        scope_note = "\n\n".join(
+            episode_brief(story_plan, ep) for ep in story_plan.episodes
+        ) + (
+            "\n【归集】每场的 chapter_refs 填它承载的那一集（如 [\"ep_002\"]）；"
+            "一场的节拍跨集时按主要冲突归集。"
+        )
 
     if llm.available:
         try:
@@ -460,7 +482,7 @@ def generate_script(
                     # 重跑仍不合格：不硬塞（带病进下游会一路错到底），落日志 + artifacts 记一笔，
                     # 由上游（对话层）如实告诉用户「模型这次没听话」。
                     log.warning("故事圣经重跑后仍有问题，保留但下游可能沿用兜底值")
-            plan = _stage_scenes(llm, settings, bible=bible, excerpts=excerpts, prof=prof, language=language, chunks=chunks, prior_context=prior_context)
+            plan = _stage_scenes(llm, settings, bible=bible, excerpts=excerpts, prof=prof, language=language, chunks=chunks, prior_context=prior_context, scope_note=scope_note)
             # 退化护栏：把多章素材挤进过少的场景（结构退化）时，带反馈重拆一次。
             if _is_degenerate_plan(plan, raw_text):
                 log.warning("场景规划退化（%d 场 / %d 字），带反馈重拆", len(plan.scenes), len(raw_text))
@@ -472,10 +494,11 @@ def generate_script(
                         "跨地点、跨时间的段落必须切成不同的场。"
                     ),
                     prior_context=prior_context,
+                    scope_note=scope_note,
                 )
             if not plan.scenes:
                 # 思考模型输出不稳定：场景为空时重试一次。
-                plan = _stage_scenes(llm, settings, bible=bible, excerpts=excerpts, prof=prof, language=language, chunks=chunks, prior_context=prior_context)
+                plan = _stage_scenes(llm, settings, bible=bible, excerpts=excerpts, prof=prof, language=language, chunks=chunks, prior_context=prior_context, scope_note=scope_note)
             if not plan.scenes:
                 raise ValueError("场景生成为空")
 
@@ -636,6 +659,11 @@ def generate_script(
                 "scene_count": len(scenes),
                 "naming_degraded": _bible_naming_issue(bible, language) is not None,
                 "source_backfill": {"titles": n_title, "times": n_time},
+                "story_plan": (
+                    {"episodes": len(story_plan.episodes),
+                     "events": len(story_plan.understanding.events)}
+                    if scope_note else None
+                ),
             }
             return script, artifacts
         except Exception as e:  # noqa: BLE001

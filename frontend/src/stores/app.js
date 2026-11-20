@@ -1078,6 +1078,49 @@ export async function submitVideoJob(shot) {
   }
 }
 
+/** 单镜重出片（工作台「重新生成」按钮，B1 后端）。
+ *  组内任何机位都能发起，服务端归到组头投整段；返回 note 说明实际重出的是哪条。 */
+export async function rerollShot(shotId) {
+  if (!store.pid || !shotId) return null
+  try {
+    const r = await api(
+      `/projects/${store.pid}/video/shots/${encodeURIComponent(shotId)}/reroll`,
+      'POST',
+    )
+    notify(r.reused ? r.note || '已有在途任务，复用' : r.note || '已提交重出片', 'ok')
+    await loadVideoJobs()
+    return r
+  } catch (e) {
+    notify(`重出片失败：${e.message}`, 'error')
+    return null
+  }
+}
+
+/** 改镜头结构化参数（时长/景别/运镜/开口时刻），走提示词写接口的参数面（B1）。
+ *  后端会建新版本；组内改时长会连带整组打回待审（note 里有说明）。 */
+export async function saveShotParams(shot, params) {
+  if (!store.pid || !shot || !store.videoVersionId) return null
+  try {
+    const r = await api(
+      `/projects/${store.pid}/video-versions/${store.videoVersionId}/shots/${encodeURIComponent(shot.id)}/prompt`,
+      'PUT',
+      {
+        prompt: shot.prompt || shownPrompt(shot),
+        decision: 'save',
+        note: '',
+        ...params,
+      },
+    )
+    if (r.group_refold_note) notify(r.group_refold_note, 'info')
+    else notify('镜头参数已保存', 'ok')
+    await loadShots()
+    return r
+  } catch (e) {
+    notify(`参数保存失败：${e.message}`, 'error')
+    return null
+  }
+}
+
 /** 确认并启动生产流水线（预算闸门的确认动作）。 */
 export async function confirmProduction(approvalId) {
   if (!approvalId) return null

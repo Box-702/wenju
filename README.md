@@ -253,7 +253,7 @@ Wenju/
 │   │
 │   ├── chat/
 │   │   ├── conductor.py      # 对话编排：系统提示 + 对话图 + 轮次服务
-│   │   └── tools/            	# 42 个工具的实现，按域拆分（screenplay/source/script_reader/crew/video/production…）
+│   │   └── tools/            	# 43 个工具的实现，按域拆分（screenplay/source/script_reader/crew/video/production/confirm…）
 │   ├── media/
 │   │   └── refs.py           # 参考资产流水线（定妆图 → 质检 → 回填）
 │   ├── crew/                 # 剧组 Agent
@@ -302,7 +302,7 @@ Wenju/
 │   ├── runner.py             #   引擎
 │   └── fixtures/             #   录制的真实产出（离线回归用）
 │
-└── tests/                    # 测试套件（803 tests，64 个测试文件）
+└── tests/                    # 测试套件（810 tests，65 个测试文件）
 ```
 
 ## 环境变量

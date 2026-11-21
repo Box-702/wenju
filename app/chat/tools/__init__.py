@@ -10,6 +10,7 @@
 #   production.py   生产域：一键跑「小说 → 提示词」整条流水线
 #   crew.py         剧组域：拆解 / 风格指南 / 定妆图 / 视频提示词（后台任务）
 #   video.py        出片域：批准 / 提交 / 重跑 / 素材 / 合成 / 查进度
+#   confirm.py     确认域：流程分叉确认卡（ask_user_choice，D-76）
 #   blockout.py     白模域：施工单起草调整 / 后台渲染 / 查结果（D-54）
 #   memory_tools.py 轻件域：记忆（remember/recall）与技能加载（load_skill）
 #
@@ -20,6 +21,7 @@
 from . import (
     asset,
     blockout,
+    confirm,
     crew,
     memory_tools,
     production,
@@ -56,6 +58,7 @@ def build_chat_tools(
         *production.build(ctx),
         *crew.build(ctx),
         *video.build(ctx),
+        *confirm.build(ctx),
     ]
 
 

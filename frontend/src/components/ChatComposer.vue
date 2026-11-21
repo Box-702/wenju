@@ -105,21 +105,6 @@ function onAssetPicked(item) {
   refs.value = [...refs.value, { kind: item.kind, id: item.id, name: item.name }]
 }
 
-/** 「＋」菜单里的「生成资产」：放一句触发语进输入框（与首页同一交互）。 */
-function startAssetGen() {
-  const lead = '帮我生成资产：'
-  if (!text.value.includes(lead)) {
-    text.value = text.value ? `${text.value} ${lead}` : lead
-  }
-  nextTick(() => {
-    const el = card.value?.$el?.querySelector('textarea')
-    if (el) {
-      el.focus()
-      el.setSelectionRange(el.value.length, el.value.length)
-    }
-  })
-}
-
 function send() {
   const t = text.value.trim()
   if ((!t && !hasImages.value) || store.streaming || uploadingCount.value > 0) return
@@ -164,7 +149,7 @@ watch(() => store.draftSeq, () => {
     <ComposerCard
       ref="card"
       v-model:text="text"
-      placeholder="描述你的故事想法"
+      placeholder="描述想法、贴剧本或上传参考 —— / 用技能 · @ 引素材 · ＋ 传图，和问剧 Agent 一起创作"
       :can-send="canSend"
       :busy="store.streaming"
       :hint-text="store.hint"
@@ -186,9 +171,6 @@ watch(() => store.draftSeq, () => {
         </button>
         <button class="menu-item" type="button" role="menuitem" @click.stop="close(); openMention()">
           引用资产
-        </button>
-        <button class="menu-item" type="button" role="menuitem" @click.stop="close(); startAssetGen()">
-          生成资产
         </button>
         <button class="menu-item" type="button" role="menuitem" @click.stop="close(); emit('open-skills')">
           技能

@@ -368,6 +368,36 @@ class PendingApproval(Base):
         return _json_load(self.shot_ids_json, [])
 
 
+class PendingChoice(Base):
+    """待用户拍板的流程分叉确认卡（D-76，对标即梦「每一步都选项确认」）。
+
+    ask_user_choice 工具只**发起**分叉请求（落这里），真正的选择只有一条
+    确定性路径：用户在对话卡片上点选 + 确认（meta.intent=confirm_options，
+    来自浏览器，模型伪造不了）。模型不能自己替用户选——这是 D-43「模型只
+    发起、用户决定」在流程分叉上的推广。
+
+    questions_json 结构：[{"question": str, "multi": bool,
+                           "options": [{"id": str, "label": str, "desc": str}]}]
+    生命周期与 PendingApproval 相同：pending → confirmed / cancelled / expired
+    （同一会话出新卡自动作废旧卡）。
+    """
+
+    __tablename__ = "pending_choices"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    project_id: Mapped[str] = mapped_column(index=True)
+    conversation_id: Mapped[str] = mapped_column(default="")
+    title: Mapped[str] = mapped_column(default="")
+    questions_json: Mapped[str] = mapped_column(default="[]")
+    status: Mapped[str] = mapped_column(default="pending")  # pending|confirmed|cancelled|expired
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    resolved_at: Mapped[datetime | None] = mapped_column(default=None)
+
+    @property
+    def questions(self) -> list[dict]:
+        return _json_load(self.questions_json, [])
+
+
 class Memory(Base):
     """用户级三层记忆（替代 RAG 的结构化记忆）。
 
@@ -1403,6 +1433,53 @@ class Store:
         """把一条请求置为 confirmed / cancelled。非 pending 的不再改（幂等）。"""
         with self.session() as s:
             row = s.get(PendingApproval, approval_id)
+            if row is None or row.status != "pending":
+                return row
+            row.status = status
+            row.resolved_at = _now()
+            s.commit()
+            s.refresh(row)
+            return row
+
+    # ---- PendingChoice（流程分叉确认卡，D-76）----
+
+    def create_pending_choice(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        title: str,
+        questions: list[dict],
+    ) -> PendingChoice:
+        """登记一条待用户拍板的分叉请求。同一（作品, 会话）同时只留一条
+        pending：新一轮分叉出现说明旧分叉已过时，旧卡置 expired 防误点。"""
+        with self.session() as s:
+            s.query(PendingChoice).filter(
+                PendingChoice.project_id == project_id,
+                PendingChoice.conversation_id == (conversation_id or ""),
+                PendingChoice.status == "pending",
+            ).update({PendingChoice.status: "expired", PendingChoice.resolved_at: _now()},
+                     synchronize_session=False)
+            row = PendingChoice(
+                id=gen_id("chc"),
+                project_id=project_id,
+                conversation_id=conversation_id or "",
+                title=title or "",
+                questions_json=json.dumps(list(questions or []), ensure_ascii=False),
+            )
+            s.add(row)
+            s.commit()
+            s.refresh(row)
+            return row
+
+    def get_pending_choice(self, choice_id: str) -> PendingChoice | None:
+        with self.session() as s:
+            return s.get(PendingChoice, choice_id)
+
+    def resolve_pending_choice(self, choice_id: str, status: str) -> PendingChoice | None:
+        """置 confirmed / cancelled。非 pending 不再改（幂等，防双击重复提交）。"""
+        with self.session() as s:
+            row = s.get(PendingChoice, choice_id)
             if row is None or row.status != "pending":
                 return row
             row.status = status

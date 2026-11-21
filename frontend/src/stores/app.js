@@ -637,6 +637,7 @@ export const STAGE_LABELS = {
   submit_videos: '提交视频生成',
   get_video_jobs: '查询视频任务状态',
   rerun_video: '重新生成镜头',
+  ask_user_choice: '整理分叉，请你拍板',
   check_background_tasks: '查看后台任务进度',
   finalize_film: '合成完整成片',
   check_finalize: '查询成片进度',
@@ -774,6 +775,7 @@ function handleStreamEvent(ev, reply) {
     reply.thinking = (reply.thinking || '') + ev.data.delta
     if (!store.statusPhase) store.statusPhase = '正在思考'
   } else if (ev.event === 'done') {
+    reply.created_at = new Date().toISOString()
     reply.content = ev.data.reply || reply.content
     reply.payloads = ev.data.payloads || []
     // 消息头（模型 · 耗时）：服务端随 done 一起给，补进事件流的首位，
@@ -875,6 +877,33 @@ export async function resolveApproval(approvalId, action) {
       }
     }
     await loadViewer()  // 批准会产生新镜头版本：刷新右栏镜头清单（与 resumeReview 同款）
+  } catch (e) {
+    reply.content = '操作失败：' + e.message
+  } finally {
+    reply.streaming = false
+    store.streaming = false
+  }
+}
+
+// ---------------------------------------------------------------------
+/** 分叉确认卡（D-76）：用户点选 + 确认 → /chat 确定性路径落账（不进 LLM）。
+ *  选择写进项目记忆，下一轮 Agent 读历史自然带上；卡片就地终结（status 回填）。 */
+export async function resolveOptions(choiceId, choices, note = '') {
+  if (store.streaming || !choiceId) return
+  const reply = reactive({ role: 'assistant', content: '', events: [], payloads: [], streaming: true })
+  store.messages.push({ role: 'user', content: '在确认卡上拍板', events: [], payloads: [], streaming: false })
+  store.messages.push(reply)
+  store.streaming = true
+  try {
+    const r = await api('/chat', 'POST', {
+      project_id: store.pid, conversation_id: store.convId, message: '',
+      meta: { intent: 'confirm_options', choice_id: choiceId, choices, note },
+    })
+    reply.content = r.reply
+    reply.events = r.events || []
+    reply.payloads = r.payloads || []
+    await loadViewer()
+    return r
   } catch (e) {
     reply.content = '操作失败：' + e.message
   } finally {

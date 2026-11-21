@@ -108,6 +108,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     "· 现成分镜直出 → import_storyboard\n"
     "· 问进度（到哪了 / 拆好了吗 / 出片了吗）→ get_status，不要凭记忆报\n"
     "· 批准提示词 → approve_video_prompts：只能发起请求，生效要用户确认（硬闸门），不要自己声称已批准\n"
+    "· 流程分叉（重点 / 集数 / 音色 / 范围 / 模型画幅）→ ask_user_choice 发卡拍板\n"
     "· 改提示词 → edit_shot_prompt（改后该镜回到待审）；列资产库与 id → list_assets\n"
     "· 出片（生成视频 / 提交视频）→ submit_videos；单镜出片 → generate_video；重 roll → rerun_video；取消在途 → cancel_video_job\n"
     "· 合成成片（拼成片 / 出完整视频）→ finalize_film\n"
@@ -122,8 +123,8 @@ SYSTEM_PROMPT_TEMPLATE = (
     "\n"
     "【沟通协议】\n"
     "· 分段推进：一次不做完整部。先说这段的计划（哪几章 / 哪几场、多少镜、多长），认可再做下一段。\n"
-    "· 生成前必问：视觉风格、画面比例（9:16 / 16:9 / 1:1）、这段多长——上下文里没有就一次问全；说过的别再问。\n"
-    "· 决策点确认：剧本定稿前、角色形象生成前、批量出片前，停下来让用户确认。\n"
+    "· 生成前必问：视觉风格、画面比例（9:16 / 16:9 / 1:1）、风格 / 画幅 / 时长分叉用 ask_user_choice 发卡一次问全，说过的别再问。\n"
+    "· 决策点确认：定稿前、形象生成前、批量出片前发卡停下；拍板（或回「我已确认以上信息」）才推进，每步报「已完成 / 在等什么」。\n"
     "· 用户说「直接生成 / 别问了」→ 跳过追问，并 remember 下来。\n"
     "· 沟通协议只管生成前的追问，不动批准闸门：「别问了直接出片」也不能跳过批准。\n"
     "\n"
@@ -218,6 +219,12 @@ def load_history(store: Store, conversation_id: str | None) -> list[dict[str, An
         for p in payloads or []:
             if isinstance(p, dict) and p.get("type") == "prompt_approval" and p.get("status") == "pending":
                 row = store.get_pending_approval(str(p.get("approval_id") or ""))
+                if row is not None:
+                    p["status"] = row.status
+            # 确认卡（D-76）同样以 DB 为准回填：拍板之后刷新页面，旧卡不得
+            # 还挂着待选状态骗人再点一次。
+            if isinstance(p, dict) and p.get("type") == "option_confirm" and p.get("status") == "pending":
+                row = store.get_pending_choice(str(p.get("choice_id") or ""))
                 if row is not None:
                     p["status"] = row.status
         out.append({
@@ -729,15 +736,80 @@ def _handle_approval(
     return {"reply": result["message"], "payloads": payloads, "user_note": "确认批准镜头提示词"}
 
 
+def _handle_choice_confirm(
+    store: Store, *, conversation_id: str | None, meta: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """分叉确认卡的确定性执行路径（D-76，对标即梦「每一步都选项确认」）。
+
+    ask_user_choice 只发起 PendingChoice；用户在卡片上点选 + 确认走这里
+    （meta.intent=confirm_options，浏览器发的，模型伪造不了）。选择结果两条去向：
+      1. 拼成人话回复落对话——下一轮 Agent 读历史自然带上；
+      2. 写进项目记忆（decision），跨会话不丢。
+    模型不参与、零对话费用。返回 None = 本轮不是确认卡动作。
+    """
+    if not (meta and meta.get("intent") == "confirm_options"):
+        return None
+    choice = store.get_pending_choice(str(meta.get("choice_id") or ""))
+    if choice is None:
+        return {"reply": "这张确认卡不存在或已过期，无需重复提交。",
+                "payloads": [], "user_note": "处理确认卡"}
+    if choice.status == "expired":
+        return {"reply": "这张确认卡已被更新的确认请求取代，请在最新那张卡上拍板。",
+                "payloads": [], "user_note": "确认卡已过期"}
+    if choice.status != "pending":
+        return {"reply": "这张确认卡已经确认过了，无需重复提交。",
+                "payloads": [], "user_note": "重复确认"}
+
+    by_q: dict[str, list[str]] = {}
+    for sel in meta.get("choices") or []:
+        if isinstance(sel, dict) and sel.get("question"):
+            by_q[str(sel["question"])] = [str(x) for x in (sel.get("option_ids") or [])]
+    parts: list[str] = []
+    missing: list[str] = []
+    for q in choice.questions:
+        valid = {o["id"]: o for o in (q.get("options") or [])}
+        picked = [valid[i] for i in by_q.get(q.get("question") or "", []) if i in valid]
+        if picked:
+            parts.append(f"{q.get('question')} → {'、'.join(o['label'] for o in picked)}")
+        elif not q.get("multi"):
+            missing.append(q.get("question") or "")
+    if missing:
+        # fail-closed：单选题没选完不放行，卡片保持 pending 让用户补选
+        return {"reply": f"还有没选完的题：{'、'.join(m for m in missing if m)}——请在卡片上补选后再点确认。",
+                "payloads": [], "user_note": "确认卡未选完"}
+    if not parts:
+        store.resolve_pending_choice(choice.id, "cancelled")
+        return {"reply": "没有勾选任何选项，已按取消处理。需要的话让我重新整理选项。",
+                "payloads": [], "user_note": "确认卡空选取消"}
+
+    store.resolve_pending_choice(choice.id, "confirmed")
+    note = str(meta.get("note") or "").strip()
+    summary = f"【{choice.title or '确认方向'}】" + "；".join(parts)
+    try:
+        store.add_memory(
+            kind="decision", scope="project", project_id=choice.project_id,
+            content=f"确认卡拍板：{summary}" + (f"（补充：{note}）" if note else ""),
+            source="auto",
+        )
+    except Exception as e:  # noqa: BLE001  记忆是副产品，不挡主流程
+        log.warning("确认卡选择落记忆失败（不阻断）：%s", e)
+    reply = (
+        f"已确认：{summary}。"
+        + (f"\n你的补充说明：{note}" if note else "")
+        + "\n下一步按这个选择推进。"
+    )
+    return {"reply": reply, "payloads": [], "user_note": "在确认卡上拍板"}
+
+
 def _run_deterministic_turn(
     store: Store, llm: LLM, settings: Settings, *,
     conversation_id: str | None, project_id: str | None,
     message: str, meta: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    """一轮里不经过 LLM 的确定性动作：审阅 resume（卡片）+ 批准确认（卡片/文本）。
+    """一轮里不经过 LLM 的确定性动作：审阅 resume（卡片）+ 批准确认（卡片/文本）
+    + 分叉确认卡（D-76）。
 
-    两条服务入口（_run_turn / chat_stream）共用：此前 resume 分支在两边逐字重复，
-    加批准路径若照抄会三份重复。返回 None = 本轮不是确定性动作，走 LLM。
+    三条服务入口（_run_turn / chat_stream）共用。返回 None = 本轮不是确定性动作，走 LLM。
     """
     thread = conversation_id or GLOBAL_THREAD
 
@@ -755,15 +827,21 @@ def _run_deterministic_turn(
         payloads = handled["payloads"]
         reply = handled["reply"]
     else:
-        approval = _handle_approval(
-            store, project_id=project_id, conversation_id=conversation_id,
-            message=message, meta=meta,
-        )
-        if approval is None:
-            return None
-        user_text = message or approval["user_note"]
-        payloads = approval["payloads"]
-        reply = approval["reply"]
+        choice = _handle_choice_confirm(store, conversation_id=conversation_id, meta=meta)
+        if choice is not None:
+            user_text = message or choice["user_note"]
+            payloads = choice["payloads"]
+            reply = choice["reply"]
+        else:
+            approval = _handle_approval(
+                store, project_id=project_id, conversation_id=conversation_id,
+                message=message, meta=meta,
+            )
+            if approval is None:
+                return None
+            user_text = message or approval["user_note"]
+            payloads = approval["payloads"]
+            reply = approval["reply"]
 
     store.save_chat_message(thread_id=thread, role="user", content=user_text, payload=[meta or {}])
     store.save_chat_message(thread_id=thread, role="assistant", content=reply, payload=payloads, events=[])

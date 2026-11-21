@@ -16,6 +16,7 @@ import TaskCard from './TaskCard.vue'
 import ApprovalCard from './ApprovalCard.vue'
 import BatchStartedCard from './BatchStartedCard.vue'
 import ProductionBudgetCard from './ProductionBudgetCard.vue'
+import OptionConfirmCard from './OptionConfirmCard.vue'
 import { mdToHtml, esc } from '../utils/markdown'
 import { STAGE_LABELS } from '../stores/app'
 
@@ -28,11 +29,11 @@ const bodyHtml = computed(() =>
   isUser.value ? esc(props.message.content || '') : mdToHtml(props.message.content || ''))
 
 const showCopy = computed(() =>
-  !isUser.value && props.message.content && !props.message.streaming && !props.message.payloads?.length)
+  !isUser.value && props.message.content && !props.message.streaming)
 
 // ---- 工作步骤面板（替代 chips）----
 const stepsExpanded = ref(false)
-const STEP_COLLAPSE = 3
+const STEP_COLLAPSE = 1
 
 // ---- 思考过程（推理模型 reasoning 增量，流式实时展示）----
 const thinkingExpanded = ref(false)
@@ -62,6 +63,19 @@ const metaLabel = computed(() => {
   const dur = ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`
   return `${t.provider || t.model || ''} · 处理 ${dur}`.trim()
 })
+
+// 消息时间：今天显示 时:分，更早显示 月-日 时:分。
+// 后端存的 UTC naive isoformat（无时区尾巴）必须补 Z 再解析，否则差 8 小时。
+function msgTime(m) {
+  const iso = m.created_at
+  if (!iso) return ''
+  const d = new Date(/[z+]/i.test(iso) ? iso : iso + 'Z')
+  if (isNaN(d)) return ''
+  const p = (x) => String(x).padStart(2, '0')
+  const now = new Date()
+  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`
+  return d.toDateString() === now.toDateString() ? hm : `${p(d.getMonth() + 1)}-${p(d.getDate())} ${hm}`
+}
 
 const visibleSteps = computed(() => {
   const rows = mergedSteps.value
@@ -209,8 +223,8 @@ onUnmounted(() => clearTimeout(copiedTimer))
       </div>
 
       <!-- 消息头：模型 · 耗时 · 复制 · 重试 -->
-      <div v-if="metaLabel || showCopy" class="msg-meta">
-        <span v-if="metaLabel" class="meta-info">{{ metaLabel }}</span>
+      <div v-if="msgTime(message) || metaLabel || showCopy" class="msg-meta">
+        <span v-if="msgTime(message)" class="meta-info mono">{{ msgTime(message) }}</span>
         <span class="meta-spacer"></span>
         <button v-if="showCopy" class="meta-btn" @click="copyContent">{{ copied ? '✓ 已复制' : '⧉ 复制' }}</button>
       </div>
@@ -229,6 +243,7 @@ onUnmounted(() => clearTimeout(copiedTimer))
         <ApprovalCard v-else-if="p.type === 'prompt_approval'" :payload="p" />
         <BatchStartedCard v-else-if="p.type === 'batch_started'" :payload="p" />
         <ProductionBudgetCard v-else-if="p.type === 'production_budget'" :payload="p" />
+        <OptionConfirmCard v-else-if="p.type === 'option_confirm'" :payload="p" />
       </template>
     </template>
   </div>

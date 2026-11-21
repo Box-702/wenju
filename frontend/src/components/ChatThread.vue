@@ -27,10 +27,13 @@ const isFirstRun = computed(() => !store.pid && !store.messages.length)
 const projectName = computed(() => store.projects.find((p) => p.id === store.pid)?.title || '')
 
 // 编辑态示例：点击填入输入框（不自动发送）。
+// 按流水线阶段给下一步（即梦的空态建议就是这个思路：给「流程里的下一步」，
+// 不给泛泛的编辑动作）——点击填进输入框，不自动发送。
 const SUGGESTIONS = [
-  '生成初稿',
-  '把当前剧本的对白改得更口语一点',
-  '帮我把当前故事拆解成可生成的分镜',
+  '读原著，做分集提案',
+  '生成初稿剧本',
+  '拆分镜，写视频提示词',
+  '出样片验证台词与人物',
 ]
 function fillSuggestion(text) {
   store.draft = text

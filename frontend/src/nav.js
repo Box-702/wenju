@@ -9,7 +9,7 @@
 //
 //   #/                       首页
 //   #/works/<项目 id>          工作区（对话主栏）
-//   #/works/<id>/wb/<视图>     工作台主栏（script | clips | roles | episodes）
+//   #/works/<id>/wb/<视图>     工作台主栏（script | roles | clips）
 //   #/assets                 资产库
 //   #/skills                 技能
 //   #/tasks                  我的作品
@@ -17,7 +17,7 @@
 import { store, selectProject } from './stores/app'
 
 const OVERLAYS = ['assets', 'skills', 'tasks']
-export const WB_VIEWS = ['script', 'clips', 'roles', 'episodes']
+export const WB_VIEWS = ['script', 'roles', 'clips']
 
 /** 当前视图的标识：overlay 优先，其次工作区（含工作台子视图），最后首页。 */
 export function currentView() {

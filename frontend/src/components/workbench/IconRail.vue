@@ -9,11 +9,12 @@
 import AppIcon from '../AppIcon.vue'
 import { store, toggleAgentPanel } from '../../stores/app'
 
+// 视图组顺序照即梦：剧本 → 资产（角色）→ 分镜垫底；没有独立「分集」视图
+// ——分集切换在分镜页顶栏面包屑里，合成全片在闸门条上（2026-11-21 回查截图修正）。
 const VIEWS = [
   { key: 'script', label: '剧本', icon: 'file' },
-  { key: 'clips', label: '分镜', icon: 'film' },
   { key: 'roles', label: '角色', icon: 'user' },
-  { key: 'episodes', label: '分集', icon: 'panel' },
+  { key: 'clips', label: '分镜', icon: 'film' },
 ]
 </script>
 

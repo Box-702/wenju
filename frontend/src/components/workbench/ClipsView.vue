@@ -25,6 +25,7 @@ import {
   loadShots, loadVideoJobs, loadAssetRefs,
   openPromptEditor, saveShotParams,
   rerollShot, submitVideoJob, submitSampleVideo,
+  startFinalize, ensureFinalizePolling,
 } from '../../stores/app'
 
 // ---------------------------------------------------------------------
@@ -192,6 +193,15 @@ const gate = computed(() => {
   return { steps, total, approved, allApproved }
 })
 const showGate = computed(() => cards.value.length > 0 || (store.versions || []).length > 0)
+
+// 合成全片（即梦分镜页顶栏同款）：把已出片段拼成整集成片（配音/字幕按设置）。
+// 闸门未过（提示词没批全）时禁用；没有已出片段由 startFinalize 自己提示。
+const finalizing = computed(() => store.videoFinalize?.status === 'running')
+function composeAll() {
+  if (!gate.value.allApproved || finalizing.value) return
+  startFinalize()
+  ensureFinalizePolling()
+}
 
 // ---------------------------------------------------------------------
 // 花钱动作：在途锁 + 两步确认（第一下变红问「确认？」，5 秒内再点才提交）。
@@ -401,6 +411,15 @@ const hasAny = computed(() => cards.value.length > 0)
           <AppIcon v-else-if="s.state === 'locked'" name="lock" class="g-ic" />
         </span>
       </template>
+      <button
+        class="g-final" type="button"
+        :class="{ ready: gate.allApproved }"
+        :disabled="!gate.allApproved || finalizing"
+        :title="gate.allApproved ? '把已出片的片段拼成成片（配音/字幕按当前设置）' : '批准全部提示词后可合成全片'"
+        @click="composeAll"
+      >
+        <AppIcon name="film" /> {{ finalizing ? '合成中…' : '合成全片' }}
+      </button>
     </nav>
 
     <div v-if="loadError" class="cl-error">{{ loadError }}（点刷新重试）</div>
@@ -648,6 +667,17 @@ const hasAny = computed(() => cards.value.length > 0)
 .g-step.ready .g-note { color: var(--ink); }
 .g-sep { color: var(--dim); display: inline-flex; }
 .g-sep :deep(svg) { width: 10px; height: 10px; }
+.g-final {
+  margin-left: auto; flex: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 10px; border-radius: var(--radius-full);
+  border: 1px solid var(--line); background: transparent;
+  color: var(--muted); font-size: 11.5px; cursor: pointer;
+}
+.g-final:hover:not(:disabled) { color: var(--ink); border-color: var(--line-strong); }
+.g-final:disabled { opacity: .45; cursor: not-allowed; }
+.g-final.ready { color: var(--ink); border-color: var(--sel-line); }
+.g-final :deep(svg) { width: 12px; height: 12px; }
 
 .cl-body {
   flex: 1; min-height: 0;

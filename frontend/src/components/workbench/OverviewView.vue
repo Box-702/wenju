@@ -16,9 +16,8 @@ const pct = computed(() => ov.value?.progress_pct ?? 0)
 
 const JUMPS = [
   { key: 'script', label: '剧本', icon: 'file', desc: '设定 · 分集大纲 · 正文 · 修改历史' },
-  { key: 'clips', label: '分镜', icon: 'film', desc: '片段编辑器 · 逐镜微调与重出' },
   { key: 'roles', label: '角色', icon: 'user', desc: '定妆照 · 音色 · 场景图' },
-  { key: 'episodes', label: '分集视频', icon: 'panel', desc: '出片进度 · 成片合成' },
+  { key: 'clips', label: '分镜', icon: 'film', desc: '整集片段同页 · 连播 · 合成全片' },
 ]
 
 onMounted(() => { if (!store.overview) loadOverview() })

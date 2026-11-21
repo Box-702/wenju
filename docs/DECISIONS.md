@@ -2638,6 +2638,13 @@ reroll、批准仍走 openPromptEditor 的 D-43 流）、RolesView（复用 Asse
 ClipsView 不做就地批准）· `frontend/src/components/workbench/` ·
 DEVELOPMENT 5.80/5.84 · POSITIONING §五 P1「UI 重心迁移」
 
+**补记（2026-11-21，回查用户提供的即梦截图修正）**：即梦左栏**没有独立
+「分集」视图**——视图组只有 剧本 → 资产库（角色）→ 分镜（垫底），分集
+切换在分镜页顶栏面包屑里，「合成全片」在分镜页顶栏。已照此修正：IconRail
+视图组改为 剧本/角色/分镜（分镜垫底）、EpisodesView 删除（批量出片的
+对话入口与 start_production 保留，合成全片落在分镜页闸门条右端）、
+WB_VIEWS 收成三个。本条不改写原决定正文，仅作范围修正标记。
+
 ---
 
 <a id="d-74-分镜页整集同页与出片流程闸门"></a>

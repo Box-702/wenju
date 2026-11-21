@@ -177,9 +177,9 @@ function open(a) {
 .tree-create {
   display: flex; align-items: center; gap: 6px; flex: none;
   margin: 8px 12px 12px; padding: 8px 10px;
-  border: 1px dashed var(--line-strong); border-radius: var(--radius-sm);
-  background: transparent; color: var(--muted); font-size: 12px; cursor: pointer;
+  border: none; border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, .05); color: var(--muted); font-size: 12px; cursor: pointer;
 }
-.tree-create:hover { color: var(--ink); border-color: var(--gold); }
+.tree-create:hover { color: var(--ink); background: rgba(255, 255, 255, .1); }
 .tree-create :deep(svg) { width: 12px; height: 12px; }
 </style>

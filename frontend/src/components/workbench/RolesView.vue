@@ -330,9 +330,9 @@ function previewOf(a) {
 .mini {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 4px 8px; border-radius: var(--radius-sm);
-  border: 1px solid var(--line); background: transparent;
+  border: none; background: rgba(255, 255, 255, .06);
   color: var(--muted); font-size: 11px; cursor: pointer;
 }
-.mini:hover { color: var(--ink); border-color: var(--line-strong); }
+.mini:hover { color: var(--ink); background: rgba(255, 255, 255, .12); }
 .mini :deep(svg) { width: 11px; height: 11px; }
 </style>

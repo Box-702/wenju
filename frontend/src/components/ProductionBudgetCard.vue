@@ -89,8 +89,8 @@ h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
 .actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .btn {
   padding: 7px 14px; border-radius: var(--radius-md); font-size: 12.5px;
-  border: 1px solid var(--line); cursor: pointer; background: transparent; color: var(--ink);
+  border: none; cursor: pointer; background: rgba(255, 255, 255, .06); color: var(--ink);
 }
-.btn.primary { background: #fff; border-color: transparent; color: #0a0a0f; font-weight: 600; }
+.btn.primary { background: #fff; color: #0a0a0f; font-weight: 600; }
 .btn:disabled { opacity: .5; cursor: default; }
 </style>

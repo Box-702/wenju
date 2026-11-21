@@ -74,8 +74,8 @@ h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
 .actions { display: flex; align-items: center; gap: 8px; }
 .btn {
   padding: 7px 14px; border-radius: var(--radius-md); font-size: 12.5px;
-  border: 1px solid var(--line); cursor: pointer; background: transparent; color: var(--ink);
+  border: none; cursor: pointer; background: rgba(255, 255, 255, .06); color: var(--ink);
 }
-.btn.ghost { color: var(--muted); }
+.btn.ghost { background: transparent; color: var(--muted); }
 .btn.ghost.small { padding: 5px 10px; font-size: 12px; }
 </style>

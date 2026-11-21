@@ -859,26 +859,25 @@ watch(scope, (sc) => { if (sc === 'all') loadAllLibrary() })
 }
 .btn-new {
   width: 28px; height: 28px; border-radius: var(--radius-sm);
-  border: 1px solid var(--line); background: transparent;
+  border: none; background: rgba(255, 255, 255, .06);
   color: var(--muted); cursor: pointer; font-size: 12px; line-height: 1;
   display: flex; align-items: center; justify-content: center; padding: 0;
-  transition: color 150ms var(--ease), border-color 150ms var(--ease), background 150ms var(--ease);
+  transition: color 150ms var(--ease), background 150ms var(--ease);
 }
 .btn-new:hover {
-  border-color: color-mix(in oklch, var(--gold) 45%, var(--line));
-  color: var(--gold); background: var(--gold-soft);
+  color: var(--ink); background: rgba(255, 255, 255, .12);
 }
 
 /* 新任务入口 */
 .new-task {
   display: flex; align-items: center; gap: 9px;
   width: 100%; padding: 9px 11px; border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, .05); border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .05); border: none;
   color: var(--ink); font-size: 13px; font-family: inherit; cursor: pointer;
-  transition: background 130ms var(--ease), border-color 130ms var(--ease);
+  transition: background 130ms var(--ease);
 }
 .new-task:hover {
-  background: rgba(255, 255, 255, .1); border-color: var(--line-strong);
+  background: rgba(255, 255, 255, .1);
 }
 .new-task .app-ic { opacity: .8; }
 

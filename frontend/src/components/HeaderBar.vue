@@ -70,12 +70,12 @@ h1 {
   display: inline-flex; align-items: center; gap: 6px; height: 28px;
   padding: 0 10px; border-radius: var(--radius-md); font-size: 11.5px; font-weight: 500;
   cursor: pointer; white-space: nowrap;
-  border: 1px solid var(--line);
+  border: none;
   color: var(--cyan);
   background: rgba(255, 255, 255, .05);
   transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease);
 }
-.batch-chip:hover { border-color: var(--line-strong); background: rgba(255, 255, 255, .1); }
+.batch-chip:hover { background: rgba(255, 255, 255, .1); }
 .batch-chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .batch-chip.running .dot { animation: batch-pulse 1.2s ease-in-out infinite; }
 .batch-chip.awaiting {

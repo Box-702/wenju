@@ -640,7 +640,7 @@ const hasAny = computed(() => cards.value.length > 0)
 .g-step {
   display: inline-flex; align-items: center; gap: 7px;
   padding: 4px 10px; border-radius: var(--radius-full);
-  border: 1px solid var(--line); background: var(--surface);
+  border: none; background: rgba(255, 255, 255, .05);
   font-size: 12px; color: var(--muted);
 }
 .g-num {
@@ -652,16 +652,15 @@ const hasAny = computed(() => cards.value.length > 0)
 .g-label { color: var(--ink); font-weight: 600; }
 .g-note { font-size: 11px; color: var(--dim); }
 .g-ic { font-size: 12px; flex: none; }
-.g-step.done { border-color: color-mix(in oklch, var(--ok) 35%, transparent); }
+.g-step.done { background: rgba(255, 255, 255, .08); }
 .g-step.done .g-ic { color: var(--ok); }
 .g-step.done .g-note { color: var(--muted); }
-.g-step.partial { border-color: color-mix(in oklch, var(--warn) 40%, transparent); }
+.g-step.partial { background: color-mix(in oklch, var(--warn) 8%, transparent); }
 .g-step.partial .g-note { color: var(--warn); }
 .g-step.locked { opacity: .68; }
 .g-step.locked .g-ic { color: var(--dim); }
 .g-step.ready {
-  border-color: var(--sel-line);
-  background: var(--sel-bg);
+  background: rgba(255, 255, 255, .1);
 }
 .g-step.ready .g-ic { color: var(--ink); }
 .g-step.ready .g-note { color: var(--ink); }
@@ -671,12 +670,12 @@ const hasAny = computed(() => cards.value.length > 0)
   margin-left: auto; flex: none;
   display: inline-flex; align-items: center; gap: 6px;
   height: 26px; padding: 0 10px; border-radius: var(--radius-full);
-  border: 1px solid var(--line); background: transparent;
+  border: none; background: rgba(255, 255, 255, .06);
   color: var(--muted); font-size: 11.5px; cursor: pointer;
 }
-.g-final:hover:not(:disabled) { color: var(--ink); border-color: var(--line-strong); }
+.g-final:hover:not(:disabled) { color: var(--ink); background: rgba(255, 255, 255, .12); }
 .g-final:disabled { opacity: .45; cursor: not-allowed; }
-.g-final.ready { color: var(--ink); border-color: var(--sel-line); }
+.g-final.ready { color: var(--ink); background: rgba(255, 255, 255, .1); }
 .g-final :deep(svg) { width: 12px; height: 12px; }
 
 .cl-body {
@@ -712,10 +711,10 @@ const hasAny = computed(() => cards.value.length > 0)
 .chip {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 3px 8px 3px 3px; border-radius: var(--radius-sm);
-  border: 1px solid var(--line); background: var(--surface-2);
+  border: none; background: rgba(255, 255, 255, .06);
   color: var(--ink); font-size: 11.5px; cursor: pointer;
 }
-.chip:hover { border-color: var(--line-strong); }
+.chip:hover { background: rgba(255, 255, 255, .12); }
 .chip img { width: 22px; height: 22px; border-radius: 4px; object-fit: cover; }
 .chip-ph {
   width: 22px; height: 22px; border-radius: 4px; display: grid; place-items: center;
@@ -747,12 +746,12 @@ const hasAny = computed(() => cards.value.length > 0)
 .acts { display: flex; align-items: center; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
 .icon-btn {
   width: 30px; height: 28px; display: inline-grid; place-items: center;
-  border: 1px solid var(--line); border-radius: var(--radius-sm);
-  background: transparent; color: var(--muted); cursor: pointer;
+  border: none; border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, .06); color: var(--muted); cursor: pointer;
 }
-.icon-btn:hover { color: var(--ink); border-color: var(--line-strong); }
+.icon-btn:hover { color: var(--ink); background: rgba(255, 255, 255, .12); }
 .icon-btn:disabled, .acts button:disabled { opacity: .45; cursor: not-allowed; }
-.acts button.danger { color: var(--bad); border-color: color-mix(in oklch, var(--bad) 55%, transparent); }
+.acts button.danger { color: var(--bad); background: color-mix(in oklch, var(--bad) 14%, transparent); }
 .acts-note { font-size: 11px; color: var(--dim); margin-left: auto; }
 .cards-empty { padding: 24px; text-align: center; color: var(--dim); font-size: 12.5px; }
 
@@ -768,10 +767,10 @@ const hasAny = computed(() => cards.value.length > 0)
 .vp-bar { display: flex; align-items: center; gap: 8px; }
 .vp-play, .vp-mute {
   width: 28px; height: 28px; flex: none; display: inline-grid; place-items: center;
-  border: 1px solid var(--line); border-radius: var(--radius-sm);
-  background: transparent; color: var(--ink); cursor: pointer;
+  border: none; border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, .06); color: var(--ink); cursor: pointer;
 }
-.vp-play:hover, .vp-mute:hover { border-color: var(--line-strong); }
+.vp-play:hover, .vp-mute:hover { background: rgba(255, 255, 255, .12); }
 .vp-play :deep(svg), .vp-mute :deep(svg) { width: 12px; height: 12px; }
 .vp-scrub {
   position: relative; flex: 1; height: 6px; border-radius: 3px;
@@ -798,11 +797,12 @@ const hasAny = computed(() => cards.value.length > 0)
 .strip-item {
   position: relative; flex: none; display: flex; flex-direction: column; gap: 5px;
   padding: 7px 8px; border-radius: var(--radius-md);
-  border: 1px solid var(--line); background: var(--surface);
+  border: none; background: transparent;
   color: var(--muted); font-size: 11.5px; cursor: pointer;
 }
+.strip-item:hover { background: rgba(255, 255, 255, .05); }
 .strip-item.on {
-  border-color: var(--sel-line);
+  background: var(--sel-bg);
   color: var(--ink);
   box-shadow: inset 0 2px 0 0 var(--sel-bar);
 }

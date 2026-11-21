@@ -139,14 +139,13 @@ async function confirm() {
 .oc-opt {
   display: flex; align-items: flex-start; gap: 9px; width: 100%;
   padding: 8px 10px; text-align: left;
-  border: 1px solid var(--line); border-radius: var(--radius-md);
+  border: none; border-radius: var(--radius-md);
   background: transparent; cursor: pointer;
-  transition: border-color 130ms var(--ease), background 130ms var(--ease);
+  transition: background 130ms var(--ease);
 }
-.oc-opt:hover:not(:disabled) { border-color: var(--line-strong); }
+.oc-opt:hover:not(:disabled) { background: rgba(255, 255, 255, .06); }
 .oc-opt:disabled { cursor: default; }
 .oc-opt.on {
-  border-color: var(--sel-line);
   background: var(--sel-bg);
   box-shadow: inset 2px 0 0 0 var(--sel-bar);
 }

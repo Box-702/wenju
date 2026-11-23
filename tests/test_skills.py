@@ -159,6 +159,10 @@ def test_audience_splits_crew_and_main():
         "script-review",
         "asset-generation",
         "blockout",
+        "script-generation",
+        # 换作品从输入框按钮改成技能（D-XX）：也要进主 Agent 的目录，
+        # 否则用户引用了它，Agent 看不到该加载哪份细则。
+        "project-switch",
     }
     assert not (crew & main)
 
@@ -176,6 +180,7 @@ def test_main_skill_index_lists_only_main_skills():
         "production-delivery",
         "script-review",
         "asset-generation",
+        "script-generation",
     ):
         assert name in idx
     # 主 Agent 不执行分镜，把导演方法论列进它的目录只会诱导它越位

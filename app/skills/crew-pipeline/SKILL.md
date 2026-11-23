@@ -1,5 +1,6 @@
 ---
 name: crew-pipeline
+title: 剧组流水线
 description: 剧组四件事的依赖顺序与人工审阅边界：导演拆解 / 美术风格指南 / 定妆图参考资产 / 摄影视频提示词
 when_to_use: 用户要求拆镜头、出风格指南、生成定妆图或视频 prompt 时
 audience: main

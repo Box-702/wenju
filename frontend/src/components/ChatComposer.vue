@@ -11,7 +11,7 @@
 
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import {
-  store, sendMessage, clearHint, loadModelStatus, loadProviders, notify, useSkill,
+  store, sendMessage, clearHint, loadModelStatus, loadProviders, loadSkills, notify, useSkill, watchChatQueue,
 } from '../stores/app'
 import { api, uploadChatImage } from '../api'
 import ComposerCard from './ComposerCard.vue'
@@ -20,6 +20,8 @@ const emit = defineEmits(['open-skills'])
 
 const text = ref('')
 const card = ref(null)
+const sending = ref(false)
+let draftSubmission = null
 
 // ---- 图片上传（对话多模态） ----
 const attachedImages = ref([])   // [{ id, url, name, uploading }]
@@ -27,11 +29,18 @@ const uploadingCount = ref(0)
 const fileInput = ref(null)
 
 const hasImages = computed(() => attachedImages.value.some((i) => i.id))
-const canSend = computed(() => (!!text.value.trim() || hasImages.value) && !store.streaming && uploadingCount.value === 0)
+// 只挂了一个技能、正文没字也能发（技能本身就是这句消息的全部意思）。
+const canSend = computed(
+  () => (!!text.value.trim() || hasImages.value || !!store.pendingSkill)
+    && uploadingCount.value === 0 && !sending.value)
 
 onMounted(() => {
   loadModelStatus()
   loadProviders()
+  // 技能清单：输入框的「/」候选与技能 chip 的中文名都要它
+  // （此前只有打开技能页时才拉，别处拿不到）。
+  loadSkills()
+  watchChatQueue()
   document.addEventListener('paste', onPaste)
 })
 onUnmounted(() => document.removeEventListener('paste', onPaste))
@@ -94,7 +103,7 @@ function onPaste(e) {
 
 // ---- @ 引用的资产：随本轮消息一起发给 Agent ----
 const refs = ref([])
-/** 「/」面板选中技能：把技能的适用场景预填进输入框（与技能页同款行为）。 */
+/** 「/」面板选中技能：把技能挂到这条消息上（与技能页同款行为，D-XX）。 */
 function onSkillPicked(skill) {
   useSkill(skill)
 }
@@ -105,16 +114,30 @@ function onAssetPicked(item) {
   refs.value = [...refs.value, { kind: item.kind, id: item.id, name: item.name }]
 }
 
-function send() {
+async function send(guide = false) {
+  if (sending.value) return
   const t = text.value.trim()
-  if ((!t && !hasImages.value) || store.streaming || uploadingCount.value > 0) return
+  // 只有技能引用、没写字也能发（技能就是这句话的全部意思）。
+  if ((!t && !hasImages.value && !store.pendingSkill) || uploadingCount.value > 0) return
   const imageIds = attachedImages.value.filter((i) => i.id).map((i) => i.id)
-  attachedImages.value.forEach((i) => URL.revokeObjectURL(i.preview))
-  text.value = ''
-  attachedImages.value = []
   const used = refs.value
-  refs.value = []
-  sendMessage(t, imageIds, used)
+  const fingerprint = JSON.stringify([store.pid, store.convId, t, imageIds, used, store.pendingSkill?.name])
+  if (draftSubmission?.fingerprint !== fingerprint) draftSubmission = { fingerprint, id: crypto.randomUUID() }
+  const requestId = draftSubmission.id
+  sending.value = true
+  try {
+    let result = await sendMessage(t, imageIds, used, guide, requestId)
+    if (result === 'full' && !guide) {
+      if (!window.confirm('等待消息已满。中断当前回复，将这条消息作为「引导」立即发送？')) return
+      result = await sendMessage(t, imageIds, used, true, requestId)
+    }
+    if (result !== true) return
+    draftSubmission = null
+    attachedImages.value.forEach((i) => URL.revokeObjectURL(i.preview))
+    text.value = ''
+    attachedImages.value = []
+    refs.value = []
+  } finally { sending.value = false }
 }
 
 function cycleResolution() {
@@ -151,9 +174,9 @@ watch(() => store.draftSeq, () => {
       v-model:text="text"
       placeholder="描述想法、贴剧本或上传参考 —— / 用技能 · @ 引素材 · ＋ 传图，和问剧 Agent 一起创作"
       :can-send="canSend"
-      :busy="store.streaming"
+      :busy="false"
       :hint-text="store.hint"
-      @send="send"
+      @send="send(false)"
       @open-settings="store.showSettings = true"
       @open-skills="emit('open-skills')"
       @focus-input="clearHint"
@@ -176,7 +199,6 @@ watch(() => store.draftSeq, () => {
           技能
         </button>
         <button
-          v-if="!store.pid"
           class="menu-item"
           type="button"
           role="menuitem"
@@ -196,6 +218,8 @@ watch(() => store.draftSeq, () => {
         </div>
       </template>
     </ComposerCard>
+    <button v-if="store.chatQueue.active" class="guide-button" type="button"
+      :disabled="!canSend" @click="send(true)">引导当前回复</button>
   </div>
 </template>
 
@@ -209,6 +233,9 @@ watch(() => store.draftSeq, () => {
   max-width: var(--thread-w);
   margin: 0 auto;
 }
+.guide-button { display: block; margin: 8px auto 0; padding: 5px 12px; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); cursor: pointer; }
+.guide-button:disabled { opacity: .45; cursor: default; }
 
 /* 待发送图片 */
 .image-strip { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }

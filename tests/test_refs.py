@@ -7,14 +7,64 @@
 
 from __future__ import annotations
 
-from app.domain import CameraMovement, Character, Location, Scene, Script, Shot, Source
+from app.domain import CameraMovement, Character, Location, Scene, Script, Shot, Source, StyleGuide
 from app.media.refs import (
     MAX_REFERENCE_IMAGES,
+    _NEG_COMPOSITION,
+    _QA_CHARACTER,
     _verdict,
     apply_reference_images,
+    build_reference_assets,
     character_prompt,
     environment_prompt,
 )
+
+
+def test_sheet_qa_and_negative_allow_required_views():
+    for forbidden in ("背面，背影", "全身远景", "侧背影"):
+        assert forbidden not in _NEG_COMPOSITION
+    assert "严格侧面" in _QA_CHARACTER
+    assert "从头到脚完整" in _QA_CHARACTER
+    assert "服装或身体状态" in _QA_CHARACTER
+    assert "主色、辅色、点缀色" in _QA_CHARACTER
+    assert "视角标签" in _QA_CHARACTER
+
+
+def test_each_named_look_gets_own_board_and_shared_face_anchor():
+    class Image:
+        available = True
+        prompts: list[str] = []
+
+        def generate(self, prompt, *, negative_prompt=""):
+            self.prompts.append(prompt)
+            return f"image-{len(self.prompts)}"
+
+    class Vision:
+        available = True
+        seen: list[object] = []
+
+        def ask(self, images, question):
+            self.seen.append(images)
+            return "画面符合要求\nPASS"
+
+    script = _script_with(["char_a"])
+    guide = StyleGuide(
+        character_identity_anchors={"char_a": "左眉尾小痣、圆眼、窄鼻梁"},
+        character_looks={
+            "look_daily": {"character_id": "char_a", "name": "日常", "description": "蓝色校服"},
+            "look_injured": {"character_id": "char_a", "name": "受伤", "description": "灰色病号服，左臂绷带"},
+        },
+    )
+    image = Image()
+    vision = Vision()
+    refs = build_reference_assets(script, guide, image_client=image, vision_client=vision,
+                                  entities=["char_a"])
+    assert set(refs) == {"look_daily", "look_injured"}
+    assert len(image.prompts) == 2
+    assert all("左眉尾小痣、圆眼、窄鼻梁" in p for p in image.prompts)
+    assert "蓝色校服" in image.prompts[0] and "病号服" not in image.prompts[0]
+    assert "病号服" in image.prompts[1] and "蓝色校服" not in image.prompts[1]
+    assert vision.seen == ["image-1", ["image-1", "image-2"]]
 
 
 def test_character_prompt_carries_appearance_and_constraints():
@@ -22,6 +72,19 @@ def test_character_prompt_carries_appearance_and_constraints():
     assert "戴山羊头骨面具" in p
     assert "中国人" in p or "东亚面孔" in p
     assert "不要出现任何文字" in p
+    assert all(part in p for part in ("正面头肩特写", "正面、背面、严格侧面", "局部特写", "纯色方块"))
+
+
+def test_character_sheet_layout_preserves_visual_style():
+    from app.pipeline.visual_styles import character_prompt as styled_prompt
+
+    for style, cue in (("realistic", "写实电影摄影"), ("anime", "赛璐璐"),
+                       ("3d", "三维动画"), ("ink", "水墨")):
+        prompt = styled_prompt("齐夏", "黑色外套，银色胸针", style)
+        assert cue in prompt
+        assert "黑色外套，银色胸针" in prompt
+        assert "同一人物" in prompt
+        assert "配色区域" in prompt
 
 
 def test_environment_prompt_asks_for_empty_plate():

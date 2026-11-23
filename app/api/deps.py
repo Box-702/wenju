@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from ..deps import (  # noqa: F401
     batch_manager,
+    chat_turn_queue,
     finalize_manager,
     llm,
     settings,
@@ -24,6 +25,7 @@ from ..deps import (  # noqa: F401
 
 __all__ = [
     "batch_manager",
+    "chat_turn_queue",
     "finalize_manager",
     "llm",
     "settings",
@@ -43,3 +45,7 @@ def reset_llm() -> None:
     clear = getattr(llm, "cache_clear", None)
     if callable(clear):
         clear()
+    # 队列存活时间长于单次请求；切模型后后续排队轮次也应使用新模型。
+    from ..deps import chat_turn_queue as queue_factory
+    if queue_factory.cache_info().currsize:
+        queue_factory().llm = llm()

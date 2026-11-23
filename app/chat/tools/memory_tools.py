@@ -84,13 +84,18 @@ def build(ctx: ToolContext) -> list:
         if want_file:
             # 附属文件（第三级披露）：正文里提到「还有附件 X」时，用它把附件读回来。
             try:
-                return _read_skill_file(key, want_file)
+                content = _read_skill_file(key, want_file)
+                ctx.collector.setdefault("loaded_skills", []).append(key)
+                return content
             except Exception as e:  # noqa: BLE001
                 return f"技能 {key} 的附属文件 {want_file} 读取失败：{e}"
         try:
             skill = _load_skill_body(key)
         except Exception as e:  # noqa: BLE001
             return f"技能 {key} 读取失败：{e}"
+        loaded = ctx.collector.setdefault("loaded_skills", [])
+        if key not in loaded:
+            loaded.append(key)
         extra = (
             f"\n\n（该技能还有附属文件：{'、'.join(skill.files)}；"
             "要读某个附件就再调一次 load_skill 并带上 file 参数）"

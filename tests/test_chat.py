@@ -20,6 +20,24 @@ def _make_tools(store, llm):
     return tools, collector
 
 
+def test_side_effect_tool_capabilities_are_skill_gated(store, llm):
+    tools, _ = _make_tools(store, llm)
+    required = {
+        "generate_script": "script-generation",
+        "run_adaptation": "script-review",
+        "breakdown_scenes": "crew-pipeline",
+        "generate_reference_assets": "asset-generation",
+        "submit_videos": "production-delivery",
+        "finalize_film": "production-delivery",
+        "blockout_build": "blockout",
+        "switch_project": "project-switch",
+    }
+    assert len(tools) == 45
+    for name, skill in required.items():
+        assert (tools[name].metadata or {}).get("required_skill") == skill
+    assert (tools["generate_script"].metadata or {}).get("conditional_skill") == "novel-serial"
+
+
 def test_chat_tool_flow_closed_loop(store, llm, settings, sample_text):
     tools, collector = _make_tools(store, llm)
 
@@ -753,7 +771,10 @@ def test_system_prompt_stays_within_budget():
     # 目录一行摘要，细则靠 load_skill 现取，不把正文灌进系统提示。
     # 2026-11-15 起含「沟通协议」（分段推进 / 生成前必问 / 决策点确认）：
     # 那是每轮都要生效的行为约定，不能靠 load_skill 现取，故预算放宽到 2900。
-    assert len(system_prompt()) < 2900, f"系统提示 {len(system_prompt())} 字，超出预算"
+    # D-XX 起第 7 个 main 技能「切换作品」进目录，且目录行多了中文显示名
+    # （`- 切换作品（project-switch）：…`）——每行都长几个字，预算放宽到 3100。
+    # 纪律不变：**目录只放一行摘要，正文永远靠 load_skill 现取**。
+    assert len(system_prompt()) < 3100, f"系统提示 {len(system_prompt())} 字，超出预算"
 
 
 def test_every_trigger_points_at_a_real_tool(store, llm):

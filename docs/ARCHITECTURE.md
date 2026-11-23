@@ -11,7 +11,7 @@
 资产与版本全部落库。
 
 ```
-用户 ←→ 对话 Agent（手写工具循环，43 个工具）
+用户 ←→ 对话 Agent（手写工具循环，45 个工具目录；基础工具常驻，其余按技能解锁）
           ├── 改编工作流（LangGraph 7 节点 + interrupt 人审）→ 剧本版本
           ├── 剧组三函数（导演 → 美术 → 摄影）→ 分镜 / 视觉锚 / 视频提示词
           ├── 出片（Provider 抽象 → 队列 → 巡检 → 拼接 → 配音字幕）
@@ -42,7 +42,7 @@
 | 想改 | 去哪 |
 |---|---|
 | 写作 / 分镜规则 | `app/skills/*/SKILL.md`（不用动代码，改完跑 `python -m evals.run`） |
-| 对话行为与工具 | `app/chat/loop.py`（内核）+ `app/chat/tools/*`（43 个工具按域拆） |
+| 对话行为与工具 | `app/chat/loop.py`（内核）+ `app/chat/tools/*`（45 个工具按域拆） |
 | 改编流程 | `app/agent/graph.py` + `nodes.py` |
 | 模型厂商 | `app/llm/providers.py` 加一条 `ProviderSpec` |
 | 出片供应商 | `app/video/providers/` + `registry.py` |
@@ -67,9 +67,9 @@ app/
 ├── llm/        模型接入层   —— 对上提供能力，对下屏蔽厂商
 ├── pipeline/   内容生产线   —— 纯逻辑，不依赖 LangGraph / HTTP
 ├── agent/      改编智能体   —— LangGraph 状态图（固定流程 + interrupt 人机协同）+ 后台任务运行器
-├── chat/       对话编排层   —— 手写工具循环（loop.py）+ 工具实现按域拆分（chat/tools/）
+├── chat/       对话编排层   —— 手写工具循环（loop.py）+ 会话消息队列（turn_queue.py）+ 工具实现（chat/tools/）
 ├── crew/       剧组 Agent   —— 导演 / 美术指导 / 摄影指导
-├── media/      参考资产层   —— 资产键解析（assets：id 是主键、名字是别名）/ 定妆图 → 质检 → 注册 → 回填 / 配音 / 字幕 / 白模施工单（D-54）
+├── media/      参考资产层   —— 资产键解析（assets）/ 角色造型选型（looks，D-80）/ 定妆图 → 质检 → 注册 → 回填 / 配音 / 字幕 / 白模施工单（D-54）
 └── video/      视频生成层   —— Provider 抽象 + 队列 + 巡检 + 连续性 + 拼接 + 成片合成 + 质检 + 用量摘要（D-53）
 
 N2D/                          小说→成片直跑工作流（体检/批处理用，与产品共用同一套 app/* 函数）
@@ -85,9 +85,9 @@ N2D/                          小说→成片直跑工作流（体检/批处理�
 | 包 / 模块 | 行数 | 说明 |
 |---|---|---|
 | `video/` | 4417 | Provider 适配 + 队列 + 巡检 + 拼接 + 合成 + 质检 + 用量摘要 |
-| `chat/` | 4063 | 内核 + 编排 + **43 个工具实现**（按域拆 11 个模块） |
+| `chat/` | 4900 | 内核 + 编排 + 会话消息队列 + **45 个工具实现**（按域拆 12 个模块） |
 | `media/` | 3300 | 参考资产 / 配音 / 字幕 / 白模施工 / 资产实体层 |
-| `api/` | 3462 | 10 个域模块（+ common/schemas/deps），**100 条路由** |
+| `api/` | 3743 | 10 个域模块（+ common/schemas/deps），**109 条路由** |
 | `pipeline/` | 4064 | 内容生产线：导入、两阶段生成、patch、评审、题材画像、建图、提示词包、故事规划、台词修复 |
 | `crew/` | 3537 | 三个剧组角色的编排（提示词正文已外置到 `skills/`） |
 | `store.py` | 2084 | **19 张表**的持久化层（含出片意图 claim 表 `video_job_claims`，见 D-38） |
@@ -108,7 +108,7 @@ api/
 ├── projects.py    项目生命周期、初稿生成、导入、落盘、笔记、文件浏览
 ├── versions.py    剧本版本（含导出）
 ├── agent_runs.py  改编智能体的运行与审阅
-├── chat.py        对话式 Agent 与会话管理（含图片上传/回放）
+├── chat.py        对话式 Agent 与会话管理（含消息排队、引导、图片上传/回放）
 ├── production.py  生产工作流（一键跑「剧本→拆解→风格→资产图→提示词」）
 ├── cast.py        资产库：角色形象 / 声音 / 图片 / 场景的唯一入口
 ├── assets.py      项目媒体素材入库（只有「上传」一条通道，见 D-37）
@@ -248,7 +248,7 @@ OpenAI 兼容服务都支持它——**MiniMax 实测报 `2013 unknown response_
 
 先给结论，因为这块最容易想歪：
 
-> **只有一个 LLM Agent（对话编排层），调度 43 个工具。剧组三个「角色」是函数，不是进程。**
+> **只有一个 LLM Agent（对话编排层），调度 45 个工具。剧组三个「角色」是函数，不是进程。**
 > **「按需加载」只发生在主 Agent 那一层；剧组三个角色的技能是每次全量拼进系统提示的。**
 
 为什么不做进程级多 Agent（每个角色独立上下文、独立工具集、互相通信）：它们各自只做
@@ -260,7 +260,7 @@ OpenAI 兼容服务都支持它——**MiniMax 实测报 `2013 unknown response_
 
 | Agent | 角色 | 职责 |
 |---|---|---|
-| **ChatConductor** | 前厅 / 调度 | 绑定 43 个工具理解用户意图，把请求路由到确定性流水线或后台剧组任务 |
+| **ChatConductor** | 前厅 / 调度 | 绑定 45 个工具理解用户意图，把请求路由到确定性流水线或后台剧组任务 |
 
 **内核是手写的显式循环**（`app/chat/loop.py`，2026-11-05 替换掉 LangGraph 的 StateGraph + ToolNode）：
 
@@ -280,10 +280,10 @@ for step in range(max_steps):        # 上限 8 轮，防止无限工具调用
 关键设计：**审阅动作走确定性路径**（accept/reject 不经过 LLM），避免「对话式工具调用不可靠」导致误操作。
 
 系统提示分两层：**触发器留在提示词**（决定该调哪个工具，每轮都要用），**执行细则进技能**
-（`audience: main` 的五个 SKILL.md，由 `load_skill` 工具按需拉）。见 [`DECISIONS.md` D-14](DECISIONS.md)。
+（`audience: main` 的八个 SKILL.md，由 `load_skill` 工具按需拉）。见 [`DECISIONS.md` D-14](DECISIONS.md)。
 
-43 个工具的实现按域拆在 `app/chat/tools/`（conductor 只留编排，`build_chat_tools` 是装配壳）：
-`screenplay.py`（项目与改编）/ `source.py`（读原文）/ `script_reader.py`（读作品）/
+45 个工具的实现按域拆在 `app/chat/tools/`（conductor 只留编排，`build_chat_tools` 是装配壳）：
+`screenplay.py`（项目与改编）/ `project.py`（换作品，D-77）/ `source.py`（读原文）/ `script_reader.py`（读作品）/
 `production.py`（一键流水线）/ `crew.py`（剧组）/ `asset.py`（资产与音色）/
 `video.py`（出片与素材）/ `memory_tools.py`（记忆与技能），
 跨域小件（ToolContext、状态标签、文本截断）收在 `context.py`。分组（2026-11-11 补全为 27 个）：
@@ -291,6 +291,7 @@ for step in range(max_steps):        # 上限 8 轮，防止无限工具调用
 | 组 | 工具 |
 |---|---|
 | 项目与改编 | `create_project` `map_novel` `propose_arcs` `generate_script` `run_adaptation` `ask` |
+| 换作品（D-77） | `list_projects` `switch_project` |
 | 读原文 / 读作品 | `read_source` `search_source` `read_script` |
 | 剧组与素材 | `breakdown_scenes` `generate_style_guide` `generate_video_prompts` `generate_reference_assets` `clone_voice` `list_assets` |
 | 一键流水线 | `start_production` |
@@ -376,9 +377,13 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
 | `video-prompt-en/SKILL.md` | crew | 同上（英文，目标模型方言） | `crew/dp.py` |
 | `style-guide/SKILL.md` | crew | 美术指导方法论（视觉锚的唯一来源） | `crew/art_director.py` |
 | `novel-serial/SKILL.md` | main | 长篇小说分段改编：建图 → 提弧 → 选段 → 连载续接 | 主 Agent 按需 |
+| `script-generation/SKILL.md` | main | 初稿前置确认、原文检查、生成与结果汇报 | 主 Agent 按需 |
 | `crew-pipeline/SKILL.md` | main | 剧组四件事的依赖顺序与人工审阅边界 | 主 Agent 按需 |
 | `production-delivery/SKILL.md` | main | 批准 → 提交 → 轮询 → 重跑 → 合成 | 主 Agent 按需 |
 | `script-review/SKILL.md` | main | 改编提议的审阅闭环与事实约束 | 主 Agent 按需 |
+| `asset-generation/SKILL.md` | main | 视觉与声音资产的生成、确认和登记 | 主 Agent 按需 |
+| `blockout/SKILL.md` | main | 白模施工单调整与渲染边界 | 主 Agent 按需 |
+| `project-switch/SKILL.md` | main | 按作品名或 id 切换当前对话归属 | 主 Agent 按需 |
 
 两组的加载方式不同，**这才是「按需」与「全量」的分界线**：
 
@@ -443,7 +448,7 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
 
 ⑤ 参考资产          app/media/refs.py + app/llm/image.py + app/llm/vision.py
   定妆 prompt → 文生图 → 视觉质检（不合格重生成，≤2 次）→ 注册为全局参考
-  → apply_reference_images() 按「场景→环境图 / 人物→角色图」回填到每个镜头
+  → apply_reference_images() 按「场景→环境图 / 人物→场景默认造型→镜头覆盖造型」回填；无明确基础造型时要求选择，不能取最新图
 
 ⑥ 分镜              crew/director.py
   SceneBreakdown[] + 连续性计划：reference_group（共享环境分组）、chain_from（首尾帧接力）
@@ -612,6 +617,7 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
 |---|---|
 | `app/chat/tools/context.py` | `ToolContext`（store / llm / collector / runner 一轮一份）+ 跨域取数助手（`project` / `latest_video_version` / `latest_job_by_shot`）+ 状态标签 + `short()` |
 | `app/chat/tools/screenplay.py` | 剧本域：建项目 / 章节地图 / 选段 / 初稿 / 改编 / 咨询 |
+| `app/chat/tools/project.py` | 作品域：列作品 / 换作品（当前对话改挂到哪部作品，D-77） |
 | `app/chat/tools/crew.py` | 剧组域：拆解 / 风格指南 / 定妆图 / 提示词（都是「启动后台任务」） |
 | `app/chat/tools/asset.py` | 资产域：列 / 搜 / 存成定妆照 / 挂到镜头上 / 克隆音色 |
 | `app/chat/tools/blockout.py` | 白模域：起草施工单 / 后台渲染 / 查进度（D-54） |

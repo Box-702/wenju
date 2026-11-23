@@ -27,6 +27,7 @@ export const store = reactive({
 
   // 对话与版本
   messages: [],        // 当前对话消息 [{ role, content, events, payloads, streaming }]
+  chatQueue: { active: null, waiting: [], capacity: 5 },
   assetIndex: [],      // 可被 @ 引用的资产清单 [{ kind, id, name, sub }]
   assetRefs: {},       // 资产引用索引 { char_xxx / loc_xxx → { name, image, kind } }
                        // 提示词里的 @引用 要显示成「小图 + 名字」，靠它
@@ -99,6 +100,9 @@ export const store = reactive({
   draft: '',
   draftSeq: 0,
   skills: [],            // 主 Agent 可用的技能清单（/api/skills）
+  // 待发送的技能引用 {name, title}：用户在输入框里引用了某个技能（D-XX）。
+  // 发送时正文前置「【技能：name】」标记，界面渲染成带图标高亮的 chip。
+  pendingSkill: null,
 })
 
 // ---------------------------------------------------------------------
@@ -298,6 +302,7 @@ export async function selectConversation(pid, convId, token = ++_navSeq) {
   setHint('对话已切换，各自独立上下文')
   store.messages = [] // 先清空旧对话内容，避免等待期间/失败时残留造成「串话」
   await loadHistory(token)
+  await refreshChatQueue()
   if (!_isCurrent(token)) return
   await loadViewer(token)
 }
@@ -330,6 +335,76 @@ export async function loadHistory(token = _navSeq) {
     role: m.role, content: m.content,
     events: m.events || [], payloads: m.payloads || [], images: m.images || [], streaming: false,
   }))
+}
+
+let _queueTimer = null
+let _watchedTurn = null
+let _eventOffset = 0
+let _lastQueueThread = ''
+let _lastQueueRevision = -1
+let _queuePolling = false
+let _queueOwnedStreaming = false
+
+function queuePath() {
+  const q = new URLSearchParams()
+  if (store.convId) q.set('conversation_id', store.convId)
+  else if (store.pid) q.set('project_id', store.pid)
+  return `?${q}`
+}
+
+export function watchChatQueue() {
+  if (_queueTimer) return
+  refreshChatQueue()
+  _queueTimer = setInterval(refreshChatQueue, 700)
+}
+
+export async function refreshChatQueue() {
+  if (_queuePolling) return
+  _queuePolling = true
+  const thread = store.convId || store.pid || 'global'
+  try {
+    const data = await api(`/chat/turns${queuePath()}`)
+    if (thread !== (store.convId || store.pid || 'global')) return
+    store.chatQueue = data
+    const active = data.active
+    if (_lastQueueThread !== thread || _watchedTurn !== active?.id || _lastQueueRevision !== data.revision) {
+      _lastQueueThread = thread
+      _lastQueueRevision = data.revision
+      _watchedTurn = active?.id || null
+      _eventOffset = 0
+      await loadHistory()
+      if (active) store.messages.push(reactive({ role: 'assistant', content: '', events: [], payloads: [], streaming: true, queueTurnId: active.id }))
+    }
+    if (active) {
+      const result = await api(`/chat/turns/${encodeURIComponent(active.id)}${queuePath()}&after=${_eventOffset}`)
+      if (thread !== (store.convId || store.pid || 'global')) return
+      _eventOffset = result.next
+      const reply = store.messages.find(m => m.queueTurnId === active.id)
+      if (reply) for (const ev of result.events) handleStreamEvent(ev, reply)
+    }
+    if (active) {
+      _queueOwnedStreaming = true
+      store.streaming = true
+      store.statusActive = true
+      if (!store.statusPhase) store.statusPhase = '正在思考'
+    } else if (_queueOwnedStreaming) {
+      _queueOwnedStreaming = false
+      store.streaming = false
+      store.statusActive = false
+      store.statusPhase = ''
+    }
+  } catch { /* 断线期间保留已知状态；重连后从服务端恢复 */ }
+  finally { _queuePolling = false }
+}
+
+export async function withdrawQueuedMessage(id) {
+  try {
+    await api(`/chat/turns/${encodeURIComponent(id)}${queuePath()}`, 'DELETE')
+  } catch (e) {
+    notify(`撤回失败：${e.message}`, 'error')
+  } finally {
+    await refreshChatQueue()
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -396,7 +471,11 @@ export async function loadProviders() {
 export async function loadChatPref() {
   try {
     const prefs = await api('/models/preferences')
-    store.chatPref = prefs.find((x) => x.task_type === 'chat' && x.provider_id) || null
+    // 必须取 is_default 那一行：同一个 task_type 下可能有多行历史偏好
+    // （切过一次厂商就多一行），取「第一条」会永远显示第一次选的厂商，
+    // 点了「设为默认」界面纹丝不动——看着像切换不了（2026-11-22 实测）。
+    const chatPrefs = (prefs || []).filter((x) => x.task_type === 'chat' && x.provider_id)
+    store.chatPref = chatPrefs.find((x) => x.is_default) || chatPrefs[0] || null
   } catch {
     store.chatPref = null
   }
@@ -443,13 +522,20 @@ export async function loadSkills() {
   }
 }
 
-/** 点技能 = 把它的适用场景预填进输入框（用户再改改就能发）。 */
+/** 引用技能 = 在这条消息里挂一个技能（D-XX）。
+
+    以前是「把技能的适用场景塞进输入框」，用户还得删改那段散文才能发；
+    现在是**引用**：输入框上方出现一个带图标高亮的 chip（✦ 切换作品），
+    发送时正文前置「【技能：project-switch】」标记——
+    模型看得懂这是技能调用（去 load_skill），界面上渲染成同一个 chip。 */
 export function useSkill(skill) {
   if (!skill) return
-  store.draft = skill.when_to_use
-    ? `${skill.when_to_use}，请帮我推进。`
-    : skill.description || ''
-  store.draftSeq += 1
+  store.pendingSkill = { name: skill.name, title: skill.title || skill.name }
+}
+
+/** 取消技能引用（输入框 chip 上的 ✕）。 */
+export function clearSkillRef() {
+  store.pendingSkill = null
 }
 
 /** 给版本打里程碑标记（draft/candidate/final / null 清除）。用于定稿管理。 */
@@ -711,48 +797,83 @@ export async function loadAssetIndex(pid = store.pid) {
 
 let _statusTimer = null
 
-export async function sendMessage(text, imageIds = [], refs = []) {
-  if (store.streaming || (!text && !imageIds.length)) return
-  // 先渲染用户气泡 + 一个「打字中」的 assistant 气泡
-  // 带图时用回放 url 预览（与历史消息渲染同一数据形状）。
-  const images = imageIds.map((id) => ({ id, url: `/api/chat/images/${id}` }))
-  store.messages.push({ role: 'user', content: text, images, events: [], payloads: [], streaming: false })
-  const reply = reactive({ role: 'assistant', content: '', events: [], payloads: [], streaming: true })
-  store.messages.push(reply)
-
-  store.streaming = true
-  store.streamingStage = ''
-  store.statusActive = true
-  store.statusPhase = '正在思考'
-  store.statusElapsed = 0
-  _statusTimer = setInterval(() => { store.statusElapsed += 100 }, 100)
-  _streamAbort = new AbortController()
+export async function sendMessage(text, imageIds = [], refs = [], guide = false, requestId = crypto.randomUUID()) {
+  const skill = store.pendingSkill
+  if (!text && !imageIds.length && !skill) return false
+  // 技能引用进正文：标记用英文名（模型 load_skill 的参数），界面上渲染成
+  // 带图标高亮的 chip（中文名）。标记随消息落库，回放时一样能认出来。
+  const body = skill
+    ? `【技能：${skill.name}】${text ? ' ' + text : ''}`.trim()
+    : text
   try {
-    await streamChat(
-      {
-        project_id: store.pid, conversation_id: store.convId, message: text,
-        meta: null, images: imageIds,
-        // 用户用 @ 引用了哪些资产（角色 / 场景 / 成片）
-        refs: (refs || []).map((r) => ({ kind: r.kind || '', id: r.id || '', name: r.name || '' })),
-      },
-      (ev) => handleStreamEvent(ev, reply),
-      _streamAbort.signal,
-    )
+    await api('/chat/turns', 'POST', {
+      request_id: requestId, guide, project_id: store.pid, conversation_id: store.convId,
+      message: body, images: imageIds,
+      refs: (refs || []).map((r) => ({ kind: r.kind || '', id: r.id || '', name: r.name || '' })),
+    })
+    store.pendingSkill = null
+    await refreshChatQueue()
+    return true
   } catch (e) {
-    // 主动切走会话导致的中止不算错误，保留已收到的部分内容即可。
-    if (e && e.name !== 'AbortError') reply.content = `请求失败：${e.message}`
-  } finally {
-    _streamAbort = null
-    if (_statusTimer) { clearInterval(_statusTimer); _statusTimer = null }
-    reply.streaming = false
-    store.streaming = false
-    store.streamingStage = ''
-    store.statusActive = false
-    setTimeout(() => {
-      if (!store.streaming) { store.statusPhase = ''; store.statusElapsed = 0 }
-    }, 2600)
-    await loadTree()
+    if (String(e.message).includes('等待消息已满')) return 'full'
+    notify(`发送失败：${e.message}`, 'error')
+    return false
   }
+}
+
+// ---------------------------------------------------------------------
+// 零配置演示链路
+// ---------------------------------------------------------------------
+// 首页「导入小说做剧」会预填这句。没有对话模型时不能把它发给明知无法执行的
+// Agent；直接复用项目导入 + /generate 的本地回退，才能兑现「不配模型也能体验」。
+const HOME_NOVEL_LEAD = '我想把一部小说改编成短剧，这是原文：'
+
+function novelTextFromHomeDraft(text) {
+  const value = String(text || '').trim()
+  if (!value.startsWith(HOME_NOVEL_LEAD)) return ''
+  return value.slice(HOME_NOVEL_LEAD.length).trim()
+}
+
+function demoTitleFromNovel(raw) {
+  const quoted = raw.match(/《\s*([^》\n]{1,120})\s*》/)
+  if (quoted?.[1]) return quoted[1].trim()
+  const first = raw.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || ''
+  return first.replace(/^#+\s*/, '').slice(0, 40) || '未命名短剧'
+}
+
+async function generateDemoDraft(project) {
+  const result = await api(`/projects/${project.id}/generate`, 'POST', {})
+  for (const warning of result.warnings || []) notify(warning, 'info')
+  // /generate 已落库了版本；总览在初次挂载时可能已经读到旧的 0 计数，
+  // 所以要与剧本查看器一起刷新，不能等用户切换作品才更新。
+  await Promise.all([loadViewer(), loadOverview()])
+  store.wbView = 'script'
+  // 自动切入工作台后，仍让用户看得到当前作品和下一步；不要把对话默默收起来。
+  store.agentOpen = true
+  return result
+}
+
+/**
+ * 无对话模型时，首页的「导入小说」草稿走本地演示初稿。
+ * 返回 true 表示已经接管；false 让调用方按普通对话发送。
+ */
+export async function tryCreateDemoProjectFromHome(text) {
+  if (store.modelInfo?.available !== false) return false
+  const raw = novelTextFromHomeDraft(text)
+  if (raw.length < 20) return false
+
+  const fd = new FormData()
+  fd.append('title', demoTitleFromNovel(raw))
+  fd.append('adaptation_type', 'short_drama')
+  fd.append('visual_style', 'realistic')
+  fd.append('raw_text', raw)
+  const project = await importProject(fd)
+  await loadTree()
+  await selectProject(project.id)
+  if (project.conversation_id) await selectConversation(project.id, project.conversation_id)
+  await generateDemoDraft(project)
+  notify(`已创建《${project.title}》的演示初稿；配置模型后可生成正式版本。`, 'ok')
+  return true
 }
 
 /** 处理单帧 SSE 事件，更新回复消息对象。 */
@@ -797,8 +918,24 @@ async function afterAgentDone(data) {
     store.expanded[store.pid] = true
     await loadConversations(store.pid)
     await loadTree()
+  } else if (data.project_id && data.project_id !== store.pid) {
+    // 对话里换了作品（切换作品技能）：后端已把会话改挂过去，这里跟着切。
+    // 轻量切换：不重载会话、不清消息——这段对话要留在屏幕上，
+    // 换的只是它归属哪部作品。
+    await switchToProject(data.project_id)
   }
   if (store.pid) await loadViewer()
+}
+
+/** 换作品（对话里触发）：换归属 + 刷作品树与右栏，不动当前消息流。 */
+export async function switchToProject(pid) {
+  if (!pid || pid === store.pid) return
+  const title = (store.projects || []).find((p) => p.id === pid)?.title || ''
+  store.pid = pid
+  store.expanded[pid] = true
+  await loadTree()
+  await loadViewer()
+  notify(`已切到《${title || '新作品'}》`, 'ok')
 }
 
 // ---------------------------------------------------------------------
@@ -930,6 +1067,9 @@ export async function submitNewProject({ title, adapt, visual, file, raw }) {
   await selectProject(r.id)
   if (r.conversation_id) await selectConversation(r.id, r.conversation_id)
   for (const w of r.warnings || []) notify(w)
+  // 作品已导入但没有模型时，不能再让用户去对话里说「生成初稿」：那条路必然失败。
+  // 复用同一份 /generate 回退，让手动导入与首页入口的体验一致。
+  if (store.modelInfo?.available === false) await generateDemoDraft(r)
 }
 
 // =====================================================================

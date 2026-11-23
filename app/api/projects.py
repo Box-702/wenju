@@ -142,7 +142,7 @@ def generate(project_id: str, payload: GenerateRequest) -> dict[str, Any]:
             )
         else:
             warnings.append(
-                "未配置可用模型，本次生成的是本地演示剧本；配置 OPENAI/DEEPSEEK key 可生成真实剧本。"
+                "未配置可用模型，本次生成的是本地演示剧本；可在「设置 → 模型」添加厂商与 Key 后生成正式剧本。"
             )
     return {
         "version_id": version.id,

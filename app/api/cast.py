@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+from uuid import uuid4
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Response, UploadFile, File, Form
@@ -49,6 +50,171 @@ class LocationChange(BaseModel):
 class LibraryPatch(BaseModel):
     characters: dict[str, CharacterChange] = Field(default_factory=dict)
     locations: dict[str, LocationChange] = Field(default_factory=dict)
+
+
+class LookCreate(BaseModel):
+    character_id: str
+    name: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    image: str = ""
+    available_from_shot_id: str = ""
+    identity_anchor: str = ""  # 同角色所有造型共用的面部特征
+
+
+class LookSelection(BaseModel):
+    character_id: str
+    look_id: str
+
+
+class IdentityAnchor(BaseModel):
+    description: str = Field(min_length=1)
+
+
+@router.put("/projects/{project_id}/characters/{character_id}/identity-anchor")
+def set_identity_anchor(project_id: str, character_id: str, payload: IdentityAnchor) -> dict[str, Any]:
+    store = deps.store()
+    project = common.get_project(project_id)
+    script = _script_of(store, project)
+    if character_id not in {c.id for c in script.characters}:
+        raise HTTPException(404, "角色不存在")
+    style = store.get_video_style(project_id) or {}
+    anchors = dict(style.get("character_identity_anchors") or {})
+    anchors[character_id] = payload.description.strip()
+    store.merge_video_style(project_id, {"character_identity_anchors": anchors})
+    return {"character_id": character_id, "description": anchors[character_id]}
+
+
+@router.post("/projects/{project_id}/looks")
+def create_look(project_id: str, payload: LookCreate) -> dict[str, Any]:
+    from ..media.looks import all_looks
+
+    store = deps.store()
+    project = common.get_project(project_id)
+    script = _script_of(store, project)
+    if payload.character_id not in {c.id for c in script.characters}:
+        raise HTTPException(404, "角色不存在")
+    versions = store.list_video_versions(project_id)
+    shot_ids = {s.get("id") for v in versions for s in v.shots if isinstance(s, dict)}
+    if not payload.available_from_shot_id or payload.available_from_shot_id not in shot_ids:
+        raise HTTPException(400, "新造型需指定首次可用镜头，避免剧情变化应用到之前的镜头")
+    style = store.get_video_style(project_id) or {}
+    anchors = dict(style.get("character_identity_anchors") or {})
+    anchor = payload.identity_anchor.strip()
+    if anchor and anchors.get(payload.character_id) and anchors[payload.character_id] != anchor:
+        raise HTTPException(409, "该角色已有面部身份锚，请沿用同一描述")
+    if anchor:
+        anchors[payload.character_id] = anchor
+    lid = f"look_{uuid4().hex[:12]}"
+    look = {"id": lid, **payload.model_dump(exclude={"identity_anchor"}),
+            "status": "ready" if payload.image else "draft"}
+    looks = dict(style.get("character_looks") or {})
+    looks[lid] = look
+    store.merge_video_style(project_id, {"character_looks": looks,
+                                         "character_identity_anchors": anchors})
+    return look
+
+
+@router.put("/projects/{project_id}/looks/{look_id}/image")
+def set_look_image(project_id: str, look_id: str, payload: dict[str, str]) -> dict[str, Any]:
+    store = deps.store()
+    common.get_project(project_id)
+    style = store.get_video_style(project_id) or {}
+    looks = dict(style.get("character_looks") or {})
+    if look_id not in looks:
+        raise HTTPException(404, "造型不存在")
+    image = str(payload.get("image") or "").strip()
+    if not image:
+        raise HTTPException(400, "图片地址不能为空")
+    looks[look_id] = {**looks[look_id], "image": image, "status": "ready"}
+    store.merge_video_style(project_id, {"character_looks": looks})
+    return looks[look_id]
+
+
+@router.put("/projects/{project_id}/{scope}/{target_id}/look")
+def select_look(project_id: str, scope: str, target_id: str, payload: LookSelection) -> dict[str, Any]:
+    from ..media.looks import all_looks, selected_look
+    from ..domain import Shot
+
+    store = deps.store()
+    project = common.get_project(project_id)
+    script = _script_of(store, project)
+    style = store.get_video_style(project_id) or {}
+    if scope not in {"scene", "shot"}:
+        raise HTTPException(404, "选型范围不存在")
+    looks = all_looks(style, script)
+    if payload.look_id not in looks or looks[payload.look_id].get("character_id") != payload.character_id:
+        raise HTTPException(400, "造型不属于该角色")
+    if scope == "scene":
+        scene = next((s for s in script.scenes if s.id == target_id), None)
+        if scene is None or payload.character_id not in scene.characters:
+            raise HTTPException(404, "场景中没有该角色")
+        version = store.get_video_version(project.current_video_version_id) if project.current_video_version_id else None
+        if version:
+            plan = [Shot.model_validate(s) for s in version.shots]
+            try:
+                for candidate in plan:
+                    if candidate.scene_id == target_id:
+                        selected_look(character_id=payload.character_id, scene=scene, shot=candidate,
+                                      looks=looks, shot_plan=plan,
+                                      style={"scene_look_ids": {target_id: {payload.character_id: payload.look_id}}})
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from e
+        key = "scene_look_ids"
+    else:
+        version = store.get_video_version(project.current_video_version_id) if project.current_video_version_id else None
+        shot = next((s for s in (version.shots if version else []) if s.get("id") == target_id), None)
+        if shot is None:
+            raise HTTPException(404, "镜头不存在")
+        scene = next((s for s in script.scenes if s.id == shot.get("scene_id")), None)
+        if scene is None or payload.character_id not in scene.characters:
+            raise HTTPException(400, "镜头所在场景中没有该角色")
+        try:
+            selected_look(character_id=payload.character_id, scene=scene, shot=Shot.model_validate(shot),
+                          looks=looks, shot_plan=[Shot.model_validate(s) for s in version.shots],
+                          style={"shot_look_ids": {target_id: {payload.character_id: payload.look_id}}})
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        key = "shot_look_ids"
+    mapping = {k: dict(v) for k, v in (style.get(key) or {}).items()}
+    mapping.setdefault(target_id, {})[payload.character_id] = payload.look_id
+    store.merge_video_style(project_id, {key: mapping})
+    return {"ok": True, "look_id": payload.look_id}
+
+
+@router.post("/projects/{project_id}/looks/{look_id}/generate")
+def generate_look_image(project_id: str, look_id: str) -> dict[str, Any]:
+    """Generate this look only. Text-to-image cannot guarantee the same face as another look."""
+    from ..domain import StyleGuide
+    from ..media.refs import build_reference_assets
+
+    store = deps.store()
+    project = common.get_project(project_id)
+    script = _script_of(store, project)
+    style = store.get_video_style(project_id) or {}
+    look = (style.get("character_looks") or {}).get(look_id)
+    if not look:
+        raise HTTPException(404, "造型不存在")
+    cid = look["character_id"]
+    runner = deps.subagent_runner()
+
+    def _run(task: object) -> str:
+        current = store.get_video_style(project_id) or {}
+        guide_data = dict(current)
+        guide_data["character_appearances"] = {cid: look["description"]}
+        refs = build_reference_assets(script, StyleGuide.model_validate(guide_data),
+                                      entities=[cid], regenerate=True, look_ids=[look_id],
+                                      on_progress=lambda m: runner.update_step(task.id, m, "running"))
+        url = refs.get(look_id)
+        if not url:
+            raise ValueError("没有生成造型图片")
+        fresh = dict(store.get_video_style(project_id) or {})
+        looks = dict(fresh.get("character_looks") or {})
+        looks[look_id] = {**looks[look_id], "image": url, "status": "ready"}
+        store.merge_video_style(project_id, {"character_looks": looks})
+        return f"造型「{look['name']}」已生成；请检查与其他造型的脸部一致性"
+
+    task_id = runner.start("生成角色造型", _run, project_id=project_id)
+    return {"task_id": task_id, "started": True}
 
 
 class CastProfileIn(BaseModel):
@@ -159,6 +325,11 @@ def get_library(project_id: str, version_id: str | None = None) -> dict[str, Any
                         voice_pool=_voice_pool(store, style.get("visual_style")))
     lib["clips"] = _shot_clips(store, project_id)
     lib["style_guide"] = style_guide
+    lib["look_selections"] = {"scenes": style.get("scene_look_ids") or {},
+                              "shots": style.get("shot_look_ids") or {}}
+    lib["scene_characters"] = {sc.id: sc.characters for sc in script.scenes}
+    for char in lib["characters"]:
+        char["identity_anchor"] = (style.get("character_identity_anchors") or {}).get(char["char_id"], "")
     return lib
 
 

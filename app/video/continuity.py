@@ -74,6 +74,7 @@ def resolve_submission_references(
     shot_plan: list[dict[str, Any]],
     completed_urls: dict[str, str],
     image_registry: dict[str, str] | None = None,
+    style: dict[str, Any] | None = None,
     script: Any = None,
 ) -> dict[str, list[str]]:
     """提交单镜生成任务时，解析该镜应携带的多模态一致性输入。
@@ -133,14 +134,18 @@ def resolve_submission_references(
          and str(r.get("id") or r.get("shot_id") or "") == shot_id),
         None,
     )
-    if registry and script is not None and raw_me is not None:
+    if (registry or any((style or {}).get(key) for key in
+                        ("character_looks", "scene_look_ids", "shot_look_ids"))) and script is not None and raw_me is not None:
         try:
             from ..domain import Shot
             from ..media.refs import apply_reference_images
 
             shot = Shot.model_validate(dict(raw_me))
-            if apply_reference_images([shot], registry, script):
+            all_shots = [Shot.model_validate(dict(r)) for r in shot_plan if isinstance(r, dict)]
+            if apply_reference_images([shot], registry, script, style=style, shot_plan=all_shots):
                 images = list(shot.reference_images or [])
+        except ValueError:
+            raise
         except Exception as e:  # noqa: BLE001
             log.warning("定妆参考图回填失败（忽略，不影响提交）：%s", e)
 

@@ -20,6 +20,57 @@ from .schemas import ChatRequest, ConversationCreate, ConversationRename
 
 router = APIRouter()
 
+
+class QueuedChatRequest(ChatRequest):
+    request_id: str = Field(min_length=8, max_length=100)
+    guide: bool = False
+
+
+@router.post("/chat/turns")
+def submit_chat_turn(payload: QueuedChatRequest) -> dict[str, Any]:
+    from ..chat.turn_queue import QueueFull, Turn
+    if not payload.message.strip() and not payload.images:
+        raise HTTPException(400, "消息不能为空")
+    if payload.meta:
+        raise HTTPException(400, "排队消息不支持审阅动作")
+    thread = _resolve_conversation(payload.project_id, payload.conversation_id) or chat_svc.GLOBAL_THREAD
+    try:
+        return deps.chat_turn_queue().submit(Turn(
+            id=payload.request_id, thread=thread, project_id=payload.project_id,
+            conversation_id=None if thread == chat_svc.GLOBAL_THREAD else thread,
+            message=payload.message, images=payload.images,
+            refs=[r.model_dump() for r in payload.refs], guide=payload.guide,
+        ))
+    except QueueFull as exc:
+        raise HTTPException(409, str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+@router.get("/chat/turns")
+def chat_turn_status(project_id: str | None = None, conversation_id: str | None = None) -> dict[str, Any]:
+    thread = _resolve_conversation(project_id, conversation_id) or chat_svc.GLOBAL_THREAD
+    return deps.chat_turn_queue().status(thread)
+
+
+@router.get("/chat/turns/{turn_id}")
+def chat_turn_events(turn_id: str, after: int = 0, project_id: str | None = None,
+                     conversation_id: str | None = None) -> dict[str, Any]:
+    thread = _resolve_conversation(project_id, conversation_id) or chat_svc.GLOBAL_THREAD
+    result = deps.chat_turn_queue().events(thread, turn_id, max(0, after))
+    if result is None:
+        raise HTTPException(404, "消息不存在")
+    return result
+
+
+@router.delete("/chat/turns/{turn_id}")
+def withdraw_chat_turn(turn_id: str, project_id: str | None = None,
+                       conversation_id: str | None = None) -> dict[str, Any]:
+    thread = _resolve_conversation(project_id, conversation_id) or chat_svc.GLOBAL_THREAD
+    if not deps.chat_turn_queue().cancel(thread, turn_id):
+        raise HTTPException(409, "这条消息已经开始或不存在")
+    return {"id": turn_id, "state": "cancelled"}
+
 # 对话图片上传限制：单张 ≤10MB，单条消息 ≤4 张（上下文与请求体都扛得住）。
 _CHAT_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 _CHAT_IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
@@ -118,6 +169,9 @@ def list_skills_api(audience: str = "main") -> dict[str, Any]:
         "skills": [
             {
                 "name": m.name,
+                # 中文显示名：界面给用户看的标签（英文名是 load_skill 的参数，
+                # 出现在正文里对用户是黑话）。没有 title 的技能退回英文名。
+                "title": m.title or m.name,
                 "description": m.description,
                 "when_to_use": m.when_to_use,
                 "audience": m.audience,

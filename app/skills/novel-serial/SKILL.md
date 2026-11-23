@@ -1,5 +1,6 @@
 ---
 name: novel-serial
+title: 长篇连载
 description: 长篇小说的分段改编流程：建章节地图 → 提候选故事弧 → 按章选段生成 → 连载续接与进度汇报
 when_to_use: 原文超过约 1.4 万字，或用户说「继续改编下一段」时
 audience: main

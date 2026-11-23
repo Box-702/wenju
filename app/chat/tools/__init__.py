@@ -5,6 +5,7 @@
 # 按域拆在这里，一个文件一个域：
 #
 #   screenplay.py   剧本域：建项目 / 章节地图 / 选段 / 初稿 / 改编 / 咨询
+#   project.py      作品域：换作品（list_projects / switch_project）
 #   source.py       原文域：读原文 / 在原文里搜关键词
 #   script_reader.py 作品文档域：read_script（剧本台本 / 目录 / 镜头 / 视觉资产）
 #   production.py   生产域：一键跑「小说 → 提示词」整条流水线
@@ -25,12 +26,13 @@ from . import (
     crew,
     memory_tools,
     production,
+    project,
     screenplay,
     script_reader,
     source,
     video,
 )
-from .context import Collector, ToolContext, short
+from .context import Collector, LONG_TEXT_CHARS, ToolContext, short
 
 
 def build_chat_tools(
@@ -48,9 +50,16 @@ def build_chat_tools(
         store=store, llm=llm, collector=collector, runner=runner,
         current_project_id=project_id,
     )
-    return [
+    if project_id:
+        current = store.get_project(project_id)
+        if current is not None:
+            raw_chars = len(current.raw_text or "")
+            collector["raw_text_chars"] = raw_chars
+            collector["long_novel"] = raw_chars > LONG_TEXT_CHARS
+    tools = [
         *memory_tools.build(ctx),
         *screenplay.build(ctx),
+        *project.build_project_tools(ctx),
         *source.build_source_tools(ctx),
         *script_reader.build(ctx),
         *asset.build_asset_tools(ctx),
@@ -60,6 +69,42 @@ def build_chat_tools(
         *video.build(ctx),
         *confirm.build(ctx),
     ]
+    # Runtime capability declarations: the loop exposes gated tools only after
+    # their workflow skill has been loaded in this conversation turn.
+    required_skills = {
+        "create_project": "script-generation", "generate_script": "script-generation",
+        "map_novel": "novel-serial", "propose_arcs": "novel-serial",
+        "plan_story": "novel-serial", "confirm_story_plan": "novel-serial",
+        "run_adaptation": "script-review", "run_script_doctor": "script-review",
+        "breakdown_scenes": "crew-pipeline", "generate_style_guide": "crew-pipeline",
+        "generate_video_prompts": "crew-pipeline",
+        "generate_reference_assets": "asset-generation", "save_asset": "asset-generation",
+        "clone_voice": "asset-generation", "attach_asset": "asset-generation",
+        "start_production": "production-delivery", "import_storyboard": "production-delivery",
+        "approve_video_prompts": "production-delivery", "submit_videos": "production-delivery",
+        "generate_video": "production-delivery", "rerun_video": "production-delivery",
+        "edit_shot_prompt": "production-delivery", "repair_prompt_dialogue": "production-delivery",
+        "replace_in_prompts": "production-delivery", "cancel_video_job": "production-delivery",
+        "finalize_film": "production-delivery", "blockout_sheet_save": "blockout",
+        "blockout_build": "blockout", "blockout_check": "blockout",
+        "switch_project": "project-switch",
+    }
+    for item in tools:
+        required = required_skills.get(getattr(item, "name", ""))
+        if required:
+            metadata = getattr(item, "metadata", None)
+            if metadata is None:
+                item.metadata = {"required_skill": required}
+            else:
+                metadata["required_skill"] = required
+    by_name = {getattr(item, "name", ""): item for item in tools}
+    if "generate_script" in by_name:
+        metadata = getattr(by_name["generate_script"], "metadata", None)
+        if metadata is None:
+            metadata = {}
+        metadata["conditional_skill"] = "novel-serial"
+        by_name["generate_script"].metadata = metadata
+    return tools
 
 
 __all__ = ["Collector", "ToolContext", "build_chat_tools", "short"]

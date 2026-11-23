@@ -106,7 +106,8 @@ def start_reference_assets(project_id: str) -> dict[str, object]:
             runner.update_step(task.id, msg, "running")
 
         refs = build_reference_assets(version.script, guide, on_progress=_progress)
-        store.merge_video_style(p.id, {"reference_images": refs})
+        from ..media.looks import register_generated_images
+        store.merge_video_style(p.id, register_generated_images(store.get_video_style(p.id) or {}, version.script, refs))
         return f"已生成 {len(refs)} 张资产图：{'、'.join(refs)}"
 
     task_id = runner.start("生成资产图", _run, project_id=p.id)

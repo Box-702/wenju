@@ -1,5 +1,6 @@
 ---
 name: blockout
+title: 白模施工
 description: 白模施工：起草施工单→对话调整→渲染白模视频（D-54）
 when_to_use: 做/改/渲染白模
 audience: main

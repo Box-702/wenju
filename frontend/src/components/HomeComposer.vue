@@ -8,7 +8,11 @@
 
 import { ref, computed, onMounted } from 'vue'
 import { nextTick } from 'vue'
-import { store, sendMessage, loadModelStatus, loadProviders, notify } from '../stores/app'
+import {
+  store, sendMessage, tryCreateDemoProjectFromHome,
+  loadModelStatus, loadProviders, loadSkills, useSkill, notify,
+  watchChatQueue,
+} from '../stores/app'
 import { uploadChatImage } from '../api'
 import ComposerCard from './ComposerCard.vue'
 
@@ -19,6 +23,8 @@ const fileInput = ref(null)
 const card = ref(null)
 const attachedImages = ref([])
 const uploadingCount = ref(0)
+const sending = ref(false)
+let draftSubmission = null
 
 // 「+」菜单：只留当前模型里真实存在的东西。
 // 旧模型那套「主体库（支持音色）」「音色库」已删——它们跟「资产库」是同一个面板，
@@ -28,13 +34,16 @@ const uploadingCount = ref(0)
 // 消息——污染用户原文、Agent 误读意图（打个「你好」收到「【小说改编】你好」）。
 // 意图本来就该由用户的话决定，前缀整链拆除（GOALS/goal prop 一并删）。
 
-const canSend = computed(() => (!!text.value.trim() || attachedImages.value.some((i) => i.id))
-  && !store.streaming && uploadingCount.value === 0)
+const canSend = computed(() => (!!text.value.trim() || attachedImages.value.some((i) => i.id) || !!store.pendingSkill)
+  && uploadingCount.value === 0 && !sending.value)
 
 onMounted(() => {
   loadModelStatus()
   // 模型下拉的候选来自这里；不拉的话下拉是空的（点了像没反应）
   loadProviders()
+  // 技能清单：「/」候选与技能 chip 的中文名都要它（与工作区输入框同口径）
+  loadSkills()
+  watchChatQueue()
 })
 
 /** 「＋」= 往这条消息里加什么：图片 / 资产引用。 */
@@ -90,16 +99,47 @@ function onAssetPicked(item) {
   refs.value = [...refs.value, { kind: item.kind, id: item.id, name: item.name }]
 }
 
-function send() {
+/** 「/」面板选中技能：挂到这条消息上（与工作区输入框同款行为，D-XX）。 */
+function onSkillPicked(skill) {
+  useSkill(skill)
+}
+
+async function send(guide = false) {
+  if (sending.value) return
   const t = text.value.trim()
-  if ((!t && !attachedImages.value.some((i) => i.id)) || store.streaming || uploadingCount.value > 0) return
+  // 只有技能引用、没写字也能发（技能就是这句话的全部意思）。
+  if ((!t && !attachedImages.value.some((i) => i.id) && !store.pendingSkill) || uploadingCount.value > 0) return
+  // 零配置时，首页「导入小说」不能发进没有模型的 Agent 后再报错；
+  // 直接创建作品并给出本地演示初稿。图片 / @引用 / 技能仍保持普通对话语义。
+  if (!guide && !attachedImages.value.length && !refs.value.length && !store.pendingSkill) {
+    try {
+      if (await tryCreateDemoProjectFromHome(t)) {
+        text.value = ''
+        return
+      }
+    } catch (e) {
+      notify(`创建演示初稿失败：${e.message}`)
+      return
+    }
+  }
   const imageIds = attachedImages.value.filter((i) => i.id).map((i) => i.id)
-  attachedImages.value.forEach((i) => URL.revokeObjectURL(i.preview))
-  text.value = ''
-  attachedImages.value = []
   const used = refs.value
-  refs.value = []
-  sendMessage(t, imageIds, used)
+  const fingerprint = JSON.stringify([store.pid, store.convId, t, imageIds, used, store.pendingSkill?.name])
+  if (draftSubmission?.fingerprint !== fingerprint) draftSubmission = { fingerprint, id: crypto.randomUUID() }
+  sending.value = true
+  try {
+    let result = await sendMessage(t, imageIds, used, guide, draftSubmission.id)
+    if (result === 'full' && !guide) {
+      if (!window.confirm('等待消息已满。中断当前回复，将这条消息作为「引导」立即发送？')) return
+      result = await sendMessage(t, imageIds, used, true, draftSubmission.id)
+    }
+    if (result !== true) return
+    draftSubmission = null
+    attachedImages.value.forEach((i) => URL.revokeObjectURL(i.preview))
+    text.value = ''
+    attachedImages.value = []
+    refs.value = []
+  } finally { sending.value = false }
   // 发送即进对话视图：首页不渲染消息流，不切过去用户会看到「输入了毫无反应」。
   // 对话优先——首页输入框是「开一部新作品的起点」，不是独立模式。
   store.mode = 'workspace'
@@ -141,12 +181,14 @@ defineExpose({ setDraft })
     ref="card"
     v-model:text="text"
     :can-send="canSend"
-    :busy="store.streaming"
-    @send="send"
+    :busy="false"
+    @send="send(false)"
     @open-settings="store.showSettings = true"
     @open-skills="emit('open-skills')"
     :assets="store.assetIndex"
+    :skills="store.skills"
     @asset-picked="onAssetPicked"
+    @skill-picked="onSkillPicked"
     @new-project="store.showNewProject = true"
   >
     <template #menu="{ close }">
@@ -192,9 +234,12 @@ defineExpose({ setDraft })
       </div>
     </template>
   </ComposerCard>
+  <button v-if="store.chatQueue.active" type="button" :disabled="!canSend"
+    class="home-guide" @click="send(true)">引导当前回复</button>
 </template>
 
 <style scoped>
+.home-guide { display: block; margin: 8px auto 0; padding: 5px 12px; cursor: pointer; }
 .hc-strip {
   display: flex;
   gap: 8px;

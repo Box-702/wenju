@@ -31,7 +31,8 @@ MAX_REFERENCE_IMAGES = 9
 # ---------- 定妆 prompt ----------
 
 
-def character_prompt(name: str, appearance: str, style: str | None = None) -> str:
+def character_prompt(name: str, appearance: str, style: str | None = None, *,
+                     identity_anchor: str = "", look_name: str = "") -> str:
     """角色定妆图 prompt：画风决定是「真人剧照」还是「二次元立绘」。
 
     写实项目的定妆照和漫剧的立绘不是同一张图——用写实的 prompt 生成漫剧角色，
@@ -39,7 +40,8 @@ def character_prompt(name: str, appearance: str, style: str | None = None) -> st
     """
     from ..pipeline.visual_styles import character_prompt as _style_prompt
 
-    return _style_prompt(name, appearance, style)
+    return _style_prompt(name, appearance, style,
+                         identity_anchor=identity_anchor, look_name=look_name)
 
 
 def environment_prompt(name: str, description: str, style: str | None = None) -> str:
@@ -52,15 +54,17 @@ def environment_prompt(name: str, description: str, style: str | None = None) ->
 # ---------- 视觉质检 ----------
 
 _QA_CHARACTER = (
-    "你在给 AI 短剧做角色定妆图质检。\n"
-    "只有以下三种情况判 FAIL（任一满足即 FAIL）：\n"
-    "A) 画面不是「单人 + 正面 + 半身」的定妆照（例如多人合影、全身远景、纯风景）；\n"
-    "B) 人物不是中国人 / 东亚面孔。\n"
-    "　（例外：若该角色按设定本就戴面具 / 头盔 / 看不到人脸，B 条不适用，不要因此判 FAIL。）\n"
-    "C) 画风与要求的「{style}」明显不符——例如要求二维动画赛璐璐上色，画出来的却是"
+    "你在给 AI 短剧做单人角色设定板质检。四个人像应是同一个角色的不同视角。\n"
+    "只有以下情况判 FAIL（任一满足即 FAIL）：\n"
+    "A) 左上缺少清楚可辨的正面头肩面部大特写，或右侧未按正面、背面、严格侧面的顺序并排展示三张从头到脚完整的全身像；\n"
+    "B) 四个视角的脸部身份、服装或身体状态明显不一致，或人物不是中国人 / 东亚面孔。\n"
+    "　（例外：若设定本就遮住人脸，不以面孔或族裔判失败；仍须检查服装、身形和遮面物一致。）\n"
+    "C) 下方缺少该造型实际存在的服饰/饰品等局部细节小图，或缺少独立的主色、辅色、点缀色纯色方块配色区；\n"
+    "D) 画风与要求的「{style}」明显不符——例如要求二维动画赛璐璐上色，画出来的却是"
     "真人照片感 / 写实电影感；或要求写实，画出来是卡通。\n"
     "　（同一大类里的流派差异不算 FAIL：同为二维，线条粗细、上色精致度不同都不拦。）\n"
-    "注意：平台水印、背景颜色、服装细节的细微出入都**不算** FAIL，不要因此判不合格。\n"
+    "E) 画面里有明显的标题、视角标签、字母或数字。\n"
+    "注意：平台自动水印、背景颜色、服装细节的细微出入都**不算** FAIL，不要因此判不合格。\n"
     "参考描述（用于确认没画错角色，不要求逐条吻合）：\n{expect}\n\n"
     "倒数第二行用一句话说明依据，最后一行只输出一个词：PASS 或 FAIL。"
 )
@@ -111,6 +115,8 @@ def build_reference_assets(
     on_progress: Any = None,
     notes: dict[str, str] | None = None,
     entities: list[str] | None = None,
+    regenerate: bool = False,
+    look_ids: list[str] | None = None,
 ) -> dict[str, str]:
     """为角色与场景生成定妆图并质检，返回 {实体id: 图片URL}。
 
@@ -145,6 +151,9 @@ def build_reference_assets(
     idx = build_index(script)
     refs: dict[str, str] = {}
     appearances = rekey(dict(getattr(style_guide, "character_appearances", {}) or {}), idx) if style_guide else {}
+    identity_anchors = rekey(dict(getattr(style_guide, "character_identity_anchors", {}) or {}), idx) if style_guide else {}
+    named_looks = dict(getattr(style_guide, "character_looks", {}) or {}) if style_guide else {}
+    prior_images = rekey(dict(getattr(style_guide, "reference_images", {}) or {}), idx) if style_guide else {}
     environments = rekey(dict(getattr(style_guide, "environment_descriptions", {}) or {}), idx) if style_guide else {}
     # 画风决定出的是「剧照」还是「立绘」：漫剧用写实 prompt 会毁掉整片一致性。
     visual_style = getattr(style_guide, "visual_style", None) if style_guide else None
@@ -153,7 +162,7 @@ def build_reference_assets(
     # 「给林然出定妆照」不该被「没有固定外貌锚」静默吞掉（锚缺失时本来就
     # 退化为名字进 prompt）。对不上角色也不对上场景的点名，如实上报后跳过。
     scoped = bool([e for e in (entities or []) if str(e or "").strip()])
-    all_ids = {c.id for c in script.characters} | {loc.id for loc in script.locations}
+    all_ids = {c.id for c in script.characters} | {loc.id for loc in script.locations} | set(named_looks)
     wanted: set[str] = set()
     for raw in entities or []:
         key = str(raw or "").strip()
@@ -172,24 +181,70 @@ def build_reference_assets(
     # 角色：优先用风格指南的固定外貌；缺失则退化为人物名（prompt 里永远写名字）
     char_ids = [c.id for c in script.characters]
     if appearances and not wanted:
-        char_ids = [cid for cid in char_ids if cid in appearances]
+        look_char_ids = {idx.resolve(raw.get("character_id")) or raw.get("character_id")
+                         for raw in named_looks.values() if isinstance(raw, dict)}
+        char_ids = [cid for cid in char_ids if cid in appearances or cid in look_char_ids]
     if wanted:
-        char_ids = [cid for cid in char_ids if cid in wanted]
+        char_ids = [cid for cid in char_ids if cid in wanted or any(
+            lid in wanted and isinstance(raw, dict)
+            and (idx.resolve(raw.get("character_id")) or raw.get("character_id")) == cid
+            for lid, raw in named_looks.items())]
     # 用户写的画面要求（按角色 id 或名字都能命中）追加在锚之后
     extra = _notes_by_entity(notes, idx)
     for cid in char_ids:
         name = idx.display(cid)
+        variants = [(lid, look) for lid, look in named_looks.items()
+                    if isinstance(look, dict)
+                    and (idx.resolve(look.get("character_id")) or look.get("character_id")) == cid
+                    and (look_ids is None or lid in look_ids)
+                    and (not wanted or cid in wanted or lid in wanted)]
+        if variants:
+            for lid, look in variants:
+                if look.get("image") and not regenerate:
+                    continue
+                description = str(look.get("description") or "").strip()
+                if not description:
+                    _emit(f"[角色·{name}·{look.get('name') or lid}] 造型描述为空，已跳过")
+                    continue
+                anchor = identity_anchors.get(cid) or appearances.get(cid, "")
+                prompt = character_prompt(name, description, visual_style,
+                                          identity_anchor=anchor, look_name=str(look.get("name") or lid))
+                other_image = next((str(refs.get(other_id) or other.get("image") or "")
+                                    for other_id, other in named_looks.items()
+                                    if other_id != lid and isinstance(other, dict)
+                                    and other.get("character_id") == cid
+                                    and (refs.get(other_id) or other.get("image"))), "")
+                if not other_image:
+                    other_image = str(prior_images.get(cid) or "")
+                refs[lid] = _generate_with_qa(
+                    provider, prompt, _QA_CHARACTER.format(
+                        expect=f"面部身份：{anchor or name}；本版造型：{description}",
+                        style=_style_label(visual_style)),
+                    kind=f"角色·{name}·{look.get('name') or lid}", vision=vision,
+                    max_retry=max_retry, emit=_emit,
+                    negative_prompt=f"{_style_negative(visual_style)}，{_NEG_COMPOSITION}",
+                    identity_reference=other_image,
+                )
+            continue
+        if look_ids is not None or any(
+            isinstance(raw, dict)
+            and (idx.resolve(raw.get("character_id")) or raw.get("character_id")) == cid
+            for raw in named_looks.values()
+        ):
+            continue
         appearance = appearances.get(cid, "")
         add = extra.get(cid, "")
         if add:
             appearance = (appearance + "；" + add).strip("； ")
-        prompt = character_prompt(name, appearance, visual_style)
-        refs[cid] = _generate_with_qa(
-            provider, prompt,
-            _QA_CHARACTER.format(expect=appearance or name, style=_style_label(visual_style)),
-            kind=f"角色·{name}", vision=vision, max_retry=max_retry, emit=_emit,
-            negative_prompt=f"{_style_negative(visual_style)}，{_NEG_COMPOSITION}",
-        )
+        if not wanted or cid in wanted:
+            prompt = character_prompt(name, appearance, visual_style,
+                                      identity_anchor=identity_anchors.get(cid, ""))
+            refs[cid] = _generate_with_qa(
+                provider, prompt,
+                _QA_CHARACTER.format(expect=appearance or name, style=_style_label(visual_style)),
+                kind=f"角色·{name}", vision=vision, max_retry=max_retry, emit=_emit,
+                negative_prompt=f"{_style_negative(visual_style)}，{_NEG_COMPOSITION}",
+            )
 
     # 场景：优先用风格指南的环境描述；缺失则退化为地点名
     loc_ids = [loc.id for loc in script.locations]
@@ -216,7 +271,7 @@ def build_reference_assets(
 # 构图排除项：实测 cogview 对正文里「不要多人/背面」的否定句不敏感，
 # 但 negative_prompt 结构化字段有效（2026-11-10 质检 FAIL 依据几乎全是构图跑偏）。
 # 否定句写正文会反噬（模型把「不要背面」听成「背面」）——排除项走字段，不走文字。
-_NEG_COMPOSITION = "多人，合影，背面，背影，侧背影，远景，全身远景，俯拍"
+_NEG_COMPOSITION = "不同人物，脸部不一致，服装不一致，缺失四视角，身体裁切，文字标签，水印，杂乱背景"
 _NEG_EMPTY_PLATE = "人物，人像，角色，行人"
 
 
@@ -256,6 +311,7 @@ def _generate_with_qa(
     max_retry: int,
     emit: Any,
     negative_prompt: str = "",
+    identity_reference: str = "",
 ) -> str:
     """生成 → 质检 → 不合格重试；返回最终采用的图片 URL。
 
@@ -270,7 +326,14 @@ def _generate_with_qa(
             emit(f"[{kind}] 已生成（未配置视觉模型，跳过质检）")
             return url
         try:
-            text = vision.ask(url, qa_question)
+            if identity_reference:
+                text = vision.ask(
+                    [identity_reference, url],
+                    qa_question + "\n第1张是同角色其他造型的参考，第2张是本次设定板。"
+                    "如两张正面面孔明显不是同一人物，也判 FAIL；服装、发型、受伤状态等版本差异不算 FAIL。",
+                )
+            else:
+                text = vision.ask(url, qa_question)
             ok, reason = _verdict(text)
         except Exception as e:  # noqa: BLE001
             emit(f"[{kind}] 质检调用失败，保留该图：{e}")
@@ -290,17 +353,25 @@ def apply_reference_images(
     shots: list[Shot],
     refs: dict[str, str],
     script: Script,
+    *,
+    style: dict[str, Any] | None = None,
+    shot_plan: list[Shot] | None = None,
 ) -> int:
     """把注册好的参考图按「场景 → 环境图」「人物 → 角色图」回填到每个镜头。
 
     返回被填充的镜头数。
     """
-    if not refs:
+    if not refs and not any((style or {}).get(key) for key in
+                            ("character_looks", "scene_look_ids", "shot_look_ids")):
         return 0
     # 注册表可能来自老版本（名字键）或新版本（id 键）：先统一成 id 键再查。
     idx = build_index(script)
     refs = rekey(refs, idx)
     scene_map = {sc.id: sc for sc in script.scenes}
+    from .looks import all_looks, selected_look
+
+    looks = all_looks(style or {"reference_images": refs}, script)
+    plan = shot_plan or shots
 
     filled = 0
     for shot in shots:
@@ -312,7 +383,11 @@ def apply_reference_images(
         if env_url:
             urls.append(env_url)
         for cid in sc.characters:
-            url = refs.get(cid) or refs.get(idx.display(cid))
+            if not any(v.get("character_id") == cid for v in looks.values()) and not (style or {}).get("character_looks"):
+                continue
+            look = selected_look(character_id=cid, scene=sc, shot=shot,
+                                 looks=looks, shot_plan=plan, style=style)
+            url = str(look.get("image") or "")
             if url and url not in urls:
                 urls.append(url)
         if urls:

@@ -1,5 +1,6 @@
 ---
 name: asset-generation
+title: 生成资产
 description: 生成角色定妆照 / 场景图 / 角色音色的完整流程——先问清范围与要求，给用户逐项确认后再生成
 when_to_use: 用户要生成定妆照、角色画像、场景参考图或角色音色，或说「给某某生成资产」「把他的定妆照重新出一版」
 audience: main

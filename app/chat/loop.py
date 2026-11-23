@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
@@ -34,7 +35,7 @@ from ..llm import LLM
 
 log = logging.getLogger(__name__)
 
-#: 一轮对话里最多跑几轮工具。防止模型在工具之间来回打转。
+#: 全量工具目录数；每次模型调用只绑定基础工具与本轮已加载技能的能力。
 MAX_TOOL_STEPS = 8
 
 #: 消息里的文本截断长度（事件上报用）
@@ -186,6 +187,7 @@ class AgentLoop:
         max_steps: int = MAX_TOOL_STEPS,
         has_images: bool = False,
         current_project_id: str | None = None,
+        interrupted: Any = None,
     ) -> None:
         self.llm = llm
         self.tools = list(tools)
@@ -193,6 +195,7 @@ class AgentLoop:
         self.has_images = has_images
         # 本轮对话所属的作品：模型漏传/传空 project_id 时用它兜底。
         self.current_project_id = current_project_id or ""
+        self.interrupted = interrupted or (lambda: False)
         # 工具运行期写入的收集器（可选）：本轮中途建了作品时，兜底值跟着走。
         self.collector: dict[str, Any] | None = None
         self._by_name = {getattr(t, "name", ""): t for t in self.tools if getattr(t, "name", "")}
@@ -231,24 +234,27 @@ class AgentLoop:
         return self.llm.chat_multimodal() if self.has_images else self.llm.chat()
 
     def _run(self, messages: list[dict[str, Any]], *, stream: bool) -> Iterator[LoopEvent]:
+        run_id = uuid.uuid4().hex
         model = self._model()
         if model is None:
             text = (
-                "当前没有配置对话模型（在 .env 设置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY 后重启）。"
+                "当前没有配置对话模型。请到「设置 → 模型」添加厂商与 Key。"
                 "不过审阅动作（接受 / 拒绝 / 重新生成）仍然可用；"
-                "也可以先用 REST / CLI 方式新建项目并生成初稿。"
+                "也可以通过「新建作品」导入原文，系统会先生成演示初稿。"
             )
             yield LoopEvent("_complete", {"text": text})
             yield LoopEvent("token", {"delta": text})
             return
 
-        bound = model.bind_tools(self.tools) if self.tools else model
         # 整轮时间预算：超限按「工具轮数超限」同款方式优雅收尾（保正文、不再开新步）。
         deadline = time.monotonic() + _TURN_WALL_CLOCK
         # 基线边界：进来时已有 system/摘要/历史/本轮输入；预算兜底只动这个边界之前。
         keep_from = len(messages)
 
         for _step in range(self.max_steps + 1):
+            if self.interrupted():
+                yield LoopEvent("_interrupted", {})
+                return
             # 最后一轮不再执行工具：把预算收在回答上，而不是又开一轮工具。
             if _step >= self.max_steps:
                 text = "这轮工具调用有点多，先停在这里。你可以继续说一句，我接着处理。"
@@ -264,7 +270,25 @@ class AgentLoop:
                 return
 
             keep_from = _fit_turn_budget(messages, keep_from)
+            available = self._available_tools()
+            bound = model.bind_tools(available) if available else model
+            exposed_schema_count = len(available)
+            context_chars = sum(_msg_chars(message) for message in messages)
+            model_started = time.monotonic()
             resp = yield from self._call(bound, messages, stream=stream)
+            if self.interrupted():
+                yield LoopEvent("_interrupted", {})
+                return
+            usage = getattr(resp, "usage_metadata", None) or {}
+            if not usage:
+                usage = (getattr(resp, "response_metadata", None) or {}).get("token_usage", {})
+            if usage:
+                yield LoopEvent("model_usage", {
+                    "run_id": run_id,
+                    "input_tokens": int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0),
+                    "output_tokens": int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0),
+                    "duration_ms": round((time.monotonic() - model_started) * 1000),
+                })
             text = _msg_text(getattr(resp, "content", None))
             calls = list(getattr(resp, "tool_calls", None) or [])
 
@@ -274,14 +298,22 @@ class AgentLoop:
                 return
 
             for call in calls:
+                if self.interrupted():
+                    yield LoopEvent("_interrupted", {})
+                    return
                 name = str(call.get("name") or "")
                 args = call.get("args") if isinstance(call.get("args"), dict) else {}
                 call_id = str(call.get("id") or "")
                 yield LoopEvent("tool_call", {
                     "name": name,
                     "args": short(json.dumps(args, ensure_ascii=False), 200),
+                    "run_id": run_id,
+                    "tool_schema_count": exposed_schema_count,
+                    "context_chars": context_chars,
                 })
+                started = time.monotonic()
                 result = self._invoke_tool(name, args)
+                duration_ms = round((time.monotonic() - started) * 1000)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call_id,
@@ -291,6 +323,10 @@ class AgentLoop:
                 yield LoopEvent("tool_result", {
                     "name": name,
                     "summary": short(result, _EVENT_TEXT_LIMIT),
+                    "run_id": run_id,
+                    "duration_ms": duration_ms,
+                    "failed": result.startswith(("工具执行失败：", "未知工具：", "尚未加载技能")),
+                    "timed_out": "TimeoutError" in result or "超时" in result,
                 })
 
     def _call(self, bound: Any, messages: list[dict[str, Any]], *, stream: bool):
@@ -301,6 +337,8 @@ class AgentLoop:
 
         acc: Any = None
         for chunk in bound.stream(lc):
+            if self.interrupted():
+                break
             if acc is None:
                 acc = chunk
             else:
@@ -338,6 +376,17 @@ class AgentLoop:
         tool = self._by_name.get(name)
         if tool is None:
             return f"未知工具：{name}。可用工具：{', '.join(sorted(self._by_name)) or '无'}"
+        required = (getattr(tool, "metadata", None) or {}).get("required_skill")
+        loaded = (self.collector or {}).get("loaded_skills", [])
+        required_skills = [required] if isinstance(required, str) else list(required or [])
+        metadata = getattr(tool, "metadata", None) or {}
+        conditional = metadata.get("conditional_skill")
+        if conditional and (self.collector or {}).get("long_novel"):
+            required_skills.append(conditional)
+        missing = [skill for skill in required_skills if skill not in loaded]
+        if missing:
+            skill = missing[0]
+            return f"尚未加载技能「{skill}」，本次未执行。请先调用 load_skill(name='{skill}')，读完细则后再重试。"
         # 模型常把 project_id 漏掉或传空（实测：get_status("") 会答「还没有剧本版本」）。
         # 这里是唯一的收口处：所有声明了 project_id 的作品级工具统一补上当前作品。
         # 当前作品**动态读 collector**：本轮 create_project 之后，
@@ -357,6 +406,23 @@ class AgentLoop:
         if isinstance(result, str):
             return result
         return str(result)
+
+    def _available_tools(self) -> list[Any]:
+        """只向模型公开基础工具及本轮已解锁的技能能力。"""
+        loaded = set((self.collector or {}).get("loaded_skills", []))
+        return [
+            tool for tool in self.tools
+            if self._tool_skills(tool) <= loaded
+        ]
+
+    def _tool_skills(self, tool: Any) -> set[str]:
+        metadata = getattr(tool, "metadata", None) or {}
+        required = metadata.get("required_skill")
+        skills = {required} if isinstance(required, str) else set(required or [])
+        conditional = metadata.get("conditional_skill")
+        if conditional and (self.collector or {}).get("long_novel"):
+            skills.add(conditional)
+        return skills
 
 
 # ---------------------------------------------------------------------

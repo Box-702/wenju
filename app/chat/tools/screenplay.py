@@ -45,6 +45,9 @@ def build(ctx: ToolContext) -> list:
             raw_text=(raw_text or "").strip(),
         )
         ctx.collector["project_id"] = p.id
+        raw_chars = len(p.raw_text or "")
+        ctx.collector["raw_text_chars"] = raw_chars
+        ctx.collector["long_novel"] = raw_chars > LONG_TEXT_CHARS
         label = ADAPT_TYPE_LABELS.get(name, name)
         # 作者风格只做规则画像（无网络调用），避免对话轮次被额外 LLM 调用拖慢
         try:

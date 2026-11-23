@@ -356,6 +356,7 @@ class Scene(BaseModel):
     location_id: str = Field(pattern=r"^loc_[a-z0-9_]+$")
     time: str | None = None
     characters: list[str] = Field(min_length=1)
+    character_look_ids: dict[str, str] = Field(default_factory=dict)  # 本场默认造型
     purpose: str
     conflict: str
     entry_state: str | None = None
@@ -486,6 +487,7 @@ class Shot(BaseModel):
 
     id: str = Field(pattern=r"^shot_[a-z0-9_]+_\d{3,}$")
     scene_id: str = Field(pattern=r"^scene_[0-9]{3,}$")
+    character_look_ids: dict[str, str] = Field(default_factory=dict)  # 覆盖场景默认造型
     order: int = Field(ge=0)
     shot_type: ShotType = "medium"
     camera: CameraMovement = Field(default_factory=CameraMovement)
@@ -577,8 +579,11 @@ class StyleGuide(BaseModel):
     visual_style: VisualStyle = "realistic"
     visual_references: list[str] = Field(default_factory=list)
     character_appearances: dict[str, str] = Field(default_factory=dict)
+    character_identity_anchors: dict[str, str] = Field(default_factory=dict)
+    character_identity_anchors: dict[str, str] = Field(default_factory=dict)  # 跨造型共用的脸部身份
     environment_descriptions: dict[str, str] = Field(default_factory=dict)
     reference_images: dict[str, str] = Field(default_factory=dict)
+    character_looks: dict[str, dict] = Field(default_factory=dict)
     # 空间锚：{scene_id::group_id: 空间锚文字}，来自白模施工单（D-56）。
     # 与其它锚同性质——下游逐字复用，不允许模型改写。
     spatial_anchors: dict[str, str] = Field(default_factory=dict)

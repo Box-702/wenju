@@ -99,8 +99,10 @@ evals/
 ├── judge_prompt.md     # judge 提示词正文（与 runner.py 的 JUDGE_SYSTEM 同步）
 ├── assertions.py       # 确定性断言库
 ├── cases.py            # 10 条 golden case
+├── agent_cases.json    # 对话 Agent 固定轨迹集（工具选择 / 技能 / 确认停点 / 事实约束 / 长篇）
 ├── runner.py           # 引擎：跑链路 → 断言 → judge → 报告
 ├── run.py              # 命令行入口
+├── agent_online.py     # 对话 Agent 预算闸门评测（仅 --budget-cny 显式开启）
 ├── test_eval.py        # pytest 入口
 ├── fixtures/           # 录制的真实产出（离线回归用）
 ├── reports/            # 跑完存下的 JSON 报告（基线留档，用于前后对比）
@@ -108,6 +110,11 @@ evals/
 ├── skill_cases.py      # 技能加载用例（触发 / 串味 / 依赖顺序 / 前置）
 └── skill_eval.py       # 技能加载 eval：消融对比（有技能 vs 屏蔽 load_skill）
 ```
+
+`agent_cases.json` 是后续真实模型评测的固定验收输入与轨迹断言。先用离线工具循环测试锁住
+闸门行为；线上轨迹评测要逐例记录工具序列、延迟、成本和失败分类，只有在预算获确认后再执行。
+只跑对话 Agent 固定用例可执行 `python -m evals.agent_online --budget-cny 20`；它从当前设置读取默认聊天模型，
+禁用媒体生成 schema、把其余有副作用工具替换成安全桩，并按峰时单价保守估算成本后逐例报告。
 
 ## 另一套 eval：技能加载（消融对比）
 

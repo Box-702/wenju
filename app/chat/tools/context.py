@@ -48,6 +48,9 @@ class Collector(TypedDict, total=False):
     project_id: str | None
     conversation_id: str | None
     payloads: list[dict[str, Any]]
+    loaded_skills: list[str]
+    raw_text_chars: int
+    long_novel: bool
 
 
 @dataclass

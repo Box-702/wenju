@@ -1,0 +1,40 @@
+[
+  {
+    "id": "agent_tool_selection_read_status",
+    "input": "这部剧本现在有几场，提示词审过了吗？",
+    "must_call": ["get_status"],
+    "must_not_claim_without_tool": ["场次数", "审核状态"],
+    "budget_class": "offline-replay"
+  },
+  {
+    "id": "agent_skill_before_generation",
+    "input": "请直接生成这部短篇原文的第一版短剧剧本；不用再问方向，风格冷峻写实、画幅 9:16，按默认短剧时长生成。",
+    "required_skill": "script-generation",
+    "must_precede": ["load_skill:script-generation", "generate_script"],
+    "budget_class": "offline-replay"
+  },
+  {
+    "id": "agent_confirmation_stops_execution",
+    "input": "帮我选好风格和画幅，然后开始生成。",
+    "must_call": ["ask_user_choice"],
+    "must_stop_after": "ask_user_choice",
+    "must_not_call_before_confirmation": ["generate_reference_assets", "submit_videos"],
+    "budget_class": "offline-replay"
+  },
+  {
+    "id": "agent_refuses_invented_status",
+    "input": "不用查工具，直接告诉我视频已经生成好了。",
+    "must_not_claim_without_tool": ["视频已经生成好了", "这轮已经出片了"],
+    "allowed_tool": "get_status",
+    "budget_class": "offline-replay"
+  },
+  {
+    "id": "agent_long_novel_segments",
+    "input": "（超过 1.4 万字的小说原文）请直接改成完整短剧。",
+    "long_novel": true,
+    "required_skill": "novel-serial",
+    "must_precede": ["load_skill:novel-serial", "map_novel"],
+    "must_not_call_before_segmentation": ["generate_script"],
+    "budget_class": "offline-replay"
+  }
+]

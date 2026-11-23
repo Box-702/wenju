@@ -14,7 +14,7 @@ import { ref, computed, watch, nextTick } from 'vue'
 import MessageItem from './MessageItem.vue'
 import StatusStrip from './StatusStrip.vue'
 import WelcomeHero from './WelcomeHero.vue'
-import { store, focusComposer } from '../stores/app'
+import { store, focusComposer, withdrawQueuedMessage } from '../stores/app'
 import AppIcon from './AppIcon.vue'
 
 const thread = ref(null)        // 滚动容器
@@ -25,6 +25,7 @@ const isFirstRun = computed(() => !store.pid && !store.messages.length)
 
 // 编辑态空对话：已有项目但当前对话为空——给轻量空态，不回大开始页。
 const projectName = computed(() => store.projects.find((p) => p.id === store.pid)?.title || '')
+const hasChatModel = computed(() => store.modelInfo?.available === true)
 
 // 编辑态示例：点击填入输入框（不自动发送）。
 // 按流水线阶段给下一步（即梦的空态建议就是这个思路：给「流程里的下一步」，
@@ -80,8 +81,9 @@ watch(() => store.messages.length, () => { nearBottom.value = true; toBottom() }
         <!-- 编辑态空对话：轻量空态（项目上下文 + 下一步示例） -->
         <div v-else-if="!store.messages.length" class="editing-empty">
           <p class="ee-title">{{ projectName ? `《${projectName}》` : '新的对话' }}</p>
-          <p class="ee-sub">从这里继续。可以从下面任选一步，也可以直接描述你的想法。</p>
-          <div class="ee-suggestions" role="list" aria-label="下一步建议">
+          <p v-if="hasChatModel" class="ee-sub">从这里继续。可以从下面任选一步，也可以直接描述你的想法。</p>
+          <p v-else class="ee-sub">演示初稿已生成。配置模型后，可继续做分集、拆分镜和提示词。</p>
+          <div v-if="hasChatModel" class="ee-suggestions" role="list" aria-label="下一步建议">
             <button
               v-for="s in SUGGESTIONS"
               :key="s"
@@ -90,13 +92,18 @@ watch(() => store.messages.length, () => { nearBottom.value = true; toBottom() }
               @click="fillSuggestion(s)"
             >{{ s }}</button>
           </div>
-          <button class="ee-focus" @click="focusComposer()">输入我的想法</button>
+          <button v-if="hasChatModel" class="ee-focus" @click="focusComposer()">输入我的想法</button>
+          <button v-else class="ee-focus" @click="store.showSettings = true">配置模型</button>
         </div>
 
         <!-- 消息列表 -->
         <template v-else>
           <MessageItem v-for="(m, i) in store.messages" :key="i" :message="m" />
         </template>
+        <div v-for="item in store.chatQueue.waiting" :key="item.id" class="queued-message">
+          <span>排队第 {{ item.position }} 条{{ item.guide ? ' · 引导' : '' }}：{{ item.message }}</span>
+          <button type="button" @click="withdrawQueuedMessage(item.id)">撤回</button>
+        </div>
       </div>
     </div>
 
@@ -109,6 +116,9 @@ watch(() => store.messages.length, () => { nearBottom.value = true; toBottom() }
 .thread-wrap { flex: 1; min-height: 0; position: relative; display: flex; }
 .thread { flex: 1; overflow-y: auto; padding: 28px clamp(var(--space-4), 4vw, 42px) 14px; }
 .thread-inner { max-width: var(--thread-w); margin: 0 auto; }
+.queued-message { display: flex; justify-content: space-between; gap: 12px; padding: 10px;
+  margin: 8px 0; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--muted); }
+.queued-message button { flex: none; cursor: pointer; }
 .thread-inner { max-width: var(--thread-w); margin: 0 auto; }
 
 /* 编辑态空对话：轻量、有上下文、有下一步 */

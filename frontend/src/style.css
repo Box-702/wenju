@@ -297,8 +297,7 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 @keyframes blink { 0%, 80%, 100% { opacity: 0.2; } 40% { opacity: 1; } }
 
 /* ---------- Markdown 渲染 ---------- */
-.md h1, .md h2, .md h3, .md h4 { color: var(--ink); margin: 14px 0 8px; line-height: 1.35; }
-.md h1 { font-size: 20px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.md h1, .md h2, .md h3, .md h4 { color: var(--ink); margin: 14px 0 8px; line-height: 1.35; }.md h1 { font-size: 20px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
 .md h2 { font-size: 17.5px; }
 .md h3 { font-size: 16px; }
 .md h4 { font-size: 15px; }
@@ -324,6 +323,24 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 .md hr { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
 .md a { color: var(--gold); text-decoration: underline; text-underline-offset: 3px; }
 .md a:hover { color: var(--ink); }
+
+/* ---------- 技能 chip：对话正文里被引用的技能 ----------
+   「【技能：xxx】」标记渲染成带前缀星标的胶囊 —— 一眼看出这条消息
+   是技能触发的。样式必须放全局：正文是 v-html 注入的，节点拿不到
+   scoped 属性（用户气泡 .cmd-text 也没有 .md class）。
+   用金色描边 + 微光底，和普通文字区分开但不抢戏。 */
+.skill-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 8px 1px 6px; margin: 0 2px;
+  border: 1px solid color-mix(in oklch, var(--gold) 42%, transparent);
+  border-radius: 999px;
+  background: var(--gold-soft);
+  color: var(--gold);
+  font-size: 0.92em; line-height: 1.5;
+  white-space: nowrap; vertical-align: baseline;
+}
+.skill-chip .skill-ic { width: 1em; height: 1em; flex: none; opacity: 0.9; }
+.skill-chip .skill-name { font-weight: 500; }
 
 /* ---------- 分类页签：编号 + 文字 + 底部亮线（全站复用这套） ----------
    原来是「圆角容器 + 胶囊高亮」（分段控件），用户不喜欢胶囊感；

@@ -77,6 +77,8 @@ def build_library(
     # 五份资产统一成「按实体 id 索引」再往下走：老项目存的是名字键，这里顺手换掉。
     style = normalize_style(style, script)
     idx = build_index(script)
+    from .looks import all_looks, base_id
+    looks = all_looks(style, script)
     appearances = dict(style.get("character_appearances") or {})
     environments = dict(style.get("environment_descriptions") or {})
     images = dict(style.get("reference_images") or {})
@@ -114,6 +116,11 @@ def build_library(
         if m.char_id:
             item["note"] = art_notes.get(m.char_id, "")
             item["voice_note"] = voice_notes.get(m.char_id, "")
+            item["looks"] = [v for v in looks.values() if v.get("character_id") == m.char_id]
+            base = looks.get(base_id(m.char_id))
+            if base:
+                item["image"] = base.get("image") or ""
+                item["has_image"] = bool(item["image"])
         characters.append(item)
     # 台词量降序，方便一眼看出谁是主要角色（资产库是给人看的，不是给程序）。
     characters.sort(key=lambda x: (-x["speech_chars"], x["name"]))
@@ -257,7 +264,17 @@ def apply_library_patch(
         if "image" in change:
             img = str(change.get("image") or "").strip()
             if img:
-                images[k] = img
+                if images.get(k) or any(v.get("character_id") == k and v.get("image")
+                                        for v in (merged.get("character_looks") or {}).values() if isinstance(v, dict)):
+                    from uuid import uuid4
+                    looks = dict(merged.get("character_looks") or {})
+                    lid = f"look_{uuid4().hex[:12]}"
+                    looks[lid] = {"id": lid, "character_id": k, "name": "上传造型",
+                                  "description": appearances.get(k, ""), "image": img,
+                                  "available_from_shot_id": "", "status": "ready"}
+                    merged["character_looks"] = looks
+                else:
+                    images[k] = img
             else:
                 images.pop(k, None)
         if "note" in change:

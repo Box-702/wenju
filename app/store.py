@@ -1352,6 +1352,25 @@ class Store:
             s.refresh(c)
             return c
 
+    def move_conversation_to_project(self, conversation_id: str, project_id: str) -> Conversation | None:
+        """把会话改挂到另一部作品下（会话 id 不变，只换归属）。
+
+        用于「在对话里换作品」：这段对话连同历史一起转到目标作品，
+        界面不跳、消息流连续。作品是容器，会话只有一个归属——
+        改挂后原作品下就不再有这个会话（不变式「每部作品一个对话」仍成立）。
+        """
+        with self.session() as s:
+            c = s.get(Conversation, conversation_id)
+            if c is None:
+                return None
+            if s.get(Project, project_id) is None:
+                raise ValueError(f"作品不存在：{project_id}")
+            c.project_id = project_id
+            c.updated_at = _now()
+            s.commit()
+            s.refresh(c)
+            return c
+
     def delete_conversation(self, conversation_id: str) -> bool:
         with self.session() as s:
             c = s.get(Conversation, conversation_id)
@@ -1832,8 +1851,23 @@ class Store:
             return s.query(ModelPreference).filter_by(task_type=task_type, is_default=True).first()
 
     def list_model_preferences(self) -> list[ModelPreference]:
+        """列出全部偏好。
+
+        排序要保证「当前默认」排在同类里的第一位：前端按「第一个匹配的
+        行」取当前偏好（历史上就是这么写的），如果默认行不在前面，界面会
+        一直显示第一次选的厂商——用户点了「设为默认」看着毫无变化，
+        以为切换不了（2026-11-22 实测踩过）。
+        """
         with self.session() as s:
-            return s.query(ModelPreference).order_by(ModelPreference.task_type).all()
+            return (
+                s.query(ModelPreference)
+                .order_by(
+                    ModelPreference.task_type,
+                    ModelPreference.is_default.desc(),
+                    ModelPreference.created_at.desc(),
+                )
+                .all()
+            )
 
     def clear_model_preference(self, task_type: str) -> int:
         """清除某类任务的模型偏好，返回删掉的行数。
@@ -1868,6 +1902,21 @@ class Store:
             # 先清除同类型的旧默认
             if is_default:
                 s.query(ModelPreference).filter_by(task_type=task_type, is_default=True).update({"is_default": False})
+            # 同一家厂商已经有偏好行就改那一行，别每次切换都插一条新行：
+            # 行一多，「取第一条」的读法就永远拿不到真正的默认值（2026-11-22 实测）。
+            same = (
+                s.query(ModelPreference)
+                .filter_by(task_type=task_type, provider_id=provider_id)
+                .order_by(ModelPreference.created_at.desc())
+                .first()
+            )
+            if same is not None:
+                same.model_name = model_name
+                same.params_json = json.dumps(params or {}, ensure_ascii=False)
+                same.is_default = is_default
+                s.commit()
+                s.refresh(same)
+                return same
             pref = ModelPreference(
                 id=gen_id("pref"),
                 task_type=task_type,

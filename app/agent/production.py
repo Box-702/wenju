@@ -187,6 +187,8 @@ def build_production_graph(
         # 浅合并会清空资产库已注册的定妆照（2026-11-11 审计，同 chat/tools/crew.py）。
         patch = result.data.model_dump()
         patch.pop("reference_images", None)
+        patch.pop("character_looks", None)
+        patch.pop("character_identity_anchors", None)
         store.merge_video_style(p.id, patch)
         _report("style", f"风格指南完成：{len(result.data.character_appearances)} 人物锚 / "
                          f"{len(result.data.environment_descriptions)} 环境锚")
@@ -216,7 +218,8 @@ def build_production_graph(
         from ..media.refs import build_reference_assets
 
         refs = build_reference_assets(script, guide, on_progress=lambda m: _report("refs", m))
-        store.merge_video_style(p.id, {"reference_images": refs})
+        from ..media.looks import register_generated_images
+        store.merge_video_style(p.id, register_generated_images(store.get_video_style(p.id) or {}, script, refs))
         _report("refs", f"资产库就绪：{len(refs)} 张图")
         return {
             "stage": "refs", "refs_count": len(refs),

@@ -513,8 +513,11 @@ def submit_video_job(project_id: str, payload: VideoJobCreate) -> tuple[Any, boo
         for url in _manual_reference_videos(project_id, shot_refs):
             if url not in manual_reference_videos:
                 manual_reference_videos.append(url)
-    _auto_references(project_id, payload.shot_id, payload.version_id, stored_params,
-                     provider=payload.provider)
+    try:
+        _auto_references(project_id, payload.shot_id, payload.version_id, stored_params,
+                         provider=payload.provider)
+    except ValueError as e:
+        raise HTTPException(409, f"请先确认镜头造型：{e}") from e
 
     # 用量摘要（D-53）：界面不再展示费用估算——预估与实付脱节只会伤信任
     # （导入回执「预估 ¥3.6」vs 实付 ¥27.7 的教训）。落库三类创作者数量：
@@ -776,7 +779,8 @@ def _auto_references(project_id: str, shot_id: str | None, version_id: str | Non
     url_provider: dict[str, str] = {}
     for j in jobs:
         url_provider.setdefault(str(j.video_url), str(getattr(j, "provider", "") or ""))
-    registry = dict((store.get_video_style(project_id) or {}).get("reference_images") or {})
+    style = store.get_video_style(project_id) or {}
+    registry = dict(style.get("reference_images") or {})
 
     script = None
     try:
@@ -797,8 +801,39 @@ def _auto_references(project_id: str, shot_id: str | None, version_id: str | Non
         shot_plan=[s for s in version.shots if isinstance(s, dict)],
         completed_urls=completed_urls,
         image_registry=registry,
+        style=style,
         script=script,
     )
+    if script is not None and (style.get("character_looks") or style.get("scene_look_ids") or style.get("shot_look_ids")):
+        from ..domain import Shot
+        from ..media.looks import all_looks, selected_look
+        from ..media.refs import apply_reference_images
+
+        raw_head = next((s for s in version.shots if isinstance(s, dict) and s.get("id") == shot_id), {})
+        gid = raw_head.get("group_id")
+        members = [s for s in version.shots if isinstance(s, dict) and s.get("group_id") == gid
+                   and s.get("scene_id") == raw_head.get("scene_id")] if gid else [raw_head]
+        plan = [Shot.model_validate(s) for s in version.shots if isinstance(s, dict)]
+        scenes = {s.id: s for s in script.scenes}
+        looks = all_looks(style, script)
+        used: dict[str, str] = {}
+        images: list[str] = []
+        for raw in members:
+            member = Shot.model_validate(raw)
+            scene = scenes.get(member.scene_id)
+            if scene is None:
+                continue
+            for cid in scene.characters:
+                look = selected_look(character_id=cid, scene=scene, shot=member,
+                                     looks=looks, shot_plan=plan, style=style)
+                if not look:
+                    continue
+                if cid in used and used[cid] != look["id"]:
+                    raise ValueError(f"镜头组内角色 {cid} 使用不同造型，请拆组后出片")
+                used[cid] = look["id"]
+            apply_reference_images([member], registry, script, style=style, shot_plan=plan)
+            images.extend(member.reference_images)
+        refs["reference_images"] = list(dict.fromkeys(images))[:9]
     # 参考视频：用户挑的参考素材（本地文件）+ 自动接力的前镜成片（公网直链）合并。
     # 服务商最多收 3 条（实测超了报「参考视频最多 3 个」），按「显式 > 接力」填满。
     # 这里只存 URL；接力片段的计费裁剪（尾部 2.5s）在投递时由 _job_params 做，
@@ -814,9 +849,10 @@ def _auto_references(project_id: str, shot_id: str | None, version_id: str | Non
         if url and url not in merged:
             merged.append(url)
     stored_params["reference_videos"] = merged[:3]
-    for key in ("reference_images",):
-        if refs.get(key) and not stored_params.get(key):
-            stored_params[key] = refs[key]
+    if script is not None and (style.get("character_looks") or style.get("scene_look_ids") or style.get("shot_look_ids")):
+        stored_params["reference_images"] = refs.get("reference_images") or []
+    elif refs.get("reference_images") and not stored_params.get("reference_images"):
+        stored_params["reference_images"] = refs["reference_images"]
     # relay_providers 只记接力锚的出身（本机回放地址的手挑素材不在其中）；
     # 没有出身的 URL 进不了映射，_job_params 侧就拿不到信任传递——
     # 任意公网 URL + provider=seedance 不再被无条件放行。
@@ -1003,7 +1039,19 @@ def _unit_intent(
     # 比对侧算同一份，否则注册表回填过的任务永远被判「意图不同」。
     raw_images = list(dict.fromkeys(
         u for m in members for u in (m.get("reference_images") or []) if u))
-    if raw_images:
+    style = deps.store().get_video_style(project_id) or {}
+    if script is not None and (style.get("character_looks") or style.get("scene_look_ids") or style.get("shot_look_ids")):
+        from ..domain import Shot
+        from ..media.refs import apply_reference_images
+
+        plan = [Shot.model_validate(s) for s in version_shots if isinstance(s, dict)]
+        selected_images: list[str] = []
+        for raw in members:
+            selected = Shot.model_validate(raw)
+            apply_reference_images([selected], registry, script, style=style, shot_plan=plan)
+            selected_images.extend(selected.reference_images)
+        intent_images = list(dict.fromkeys(selected_images)) or None
+    elif raw_images:
         intent_images: list[str] | None = raw_images
     else:
         from .continuity import resolve_submission_references

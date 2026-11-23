@@ -1,0 +1,498 @@
+{
+  "provider": "minimax",
+  "model": "deepseek-flash",
+  "cases": 11,
+  "critical_total": 7,
+  "warn_total": 43,
+  "blocked_total": 0,
+  "failed_total": 0,
+  "judge_average": null,
+  "passed": false,
+  "by_rule": {
+    "LNG-04": 22,
+    "DPT-15": 17,
+    "DIR-01": 5,
+    "DPT-06": 2,
+    "DPT-13": 1,
+    "DIR-10": 1,
+    "DIR-12": 1,
+    "DPT-08": 1
+  },
+  "avg_dims": {},
+  "results": [
+    {
+      "case": "single_pressure",
+      "name": "单人压迫戏",
+      "ok": true,
+      "blocked": false,
+      "error": "",
+      "note": "",
+      "shots": 6,
+      "critical": 0,
+      "warn": 3,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_000",
+          "message": "提示词里同一句出现两遍：「亭内一盏残存钨丝顶灯从正上方投下昏黄光」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-13",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_002",
+          "message": "光源被换掉（分镜写「荧光灯」，提示词写「街灯、钨丝」）：同一场的光源变了，跨镜脸光会跳"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_002",
+          "message": "分镜光线的光源和风格指南冲突（分镜「荧光灯」，风格指南「街灯、钨丝」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        }
+      ],
+      "judge": []
+    },
+    {
+      "case": "dialogue_tension",
+      "name": "对峙对话戏",
+      "ok": true,
+      "blocked": false,
+      "error": "",
+      "note": "",
+      "shots": 5,
+      "critical": 0,
+      "warn": 6,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_000",
+          "message": "提示词里同一句出现两遍：「窗外街灯冷光从侧后方渗入」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_000",
+          "message": "分镜光线的光源和风格指南冲突（分镜「灯管、白炽」，风格指南「灯泡、窗、街灯、钨丝」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_001",
+          "message": "分镜光线的光源和风格指南冲突（分镜「灯管」，风格指南「灯泡、窗、街灯、钨丝」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_002",
+          "message": "分镜光线的光源和风格指南冲突（分镜「灯管」，风格指南「灯泡、窗、街灯、钨丝」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_003",
+          "message": "分镜光线的光源和风格指南冲突（分镜「灯管」，风格指南「灯泡、窗、街灯、钨丝」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_004",
+          "message": "分镜光线的光源和风格指南冲突（分镜「灯管」，风格指南「灯泡、窗、街灯、钨丝」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        }
+      ],
+      "judge": []
+    },
+    {
+      "case": "contact_action",
+      "name": "接触动作戏",
+      "ok": true,
+      "blocked": false,
+      "error": "",
+      "note": "",
+      "shots": 5,
+      "critical": 0,
+      "warn": 3,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [
+        {
+          "rule": "DPT-06",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_000",
+          "message": "疑似一镜多运镜（下摇、跟随）：一镜只保留一种主要运动"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_001",
+          "message": "分镜光线的光源和风格指南冲突（分镜「窗」，风格指南「日光、灯管」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_002",
+          "message": "分镜光线的光源和风格指南冲突（分镜「窗」，风格指南「日光、灯管」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        }
+      ],
+      "judge": []
+    },
+    {
+      "case": "crowd_background",
+      "name": "公共场合群戏",
+      "ok": true,
+      "blocked": false,
+      "error": "",
+      "note": "两次运行都出现 critical（首次 1 条 / 复跑 1 条），判为稳定缺陷",
+      "shots": 5,
+      "critical": 1,
+      "warn": 6,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [
+        {
+          "rule": "DIR-01",
+          "severity": "critical",
+          "where": "director",
+          "message": "镜头 shot_scene_001_000 只有「身体微动作」一类细节，画面会单薄：在不臃肿的前提下再补一到两类物理细节"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_003",
+          "message": "提示词里同一句出现两遍：「下颌线松垮带胡茬」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_000",
+          "message": "分镜光线的光源和风格指南冲突（分镜「灯管」，风格指南「荧光灯」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_001",
+          "message": "分镜光线的光源和风格指南冲突（分镜「灯管」，风格指南「荧光灯」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_002",
+          "message": "分镜光线的光源和风格指南冲突（分镜「灯管」，风格指南「荧光灯」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_003",
+          "message": "分镜光线的光源和风格指南冲突（分镜「灯管」，风格指南「荧光灯」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_004",
+          "message": "分镜光线的光源和风格指南冲突（分镜「灯管」，风格指南「荧光灯」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        }
+      ],
+      "judge": []
+    },
+    {
+      "case": "two_scenes_chain",
+      "name": "两场戏 + 接力",
+      "ok": true,
+      "blocked": false,
+      "error": "",
+      "note": "两次运行都出现 critical（首次 4 条 / 复跑 4 条），判为稳定缺陷",
+      "shots": 8,
+      "critical": 4,
+      "warn": 1,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [
+        {
+          "rule": "DIR-01",
+          "severity": "critical",
+          "where": "director",
+          "message": "镜头 shot_scene_001_000 只有「身体微动作」一类细节，画面会单薄：在不臃肿的前提下再补一到两类物理细节"
+        },
+        {
+          "rule": "DIR-01",
+          "severity": "critical",
+          "where": "director",
+          "message": "镜头 shot_scene_002_006 只有「身体微动作」一类细节，画面会单薄：在不臃肿的前提下再补一到两类物理细节"
+        },
+        {
+          "rule": "DIR-10",
+          "severity": "critical",
+          "where": "director",
+          "message": "特写占比 4/8（>40%）：全片怼脸 = 畸变高发 + 观感疲劳"
+        },
+        {
+          "rule": "DIR-12",
+          "severity": "critical",
+          "where": "director",
+          "message": "全片没有一个 wide：场景空间从未交代，观众不知道人在哪"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_001",
+          "message": "分镜光线的光源和风格指南冲突（分镜「台灯」，风格指南「天光、窗」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        }
+      ],
+      "judge": []
+    },
+    {
+      "case": "emotion_flip",
+      "name": "情绪骤变",
+      "ok": true,
+      "blocked": false,
+      "error": "",
+      "note": "首次出现 critical，复跑后消失（判为抖动，不计入失败）",
+      "shots": 5,
+      "critical": 0,
+      "warn": 5,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_000",
+          "message": "提示词里同一句出现两遍：「阴天冷灰散射光从上方均匀落下」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_001",
+          "message": "提示词里同一句出现两遍：「阴天冷灰散射光从上方均匀落下」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_002",
+          "message": "提示词里同一句出现两遍：「阴天冷灰散射光从上方均匀落下」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_003",
+          "message": "提示词里同一句出现两遍：「阴天冷灰散射光从上方均匀落下」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_004",
+          "message": "提示词里同一句出现两遍：「阴天冷灰散射光从上方均匀落下」——视频模型会当成两个连续动作或两次运镜"
+        }
+      ],
+      "judge": []
+    },
+    {
+      "case": "object_carry",
+      "name": "物件承担戏剧",
+      "ok": true,
+      "blocked": false,
+      "error": "",
+      "note": "首次出现 critical，复跑后消失（判为抖动，不计入失败）",
+      "shots": 4,
+      "critical": 0,
+      "warn": 0,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [],
+      "judge": []
+    },
+    {
+      "case": "chain_action",
+      "name": "连续动作链",
+      "ok": true,
+      "blocked": false,
+      "error": "",
+      "note": "",
+      "shots": 5,
+      "critical": 0,
+      "warn": 0,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [],
+      "judge": []
+    },
+    {
+      "case": "night_exterior",
+      "name": "室外夜景",
+      "ok": true,
+      "blocked": false,
+      "error": "",
+      "note": "首次出现 critical，复跑后消失（判为抖动，不计入失败）",
+      "shots": 5,
+      "critical": 0,
+      "warn": 3,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_001",
+          "message": "提示词里同一句出现两遍：「穿深灰色旧呢大衣」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_003",
+          "message": "提示词里同一句出现两遍：「穿深灰色旧呢大衣」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_004",
+          "message": "提示词里同一句出现两遍：「穿深灰色旧呢大衣」——视频模型会当成两个连续动作或两次运镜"
+        }
+      ],
+      "judge": []
+    },
+    {
+      "case": "slow_threat",
+      "name": "慢节奏威胁",
+      "ok": true,
+      "blocked": false,
+      "error": "",
+      "note": "首次出现 critical，复跑后消失（判为抖动，不计入失败）",
+      "shots": 5,
+      "critical": 0,
+      "warn": 9,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_000",
+          "message": "提示词里同一句出现两遍：「水泥地面与剥落的米色墙皮」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-06",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_001",
+          "message": "疑似一镜多运镜（升降、推进）：一镜只保留一种主要运动"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_001",
+          "message": "提示词里同一句出现两遍：「水泥地面与剥落的米色墙皮」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_002",
+          "message": "提示词里同一句出现两遍：「水泥地面与剥落的米色墙皮」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_003",
+          "message": "提示词里同一句出现两遍：「水泥地面与剥落的米色墙皮」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_004",
+          "message": "提示词里同一句出现两遍：「水泥地面与剥落的米色墙皮」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_000",
+          "message": "分镜光线的光源和风格指南冲突（分镜「天光、窗」，风格指南「灯泡、钨丝」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_001",
+          "message": "分镜光线的光源和风格指南冲突（分镜「窗」，风格指南「灯泡、钨丝」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_002",
+          "message": "分镜光线的光源和风格指南冲突（分镜「窗」，风格指南「灯泡、钨丝」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        }
+      ],
+      "judge": []
+    },
+    {
+      "case": "money_group",
+      "name": "排钱多机位戏",
+      "ok": true,
+      "blocked": false,
+      "error": "",
+      "note": "两次运行都出现 critical（首次 1 条 / 复跑 2 条），判为稳定缺陷",
+      "shots": 5,
+      "critical": 2,
+      "warn": 7,
+      "judge_total": null,
+      "judge_dims": {},
+      "failures": [
+        {
+          "rule": "DIR-01",
+          "severity": "critical",
+          "where": "director",
+          "message": "镜头 shot_scene_001_000 只有「身体微动作」一类细节，画面会单薄：在不臃肿的前提下再补一到两类物理细节"
+        },
+        {
+          "rule": "DIR-01",
+          "severity": "critical",
+          "where": "director",
+          "message": "镜头 shot_scene_001_004 只有「身体微动作」一类细节，画面会单薄：在不臃肿的前提下再补一到两类物理细节"
+        },
+        {
+          "rule": "DPT-08",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_000",
+          "message": "只有「身体微动作」一类细节，画面会单薄"
+        },
+        {
+          "rule": "DPT-15",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_001",
+          "message": "提示词里同一句出现两遍：「目光钉在铜钱上不动」——视频模型会当成两个连续动作或两次运镜"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_000",
+          "message": "分镜光线的光源和风格指南冲突（分镜「白炽」，风格指南「灯泡、钨丝」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_001",
+          "message": "分镜光线的光源和风格指南冲突（分镜「白炽」，风格指南「灯泡、钨丝」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_002",
+          "message": "分镜光线的光源和风格指南冲突（分镜「白炽」，风格指南「灯泡、钨丝」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_003",
+          "message": "分镜光线的光源和风格指南冲突（分镜「白炽」，风格指南「灯泡、钨丝」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        },
+        {
+          "rule": "LNG-04",
+          "severity": "warn",
+          "where": "scene_001/shot_scene_001_004",
+          "message": "分镜光线的光源和风格指南冲突（分镜「白炽」，风格指南「灯泡、钨丝」）：同一场的光从美术指导到导演被定了两次，提示词只会照抄其中一处"
+        }
+      ],
+      "judge": []
+    }
+  ]
+}

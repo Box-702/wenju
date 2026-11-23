@@ -39,6 +39,12 @@ class FakeTool:
         return f"echo:{args.get('x')}"
 
 
+class TimeoutTool(FakeTool):
+    def invoke(self, args):
+        self.calls.append(dict(args))
+        raise TimeoutError("test tool timed out")
+
+
 class FakeModel:
     """按脚本回放的假模型：每一步返回一个 AIMessage。"""
 
@@ -193,12 +199,67 @@ def test_unknown_tool_returns_actionable_message():
     assert "未知工具" in result.events[1]["summary"]
 
 
+def test_skill_gated_tool_is_hidden_until_skill_loaded():
+    tool = FakeTool()
+    tool.name = "generate_script"
+    tool.metadata = {"required_skill": "novel-serial"}
+    loop = _loop(FakeModel([]), [tool])
+    loop.collector = {"loaded_skills": []}
+    assert loop._available_tools() == []
+    assert "先调用 load_skill" in loop._invoke_tool("generate_script", {"x": "unsafe"})
+    assert tool.calls == []
+    loop.collector["loaded_skills"].append("novel-serial")
+    assert loop._available_tools() == [tool]
+    assert loop._invoke_tool("generate_script", {"x": "ok"}) == "echo:ok"
+
+
+def test_skill_gate_fails_closed_without_collector():
+    tool = FakeTool()
+    tool.name = "submit_videos"
+    tool.metadata = {"required_skill": "production-delivery"}
+    loop = _loop(FakeModel([]), [tool])
+    assert "production-delivery" in loop._invoke_tool("submit_videos", {})
+    assert tool.calls == []
+
+
+def test_long_novel_adds_a_conditional_skill_requirement():
+    tool = FakeTool()
+    tool.name = "generate_script"
+    tool.metadata = {
+        "required_skill": "script-generation",
+        "conditional_skill": "novel-serial",
+    }
+    loop = _loop(FakeModel([]), [tool])
+    loop.collector = {"loaded_skills": ["script-generation"], "long_novel": False}
+    assert loop._available_tools() == [tool]
+    loop.collector["long_novel"] = True
+    assert loop._available_tools() == []
+    assert "novel-serial" in loop._invoke_tool("generate_script", {})
+    loop.collector["loaded_skills"].append("novel-serial")
+    assert loop._available_tools() == [tool]
+
+
+def test_tool_timeout_is_recorded_in_run_trajectory():
+    model = FakeModel([
+        AIMessage(content="", tool_calls=[{"name": "echo", "args": {}, "id": "timeout-1"}]),
+        AIMessage(content="工具超时，我先停在这里。"),
+    ], stream=False)
+    result = _loop(model, [TimeoutTool()]).run([user_message("检查超时")])
+    outcome = next(event for event in result.events if event["type"] == "tool_result")
+    assert outcome["failed"] is True
+    assert outcome["timed_out"] is True
+    assert outcome["duration_ms"] >= 0
+    assert outcome["run_id"]
+
+
 def test_missing_model_returns_friendly_notice():
     """没配模型时给可操作提示，不抛异常（审阅动作仍可用）。"""
     loop = AgentLoop(FakeLLM(None, available=False), [])
     result = loop.run([user_message("hi")])
     assert "没有配置对话模型" in result.text
     assert "审阅动作" in result.text
+    assert "设置 → 模型" in result.text
+    assert ".env" not in result.text
 
 
 def test_has_images_uses_multimodal_model():

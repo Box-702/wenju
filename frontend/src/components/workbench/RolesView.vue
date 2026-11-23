@@ -23,6 +23,36 @@ const warnings = ref([])
 const assets = ref([])
 const loading = ref(false)
 const tab = ref('characters')
+const lookDraft = ref({})
+const anchorDraft = ref({})
+const lookBusy = ref('')
+async function addLook(c) {
+  const d = lookDraft.value[c.char_id] || {}
+  if (!d.name?.trim() || !d.description?.trim() || !d.available_from_shot_id?.trim()) {
+    notify('填写造型名、描述和首次可用镜头 ID', 'info'); return
+  }
+  lookBusy.value = c.char_id
+  try {
+    await api(`/projects/${store.pid}/looks`, 'POST', { character_id: c.char_id, ...d })
+    lookDraft.value[c.char_id] = { name: '', description: '', available_from_shot_id: '', identity_anchor: d.identity_anchor || '' }
+    await refresh()
+  } catch (e) { notify(`新增造型失败：${e.message}`, 'error') }
+  finally { lookBusy.value = '' }
+}
+async function generateLook(look) {
+  try {
+    await api(`/projects/${store.pid}/looks/${look.id}/generate`, 'POST')
+    notify('已开始生成此造型，完成后请检查与其他造型的脸部一致性', 'ok')
+  } catch (e) { notify(`生成失败：${e.message}`, 'error') }
+}
+async function saveAnchor(c) {
+  const description = (anchorDraft.value[c.char_id] || '').trim()
+  if (!description) { notify('请填写可跨造型复用的脸部特征', 'info'); return }
+  try {
+    await api(`/projects/${store.pid}/characters/${c.char_id}/identity-anchor`, 'PUT', { description })
+    notify('脸部特征已保存；文生图仍需人工检查同脸', 'ok')
+  } catch (e) { notify(`保存失败：${e.message}`, 'error') }
+}
 
 async function refresh() {
   if (!store.pid) { chars.value = []; locs.value = []; assets.value = []; warnings.value = []; return }
@@ -35,6 +65,8 @@ async function refresh() {
       api(`/projects/${store.pid}/assets?kind=audio`),
     ])
     chars.value = lib.characters || []
+    for (const c of chars.value) lookDraft.value[c.char_id] ||= { name: '', description: '', available_from_shot_id: '', identity_anchor: '' }
+    for (const c of chars.value) if (anchorDraft.value[c.char_id] === undefined) anchorDraft.value[c.char_id] = c.identity_anchor || ''
     locs.value = lib.locations || []
     warnings.value = lib.warnings || []
     assets.value = [...(imgs || []), ...(vids || []), ...(auds || [])]
@@ -124,10 +156,14 @@ async function onFilePicked(e) {
     const fd = new FormData()
     fd.append('file', file)
     const asset = await api(`/projects/${store.pid}/images/upload`, 'POST', fd)
-    const body = t.kind === 'character'
-      ? { characters: { [t.id]: { image: asset.url } } }
-      : { locations: { [t.id]: { image: asset.url } } }
-    await api(`/projects/${store.pid}/library`, 'PATCH', body)
+    if (t.lookId) {
+      await api(`/projects/${store.pid}/looks/${t.lookId}/image`, 'PUT', { image: asset.url })
+    } else {
+      const body = t.kind === 'character'
+        ? { characters: { [t.id]: { image: asset.url } } }
+        : { locations: { [t.id]: { image: asset.url } } }
+      await api(`/projects/${store.pid}/library`, 'PATCH', body)
+    }
     notify(`已把图片绑定到「${t.name}」`, 'ok')
     await refresh()
     store.assetRefreshSeq += 1
@@ -219,6 +255,21 @@ function previewOf(a) {
             </span>
             <span v-else>{{ a.scenes || 0 }} 场戏</span>
           </p>
+          <div v-if="tab === 'characters'" class="look-list" @click.stop>
+            <input v-model.trim="anchorDraft[a.char_id]" placeholder="跨造型脸部特征，如眉眼、痣、鼻梁" aria-label="跨造型脸部特征" />
+            <button class="mini" type="button" @click="saveAnchor(a)">保存脸部特征</button>
+            <div v-for="look in a.looks || []" :key="look.id" class="look-row">
+              <img v-if="look.image" :src="look.image" :alt="look.name" />
+              <span>{{ look.name }} · {{ look.description || '待补描述' }}<small v-if="look.available_from_shot_id">从 {{ look.available_from_shot_id }} 起</small></span>
+              <button v-if="!look.image" class="mini" type="button" @click="generateLook(look)">生成</button>
+              <button class="mini" type="button" @click="pickUpload({ id: a.char_id, kind: 'character', name: look.name, lookId: look.id })">上传</button>
+            </div>
+            <input v-model.trim="lookDraft[a.char_id].name" placeholder="新造型名称" aria-label="新造型名称" />
+            <input v-model.trim="lookDraft[a.char_id].identity_anchor" placeholder="共用面部特征（各造型一致）" aria-label="共用面部特征" />
+            <input v-model.trim="lookDraft[a.char_id].description" placeholder="服饰、发型、身体状态" aria-label="新造型描述" />
+            <input v-model.trim="lookDraft[a.char_id].available_from_shot_id" placeholder="首次可用镜头 ID" aria-label="首次可用镜头" />
+            <button class="mini" type="button" :disabled="lookBusy === a.char_id" @click="addLook(a)">新增造型</button>
+          </div>
           <div class="card-foot">
             <button class="mini" type="button"
               :title="tab === 'characters' ? '本地上传图片并绑定为该角色形象' : '本地上传图片并绑定为该场景图'"
@@ -327,6 +378,12 @@ function previewOf(a) {
 }
 .voice-chip :deep(svg) { width: 11px; height: 11px; }
 .card-foot { margin-top: 2px; }
+.look-list { display: grid; gap: 5px; }
+.look-list input { width: 100%; min-width: 0; background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 5px; }
+.look-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.look-row img { width: 32px; height: 32px; object-fit: cover; }
+.look-row span { flex: 1; min-width: 0; }
+.look-row small { display: block; color: var(--dim); }
 .mini {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 4px 8px; border-radius: var(--radius-sm);

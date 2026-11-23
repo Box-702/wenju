@@ -6,20 +6,20 @@
 //   ┌──────────────────────────────────────────────┐
 //   │ [+]  描述你想生成的内容，或点 ＋ 附上图片…       │
 //   │                                                │
-//   │ [作品 ▾][模型 ▾]                       [⚙]  ( ➤ )   │
+//   │ [模型 ▾]                            [⚙]  ( ➤ )   │
 //   └──────────────────────────────────────────────┘
 //
 // 胶囊只放「每轮都要看一眼」的选择器：
-//   作品  —— 这轮对话挂在哪部作品下
 //   模型  —— 用哪个模型对话（直接切换，不进设置页）
-// Skill / 生成资产是低频动作，收进「＋」菜单——
-// 四个胶囊挤一行会换行（首页卡片 1040px 也救不了长作品名）。
+// 「选择作品」胶囊已删（D-XX）：换作品的入口在对话框左上角（作品名按钮），
+// 走对话框里的「切换作品」技能；Skill / 生成资产是低频动作，收进「＋」菜单——
+// 胶囊挤一行会换行（首页卡片 1040px 也救不了长作品名）。
 // =====================================================================
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
 import { api } from '../api'
-import { store, selectProject, loadProviders, loadChatPref, loadModelStatus, notify } from '../stores/app'
+import { store, loadProviders, loadChatPref, loadModelStatus, notify, clearSkillRef } from '../stores/app'
 
 const text = defineModel('text', { type: String, default: '' })
 
@@ -207,8 +207,12 @@ const imageModelChoices = computed(() => {
   return base
 })
 
-const imagePref = computed(() =>
-  modelPrefs.value.find((x) => x.task_type === 'image_gen' && x.provider_id) || null)
+/** 生图偏好：同 task_type 可能有多行历史（每换一次厂商多一行），
+    取 is_default 那行才是当前在用的（2026-11-22 实测踩过）。 */
+const imagePref = computed(() => {
+  const rows = modelPrefs.value.filter((x) => x.task_type === 'image_gen' && x.provider_id)
+  return rows.find((x) => x.is_default) || rows[0] || null
+})
 const currentImageLabel = computed(() => {
   if (imagePref.value?.model_name) return imagePref.value.model_name
   const p = imageProviders.value[0]
@@ -275,31 +279,9 @@ onMounted(() => {
 
 const menuOpen = ref(false)
 
-// ---- 作品选择：这轮对话算在哪部作品下 ----
-const projectOpen = ref(false)
-
-const projectOptions = computed(() =>
-  [...(store.projects || [])].sort((a, b) => {
-    const at = a.last_used_at || a.created_at || ''
-    const bt = b.last_used_at || b.created_at || ''
-    return bt.localeCompare(at)
-  }),
-)
-
-/** 胶囊里只列最近 3 个——多了就成清单了，完整列表在「全部作品」页。 */
-const RECENT_LIMIT = 3
-const recentProjects = computed(() => projectOptions.value.slice(0, RECENT_LIMIT))
-
-const projectLabel = computed(() => {
-  const cur = (store.projects || []).find((p) => p.id === store.pid)
-  return cur ? cur.title : '选择作品'
-})
-
-function pickProject(p) {
-  if (!p?.id) return
-  projectOpen.value = false
-  selectProject(p.id)
-}
+// ---- 技能引用：这条消息挂一个技能（D-XX）----
+// 引用后输入框上方出现「✦ 技能名」的 chip，发送时正文带上【技能：name】标记。
+const pendingSkill = computed(() => store.pendingSkill)
 
 // ---- @ 引用资产：打 @ 弹候选，选中后插入 @名字 ----
 const mentionOpen = ref(false)
@@ -371,9 +353,6 @@ function closeMenu(e) {
   if (menuOpen.value && e.target.closest && !e.target.closest('.cc-plus-wrap')) {
     menuOpen.value = false
   }
-  if (projectOpen.value && e.target.closest && !e.target.closest('.cc-project-wrap')) {
-    projectOpen.value = false
-  }
   if (modelOpen.value && e.target.closest && !e.target.closest('.cc-model-wrap')) {
     modelOpen.value = false
   }
@@ -382,7 +361,6 @@ function closeMenu(e) {
 function onKeydown(e) {
   if (e.key === 'Escape') {
     if (modelOpen.value) { modelOpen.value = false; return }
-    if (projectOpen.value) { projectOpen.value = false; return }
     if (menuOpen.value) { menuOpen.value = false; return }
   }
   // @ 候选打开时，方向键与回车归候选列表
@@ -416,7 +394,9 @@ const slashItems = computed(() => {
   const list = props.skills || []
   if (!q) return list.slice(0, 12)
   return list.filter((s) => (
-    (s.name || '').toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q)
+    (s.name || '').toLowerCase().includes(q)
+    || (s.title || '').toLowerCase().includes(q)
+    || (s.description || '').toLowerCase().includes(q)
   )).slice(0, 12)
 })
 
@@ -437,7 +417,7 @@ function syncSlash() {
   slashOpen.value = true
 }
 
-/** 选中技能：把「/xxx」换成技能的场景描述（交给外层 useSkill 填） */
+/** 选中技能：删掉打出来的「/xxx」，把技能挂到这条消息上（外层 useSkill 收） */
 function pickSlash(item) {
   slashOpen.value = false
   const el = textEl.value
@@ -498,6 +478,26 @@ function onInput(e) {
         </div>
 
         <div class="cc-input-wrap">
+          <!-- 技能引用（D-XX）：这条消息挂了一个技能。星标 + 中文名 + ✕，
+               和发送后正文里的 chip 同一套样式（全局 .skill-chip）。 -->
+          <div v-if="pendingSkill" class="cc-skill-ref">
+            <span class="skill-chip">
+              <svg class="skill-ic" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M8 2.4c.5 2.6 1.5 3.6 4.1 4.1-2.6.5-3.6 1.5-4.1 4.1-.5-2.6-1.5-3.6-4.1-4.1 2.6-.5 3.6-1.5 4.1-4.1z"
+                      fill="currentColor" stroke="none" />
+              </svg>
+              <span class="skill-name">{{ pendingSkill.title }}</span>
+            </span>
+            <button
+              class="cc-skill-x"
+              type="button"
+              aria-label="取消技能引用"
+              title="取消技能引用"
+              @click.stop="clearSkillRef()"
+            >
+              <AppIcon name="close" />
+            </button>
+          </div>
           <textarea
             ref="textEl"
             v-model="text"
@@ -525,7 +525,7 @@ function onInput(e) {
                 @mousedown.prevent="pickSlash(it)"
                 @mouseenter="slashIndex = i"
               >
-                <span class="mi-name">{{ it.name }}</span>
+                <span class="mi-name">{{ it.title || it.name }}</span>
                 <span class="mi-sub">{{ it.when_to_use || it.description }}</span>
               </button>
             </div>
@@ -557,43 +557,6 @@ function onInput(e) {
       <!-- 下：胶囊行 + 齿轮 + 发送 -->
       <div class="cc-bottom">
         <div class="cc-pills">
-          <!-- 作品选择：决定这轮对话挂在哪部作品下 -->
-          <div class="cc-project-wrap">
-            <button
-              class="chip cc-project"
-              type="button"
-              title="选择这轮对话所属的作品"
-              @click.stop="projectOpen = !projectOpen"
-            >
-              <AppIcon name="folder" />
-              <span class="cp-label">{{ projectLabel }}</span>
-              <AppIcon name="chevron-down" class="cc-chev" />
-            </button>
-            <Transition name="ccpop">
-              <div v-if="projectOpen" class="cc-menu cc-projects" role="menu">
-                <div class="cc-menu-head">这轮对话属于哪部作品</div>
-                <button
-                  v-for="p in recentProjects"
-                  :key="p.id"
-                  :class="['menu-item', { on: p.id === store.pid }]"
-                  type="button"
-                  role="menuitem"
-                  @click.stop="pickProject(p)"
-                >
-                  <span class="pi-title">{{ p.title }}</span>
-                  <span class="pi-meta">{{ p.version_count || 0 }} 版</span>
-                </button>
-                <div v-if="!recentProjects.length" class="cc-menu-empty">还没有作品</div>
-                <div class="cc-menu-sep"></div>
-                <button
-                  class="menu-item"
-                  type="button"
-                  role="menuitem"
-                  @click.stop="projectOpen = false; emit('new-project')"
-                ><span class="pi-title">新建作品</span></button>
-              </div>
-            </Transition>
-          </div>
           <!-- 阶段状态不在这里重复：对话顶部 StatusStrip 已带光点+耗时，
                输入条再挂一颗就是双份（用户指正 2026-11-13）。 -->
           <!-- 模型：下拉内容 = 当前供应商在「模型设置」里配好的模型清单 -->
@@ -833,11 +796,24 @@ function onInput(e) {
 .mi-id { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--dim); }
 
 
-/* 作品选择胶囊 + 下拉 */
-.cc-project-wrap { position: relative; }
+/* 模型胶囊（作品胶囊已删：D-XX，换作品走对话框里的「切换作品」技能） */
 .cc-model-wrap { position: relative; }
 .cc-model { max-width: 190px; }
 .cc-model span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 技能引用行：待发送的那条消息挂了哪个技能 */
+.cc-skill-ref {
+  display: flex; align-items: center; gap: 4px;
+  padding: 2px 4px 4px 2px;
+}
+.cc-skill-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0;
+  border: none; border-radius: var(--radius-sm);
+  background: transparent; color: var(--dim); cursor: pointer;
+}
+.cc-skill-x:hover { background: rgba(255, 255, 255, .08); color: var(--ink); }
+.cc-skill-x .app-ic { width: 11px; height: 11px; }
 
 /* 模型下拉：标记与样式同在 ComposerCard（别再放插槽——插槽内容带父组件的
    scope id，scoped 样式匹配不上，弹层会变成内联的一行）。 */
@@ -910,16 +886,6 @@ function onInput(e) {
 .mp-more:hover { color: var(--ink); background: rgba(255, 255, 255, .05); }
 .mp-more .app-ic { width: 11px; height: 11px; margin-left: auto; opacity: .5; }
 .mp-empty { padding: 9px; font-size: var(--fs-xs); color: var(--dim); line-height: 1.6; }
-.cc-project { max-width: 190px; }
-/* 作品名超长就截断：不给它撑破胶囊的宽度 */
-.cc-project .cp-label {
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.cc-projects {
-  bottom: calc(100% + 6px); left: 0; right: auto; min-width: 220px;
-  background: var(--panel-solid); border: 1px solid var(--line);
-  border-radius: var(--radius-lg); padding: 4px; box-shadow: var(--shadow-2);
-}
 .cc-menu-head {
   padding: 5px 9px 6px; font-size: 10px; color: var(--dim);
   letter-spacing: .04em; border-bottom: 1px solid var(--line); margin-bottom: 3px;

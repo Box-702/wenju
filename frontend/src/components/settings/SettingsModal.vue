@@ -552,7 +552,13 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { api } from '../../api.js'
-import { selectWorkspaceDirectory, setWorkspace, store } from '../../stores/app.js'
+import {
+  selectWorkspaceDirectory, setWorkspace, store,
+  // store 里的那份也要刷新：输入区「模型设置」胶囊读的是 store.chatPref，
+  // 这里改了默认不同步的话，弹窗里已经切了、输入区还显示旧厂商（2026-11-22 实测）。
+  loadChatPref as loadStoreChatPref,
+  loadModelStatus as loadStoreModelStatus,
+} from '../../stores/app.js'
 import AppIcon from '../AppIcon.vue'
 
 const props = defineProps({ open: Boolean })
@@ -746,7 +752,9 @@ async function qcSave() {
     }
     selectedSpecName.value = ''
     selectedProviderId.value = rowId
-    await Promise.all([loadProviders(), loadModelInfo(), loadChatPref()])
+    await Promise.all([
+      loadProviders(), loadModelInfo(), loadChatPref(), loadStoreChatPref(), loadStoreModelStatus(),
+    ])
     notify(`已接入 ${spec.label} · ${models.length} 个模型`, 'ok')
   } catch (e) {
     qc.error = '保存失败：' + (e.message || e)
@@ -796,6 +804,14 @@ function providerModels(p) {
 function activeOf(models) {
   const on = models.find((m) => m.enabled)
   return on ? on.model : ''
+}
+
+/** 设为默认时要带的模型名：清单里第一个启用的 → config.model → 空。
+    厂商行只有 models 清单、没有 config.model 时（老配置），空串会让偏好
+    落到厂商默认档，界面上「用哪个模型」就说不清。 */
+function firstModelName(p) {
+  const models = providerModels(p)
+  return activeOf(models) || p?.config?.model || ''
 }
 
 /** 把模型清单写回厂商配置（同时同步 config.model，老代码路径继续可用）。 */
@@ -921,27 +937,37 @@ async function loadSpecs() {
   try { specs.value = await api('/providers/specs') } catch { specs.value = [] }
 }
 
-/** 列表/目录变化后维持选中：还在就不动；不在就落到「使用中」的行，
+/** 列表/目录/偏好变化后维持选中：「使用中」的那家优先（它带「使用中」标记，
+    用户一眼能看到当前在跟谁说话），没有偏好才落到第一家已配置的厂商，
     一个行都没有时选目录第一项（新装用户第一眼就是「给 DeepSeek 贴 key」，不用先点一下）。
     必须放在 chatPref 声明之后：immediate 的回调在 setup 期同步执行，
-    提前引用未声明的 const 会 TDZ 报错。 */
-watch([llmProviders, specs], () => {
+    提前引用未声明的 const 会 TDZ 报错。
+    chatPref 也要进依赖：偏好是异步拉回来的，只盯厂商列表的话，
+    打开弹窗时先落到第一家（DeepSeek），真正「使用中」的那家要用户手点才看到。 */
+watch([llmProviders, specs, chatPref], () => {
   const items = leftItems.value
   if (!items.length) return
-  const still = items.find((it) => itemSelected(it))
-  if (still) return
   const prefRow = items.find(
     (it) => it.kind === 'row' && chatPref.value?.provider_id === it.id,
   )
+  if (prefRow) {
+    if (!itemSelected(prefRow)) selectItem(prefRow)
+    return
+  }
+  const still = items.find((it) => itemSelected(it))
+  if (still) return
   const firstRow = items.find((it) => it.kind === 'row')
-  const pick = prefRow || firstRow || items[0]
+  const pick = firstRow || items[0]
   selectItem(pick)
 }, { immediate: true })
 
 async function loadChatPref() {
   try {
     const prefs = await api('/models/preferences')
-    chatPref.value = prefs.find(x => x.task_type === 'chat' && x.provider_id) || null
+    // 同 task_type 可能有多行历史偏好，取 is_default 那行（当前默认），
+    // 否则「使用中」标记会挂在第一次选的厂商上（2026-11-22 实测）。
+    const chatPrefs = (prefs || []).filter(x => x.task_type === 'chat' && x.provider_id)
+    chatPref.value = chatPrefs.find(x => x.is_default) || chatPrefs[0] || null
   } catch { chatPref.value = null }
 }
 
@@ -950,10 +976,12 @@ async function setAsDefault(p) {
     await api('/models/preferences', 'PUT', {
       task_type: 'chat',
       provider_id: p.id,
-      model_name: p.config?.model || '',
+      model_name: firstModelName(p),
       is_default: true,
     })
-    await Promise.all([loadChatPref(), loadModelInfo(), loadProviders()])
+    await Promise.all([
+      loadChatPref(), loadStoreChatPref(), loadModelInfo(), loadStoreModelStatus(), loadProviders(),
+    ])
   } catch (e) {
     alert('设置失败：' + e.message)
   }
@@ -1308,7 +1336,9 @@ function providersForTask(task) {
 }
 
 function prefProviderId(task) {
-  const p = prefs.value.find(x => x.task_type === task && x.provider_id)
+  // 同 task_type 可能有多行历史偏好：取 is_default 那行才是当前默认。
+  const rows = prefs.value.filter(x => x.task_type === task && x.provider_id)
+  const p = rows.find(x => x.is_default) || rows[0]
   return p ? p.provider_id : ''
 }
 
@@ -1325,10 +1355,11 @@ async function setPref(task, providerId) {
     await api('/models/preferences', 'PUT', {
       task_type: task,
       provider_id: providerId,
-      model_name: p?.config?.model || '',
+      model_name: firstModelName(p),
       is_default: true,
     })
     await loadPrefs()
+    await refreshStoreAfterPrefChange(task)
   } catch (e) {
     alert(`设置失败：${e.message}`)
   }
@@ -1338,8 +1369,17 @@ async function clearPref(task) {
   try {
     await api(`/models/preferences/${task}`, 'DELETE')
     await loadPrefs()
+    await refreshStoreAfterPrefChange(task)
   } catch (e) {
     alert(`清除失败：${e.message}`)
+  }
+}
+
+/** 改了偏好就同步 store：输入区胶囊与顶栏徽标读的是 store，
+    不同步的话会出现「设置页切了、输入区还是旧厂商」（2026-11-22 实测）。 */
+async function refreshStoreAfterPrefChange(task) {
+  if (task === 'chat') {
+    await Promise.all([loadStoreChatPref(), loadStoreModelStatus()])
   }
 }
 

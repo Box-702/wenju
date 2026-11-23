@@ -18,6 +18,7 @@
 // =====================================================================
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import AppIcon from '../AppIcon.vue'
+import { api } from '../../api'
 import AssetRefText from '../AssetRefText.vue'
 import {
   store, notify,
@@ -33,12 +34,43 @@ import {
 // ---------------------------------------------------------------------
 const loading = ref(true)
 const loadError = ref('')
+const lookLibrary = ref([])
+const lookSelections = ref({ scenes: {}, shots: {} })
+const sceneCharacters = ref({})
+async function loadLooks() {
+  if (!store.pid) return
+  const lib = await api(`/projects/${store.pid}/library`)
+  lookLibrary.value = lib.characters || []
+  lookSelections.value = lib.look_selections || { scenes: {}, shots: {} }
+  sceneCharacters.value = lib.scene_characters || {}
+}
+function looksFor(characterId) { return lookLibrary.value.find(c => c.char_id === characterId)?.looks || [] }
+function lookValue(shot, characterId) {
+  return lookSelections.value.shots?.[shot.id]?.[characterId]
+    || lookSelections.value.scenes?.[shot.scene_id]?.[characterId]
+    || looksFor(characterId).find(l => l.id === `look_${characterId}_base`)?.id || ''
+}
+async function setLook(shot, characterId, lookId) {
+  try {
+    await api(`/projects/${store.pid}/shot/${shot.id}/look`, 'PUT', { character_id: characterId, look_id: lookId })
+    await loadLooks()
+    notify('镜头造型已更新', 'ok')
+  } catch (e) { notify(`造型选择失败：${e.message}`, 'error') }
+}
+async function setSceneLook(sceneId, characterId, lookId) {
+  try {
+    await api(`/projects/${store.pid}/scene/${sceneId}/look`, 'PUT', { character_id: characterId, look_id: lookId })
+    await loadLooks()
+    notify('场景默认造型已更新', 'ok')
+  } catch (e) { notify(`场景造型选择失败：${e.message}`, 'error') }
+}
+function characterName(id) { return lookLibrary.value.find(c => c.char_id === id)?.name || id }
 async function refreshAll() {
   loading.value = true
   loadError.value = ''
   try {
     // assetRefs 是 @引用 chip 的数据源：本页自己兜底拉一次，别依赖别的视图先加载
-    await Promise.all([loadShots(), loadVideoJobs(), loadAssetRefs()])
+    await Promise.all([loadShots(), loadVideoJobs(), loadAssetRefs(), loadLooks()])
   } catch (e) {
     loadError.value = e?.message || '分镜数据加载失败'
   } finally {
@@ -375,6 +407,7 @@ async function setDuration(shot, val) {
 }
 
 const hasAny = computed(() => cards.value.length > 0)
+const hasChatModel = computed(() => store.modelInfo?.available === true)
 </script>
 
 <template>
@@ -426,7 +459,11 @@ const hasAny = computed(() => cards.value.length > 0)
 
     <div v-else-if="!hasAny" class="cl-empty">
       <AppIcon name="film" />
-      <p>还没有分镜——在右侧对话里说「拆解镜头」。</p>
+      <p v-if="hasChatModel">还没有分镜——在对话里说「拆解镜头」。</p>
+      <template v-else>
+        <p>演示初稿已生成。配置模型后，可拆分镜并生成视频提示词。</p>
+        <button class="ghost small" @click="store.showSettings = true">配置模型</button>
+      </template>
     </div>
 
     <template v-else-if="ep">
@@ -457,6 +494,15 @@ const hasAny = computed(() => cards.value.length > 0)
                 <span class="chip-name">{{ a.name }}</span>
               </button>
             </div>
+            <div class="look-picks" @click.stop>
+              <label v-for="cid in (sceneCharacters[c.head.scene_id] || []).filter(id => looksFor(id).length)" :key="cid">
+                {{ characterName(cid) }} · 本场默认
+                <select :value="lookSelections.scenes?.[c.head.scene_id]?.[cid] || `look_${cid}_base`"
+                  @change="setSceneLook(c.head.scene_id, cid, $event.target.value)">
+                  <option v-for="look in looksFor(cid)" :key="look.id" :value="look.id">{{ look.name }}</option>
+                </select>
+              </label>
+            </div>
 
             <p v-if="sceneAnchorOf(c)" class="scene-line">
               本片段场景设定在：<AssetRefText :text="sceneAnchorOf(c)" />。
@@ -465,7 +511,7 @@ const hasAny = computed(() => cards.value.length > 0)
             <div class="beats">
               <div v-for="(m, i) in c.members" :key="m.id" class="beat">
                 <div class="beat-head" @click.stop>
-                  <span class="beat-no">分镜 {{ i + 1 }}</span>
+                  <span class="beat-no" :title="m.id">分镜 {{ i + 1 }} · {{ m.id }}</span>
                   <select
                     class="dur-chip" :value="m.duration_sec"
                     :disabled="durBusy[m.id]"
@@ -477,6 +523,15 @@ const hasAny = computed(() => cards.value.length > 0)
                       {{ m.duration_sec }}s
                     </option>
                   </select>
+                </div>
+                <div class="look-picks" @click.stop>
+                  <label v-for="cid in (sceneCharacters[m.scene_id] || []).filter(id => looksFor(id).length)" :key="cid">
+                    {{ characterName(cid) }}
+                    <select :value="lookValue(m, cid)" @change="setLook(m, cid, $event.target.value)">
+                      <option value="" disabled>选择造型</option>
+                      <option v-for="look in looksFor(cid)" :key="look.id" :value="look.id">{{ look.name }}{{ look.image ? '' : '（无图）' }}</option>
+                    </select>
+                  </label>
                 </div>
                 <div
                   class="beat-prompt" :title="approvalTitle(c) || '点击编辑并审阅提示词'"

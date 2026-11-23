@@ -116,19 +116,21 @@ async function submitImport() {
     <div class="page-body">
       <p class="page-hint">
         技能是一份带说明的 Markdown（frontmatter 里写 name / description / when_to_use）。
-        点一个技能 = 把它的适用场景预填进输入框，Agent 看到就会去加载它。
+        点「使用」= 把这个技能挂到你要发的那条消息上（输入框上方会出现带星标的标签），
+        Agent 看到就会去加载它。
       </p>
 
       <div class="skill-list">
         <div v-for="s in skills" :key="s.name" class="skill-card-wrap">
           <button class="skill-card" type="button" @click="pick(s)">
             <div class="skill-title">
-              {{ s.name }}
+              {{ s.title || s.name }}
               <span v-if="s.user" class="skill-tag">我导入的</span>
             </div>
             <div class="skill-desc">{{ s.description }}</div>
             <div v-if="s.when_to_use" class="skill-when">适用：{{ s.when_to_use }}</div>
           </button>
+          <button class="skill-use" type="button" @click="pick(s)">使用</button>
           <button
             v-if="s.user"
             class="skill-del"
@@ -242,6 +244,14 @@ async function submitImport() {
 }
 /* 可删除的技能：用户导入的那些 */
 .skill-card-wrap { position: relative; }
+/* 「使用」：把这个技能挂到你要发的那条消息上（即梦那张卡上的按钮）。 */
+.skill-use {
+  position: absolute; right: 10px; bottom: 10px;
+  padding: 3px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--line); background: rgba(255, 255, 255, .06);
+  color: var(--muted); font-size: 11.5px; font-family: inherit; cursor: pointer;
+}
+.skill-use:hover { color: var(--ink); border-color: var(--line-strong); background: rgba(255, 255, 255, .1); }
 .skill-del {
   position: absolute; top: 10px; right: 10px;
   width: 24px; height: 24px; display: grid; place-items: center;

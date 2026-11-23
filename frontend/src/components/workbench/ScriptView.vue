@@ -38,6 +38,7 @@ watch(() => store.pid, () => {
 })
 
 const sp = computed(() => store.storyPlan)
+const hasChatModel = computed(() => store.modelInfo?.available === true)
 
 const subtitle = computed(() => {
   if (sp.value?.status === 'proposed') return '提案待确认'
@@ -247,7 +248,11 @@ onBeforeUnmount(() => {
       <template v-if="tab === 'settings'">
         <div v-if="!sp" class="sv-empty">
           <AppIcon name="edit" class="empty-ic" />
-          <p>还没有故事提案——点左栏「对话」回去说「读原文做分集提案」</p>
+          <p v-if="hasChatModel">还没有故事提案——在对话里说「读原文做分集提案」</p>
+          <template v-else>
+            <p>这是演示初稿。配置模型后，可继续生成分集提案并拆分镜。</p>
+            <button class="ghost small" @click="store.showSettings = true">配置模型</button>
+          </template>
         </div>
 
         <template v-else>
@@ -380,7 +385,11 @@ onBeforeUnmount(() => {
       <!-- ============ 03 正文 ============ -->
       <template v-else-if="tab === 'text'">
         <div v-if="!screenplay.length" class="sv-empty">
-          <p>还没有剧本正文——点左栏「对话」回去说「按提案写第 1 集剧本」</p>
+          <p v-if="hasChatModel">还没有剧本正文——在对话里说「按提案写第 1 集剧本」</p>
+          <template v-else>
+            <p>配置模型后，可根据分集提案生成正式剧本。</p>
+            <button class="ghost small" @click="store.showSettings = true">配置模型</button>
+          </template>
         </div>
         <template v-else>
           <div class="sp-toolbar">

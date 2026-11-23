@@ -149,8 +149,7 @@ class LLM:
         """返回可 bind_tools 的聊天模型（用于 ReAct 工具调用循环）。"""
         if self._model is None:
             raise RuntimeError(
-                "模型未配置。请在 .env 中设置 OPENAI_API_KEY / ZHIPUAI_API_KEY / "
-                "DEEPSEEK_API_KEY，或在前端「设置 → 模型」里添加 provider。"
+                "模型未配置。请在前端「设置 → 模型」里添加厂商与 Key。"
             )
         return self._model
 

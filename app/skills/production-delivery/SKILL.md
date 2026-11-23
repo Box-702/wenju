@@ -1,5 +1,6 @@
 ---
 name: production-delivery
+title: 出片交付
 description: 从批准提示词到成片的出片链路：批准前置 → 整片/单镜提交 → 轮询进度 → 重跑 → 合成（字幕/配音）
 when_to_use: 用户说「出片 / 生成视频 / 重 roll / 合成成片 / 出完整视频」时
 audience: main

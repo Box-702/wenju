@@ -18,15 +18,19 @@ import BatchStartedCard from './BatchStartedCard.vue'
 import ProductionBudgetCard from './ProductionBudgetCard.vue'
 import OptionConfirmCard from './OptionConfirmCard.vue'
 import { mdToHtml, esc } from '../utils/markdown'
-import { STAGE_LABELS } from '../stores/app'
+import { renderSkillChips, skillTitleMap } from '../utils/skills'
+import { STAGE_LABELS, store } from '../stores/app'
 
 const props = defineProps({
   message: { type: Object, required: true },
 })
 
 const isUser = computed(() => props.message.role === 'user')
-const bodyHtml = computed(() =>
-  isUser.value ? esc(props.message.content || '') : mdToHtml(props.message.content || ''))
+// 技能标记 → 带图标高亮的 chip（用户引用技能的那条消息里最显眼）。
+const bodyHtml = computed(() => {
+  const raw = isUser.value ? esc(props.message.content || '') : mdToHtml(props.message.content || '')
+  return renderSkillChips(raw, skillTitleMap(store.skills))
+})
 
 const showCopy = computed(() =>
   !isUser.value && props.message.content && !props.message.streaming)
@@ -98,6 +102,7 @@ const mergedSteps = computed(() => {
         label: STAGE_LABELS[e.name] || `执行 ${e.name || '工具'}`,
         detail: '',
         done: false,
+        failed: false,
       })
     } else if (e.type === 'step') {
       rows.push({
@@ -105,12 +110,16 @@ const mergedSteps = computed(() => {
         label: e.label || STAGE_LABELS[e.name] || '处理中',
         detail: '',
         done: true,
+        failed: false,
       })
     } else if (e.type === 'tool_result') {
       // 配对最近一个还没完成的同名调用
       const hit = [...rows].reverse().find((r) => !r.done && r.name === (e.name || ''))
       if (hit) {
-        hit.detail = briefResult(e.summary)
+        const duration = Number(e.duration_ms || 0)
+        hit.failed = Boolean(e.failed)
+        hit.detail = [hit.failed ? '未完成' : '', briefResult(e.summary),
+          duration ? `${duration} ms` : ''].filter(Boolean).join(' · ')
         hit.done = true
       } else {
         rows.push({
@@ -118,6 +127,7 @@ const mergedSteps = computed(() => {
           label: STAGE_LABELS[e.name] || `执行 ${e.name || '工具'}`,
           detail: briefResult(e.summary),
           done: true,
+          failed: Boolean(e.failed),
         })
       }
     }
@@ -213,8 +223,8 @@ onUnmounted(() => clearTimeout(copiedTimer))
           <div v-if="hiddenCount > 0 && !stepsExpanded" class="steps-more" @click="stepsExpanded = true">
             还有 {{ hiddenCount }} 个步骤…
           </div>
-          <div v-for="(r, i) in visibleSteps" :key="i" class="step-row" :class="{ done: r.done }">
-            <span class="step-icon" aria-hidden="true">{{ r.done ? '✓' : '›' }}</span>
+          <div v-for="(r, i) in visibleSteps" :key="i" class="step-row" :class="{ done: r.done, failed: r.failed }">
+            <span class="step-icon" aria-hidden="true">{{ r.failed ? '×' : (r.done ? '✓' : '›') }}</span>
             <span class="step-label">{{ r.label }}</span>
             <span v-if="r.detail" class="step-detail">{{ r.detail }}</span>
             <span v-else-if="!r.done" class="step-detail">进行中</span>
@@ -304,6 +314,7 @@ onUnmounted(() => clearTimeout(copiedTimer))
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .step-row.done .step-icon { color: var(--ok); }
+.step-row.failed .step-icon, .step-row.failed .step-label { color: var(--danger, #c44); }
 
 /* 思考过程（推理模型 reasoning 实时流） */
 .thinking-panel { margin-bottom: 8px; }

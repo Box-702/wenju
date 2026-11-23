@@ -421,10 +421,13 @@ def test_fallback_warning_names_the_real_reason(client, monkeypatch, sample_text
         warnings = " ".join(resp.json().get("warnings") or [])
         assert expect in warnings, f"{error} 应提示「{expect}」，实际：{warnings}"
 
-    # 没配模型（error 为空）时仍然给原来那句
+    # 没配模型（error 为空）时应给演示产物说明，并指向唯一的产品配置入口。
     monkeypatch.setattr(projects_api, "generate_script", _fallback(""))
     resp = client.post(f"/api/projects/{p['id']}/generate", json={})
-    assert "未配置可用模型" in " ".join(resp.json().get("warnings") or [])
+    warnings = " ".join(resp.json().get("warnings") or [])
+    assert "未配置可用模型" in warnings
+    assert "设置 → 模型" in warnings
+    assert ".env" not in warnings
 
 
 def test_出片时长用导演定的值而不是写死的六秒(client, sample_text, monkeypatch):

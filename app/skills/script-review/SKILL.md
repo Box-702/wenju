@@ -1,5 +1,6 @@
 ---
 name: script-review
+title: 剧本审阅
 description: 改编提议的审阅闭环：run_adaptation 产出提议 → 卡片逐条接受/编辑/拒绝/重新生成 → 落成新版本
 when_to_use: 用户提出改编需求（改对白/改节奏/压缩/反转/口语化），或在审阅卡片上做决定时
 audience: main

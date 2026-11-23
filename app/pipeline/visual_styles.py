@@ -31,8 +31,7 @@ VISUAL_STYLES: dict[str, dict[str, Any]] = {
         "description": "真人实拍，电影摄影质感",
         "render_note": "写实电影摄影，真实人物与实景，自然光影，35mm 镜头质感",
         "character_sheet": (
-            "角色定妆照。{desc}。正面半身像，纯灰色背景，光线均匀柔和，写实电影质感，"
-            "五官清晰、服装细节清楚；人物必须是中国人（东亚面孔）。画面里不要出现任何文字。"
+            "写实电影摄影，真实人物与服装材质，自然柔和的棚拍光；人物必须是中国人（东亚面孔）。"
         ),
         "environment_sheet": (
             "场景定妆图。{desc}。广角固定机位空镜，画面里没有任何人物；写实电影质感，"
@@ -49,9 +48,8 @@ VISUAL_STYLES: dict[str, dict[str, Any]] = {
             "赛璐璐阴影，画面是画出来的而不是拍出来的"
         ),
         "character_sheet": (
-            "角色立绘（character sheet）。{desc}。正面半身，纯灰色背景，"
             "日式二维动画赛璐璐上色，清晰描边，发型与瞳色固定、五官比例一致；"
-            "人物为东亚面孔的二次元角色。画面里不要出现任何文字。"
+            "人物为东亚面孔的二次元角色。"
         ),
         "environment_sheet": (
             "场景设定图。{desc}。广角空镜，日式二维动画背景美术（背景画风格），"
@@ -65,8 +63,7 @@ VISUAL_STYLES: dict[str, dict[str, Any]] = {
         "description": "3D 动画电影质感",
         "render_note": "三维动画渲染（3D animation），电影级材质与体积光，皮克斯式角色设计",
         "character_sheet": (
-            "3D 角色设定图。{desc}。正面半身，纯灰色背景，三维动画渲染，"
-            "材质与发型结构清楚；东亚面孔。画面里不要出现任何文字。"
+            "三维动画渲染，材质与发型结构清楚；东亚面孔。"
         ),
         "environment_sheet": (
             "3D 场景设定图。{desc}。广角空镜，画面里没有人物，三维动画渲染，"
@@ -80,8 +77,7 @@ VISUAL_STYLES: dict[str, dict[str, Any]] = {
         "description": "水墨／国风绘画质感",
         "render_note": "中国水墨画风格，留白构图，墨色浓淡与皴法笔触，宣纸质感",
         "character_sheet": (
-            "水墨人物设定图。{desc}。正面半身，宣纸底，水墨笔触勾勒，"
-            "墨色浓淡分明，留白构图；东亚面孔。画面里不要出现任何文字。"
+            "宣纸底，水墨笔触勾勒，墨色浓淡分明；东亚面孔。"
         ),
         "environment_sheet": (
             "水墨场景设定图。{desc}。广角空镜，无人物，水墨山水／建筑笔触，"
@@ -112,11 +108,27 @@ def visual_style_key(name: object = None) -> str:
     return normalize_visual_style(name)
 
 
-def character_prompt(name: str, appearance: str, style: object = None) -> str:
-    """角色定妆/立绘 prompt：画风决定「剧照」还是「立绘」。"""
+def character_prompt(name: str, appearance: str, style: object = None, *,
+                     identity_anchor: str = "", look_name: str = "") -> str:
+    """单张角色设定板：四视角、局部细节与配色共同锁定角色身份。"""
     spec = get_visual_style(style)
     desc = (appearance or "").strip() or name
-    return spec["character_sheet"].format(desc=desc)
+    return (
+        f"角色《{name}》的单人角色设定板，横向清晰分区，同一人物在所有格子里"
+        f"保持完全一致的脸型、发型、服装、身材比例与配饰。"
+        f"{f'跨造型共用的面部身份锚（只继承脸部与固定五官，服饰和身体状态以本版为准）：{identity_anchor}。' if identity_anchor else ''}"
+        f"{f'本张造型版本：{look_name}。' if look_name else ''}"
+        f"本张造型的服饰、身体状态和随身物：{desc}。"
+        f"统一画风：{spec['character_sheet']}"
+        "上半区左侧占约四成：一张最大的正面头肩特写，眼睛、鼻梁、嘴唇、皮肤或笔触、发际线清楚可辨。"
+        "上半区右侧并排三张等高的全身像，顺序为正面、背面、严格侧面；从头到脚完整入画，"
+        "同一套衣服、鞋履和饰品，站姿自然，面部与左侧特写是同一个人。"
+        "下半区是一小排局部特写：只展示设定中确实存在的标志性饰品、衣服剪裁/纹样/面料、"
+        "首饰或其他身份细节；每格一个局部，不额外创造设定。"
+        "下半区留出独立配色区域，用数个纯色方块展示角色实际使用的主色、辅色和点缀色。"
+        "整张图用素净中性背景、均匀光线、整齐留白与清楚分隔，所有视角和局部保持相同画风。"
+        "画面里不要出现任何文字，包括标题、标签、字母、数字或水印。"
+    )
 
 
 def environment_prompt(name: str, description: str, style: object = None) -> str:

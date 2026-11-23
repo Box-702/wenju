@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
+from threading import RLock
 
 from .agent.tasks import SubAgentRunner, get_runner
 from .config import Settings, get_settings
@@ -20,15 +21,27 @@ from .video.queue import get_manager as get_video_manager
 
 log = logging.getLogger(__name__)
 
+# functools.lru_cache 保护缓存字典，但**不保证首个 cache miss 只执行一次**：
+# 两个并发请求都可能在第一个 Store 尚未 create_all 完成时各自进入构造。对 SQLite
+# 新库来说就是两边同时建表，表现为「table already exists」或「database is locked」。
+_store_lock = RLock()
+_store_instance: Store | None = None
+
 
 @lru_cache
 def settings() -> Settings:
     return get_settings()
 
 
-@lru_cache
 def store() -> Store:
-    return Store(settings().database_url)
+    """进程内唯一 Store；首启建表与轻量迁移必须串行。"""
+    global _store_instance
+    if _store_instance is not None:
+        return _store_instance
+    with _store_lock:
+        if _store_instance is None:
+            _store_instance = Store(settings().database_url)
+        return _store_instance
 
 
 @lru_cache
@@ -48,6 +61,12 @@ def subagent_runner() -> SubAgentRunner:
     except Exception as e:  # noqa: BLE001
         log.warning("后台任务落库不可用（%s），任务历史将仅保留在内存", e)
     return runner
+
+
+@lru_cache
+def chat_turn_queue():
+    from .chat.turn_queue import TurnQueue
+    return TurnQueue(store(), llm(), settings(), subagent_runner())
 
 
 @lru_cache

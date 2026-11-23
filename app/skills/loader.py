@@ -68,11 +68,15 @@ class SkillMeta:
     when_to_use: str = ""
     path: Path | None = None
     audience: str = DEFAULT_AUDIENCE
+    #: 中文显示名（可选）。界面给用户看的是它，模型认的还是 name——
+    #: 英文名是 load_skill 的参数，中文名只是「人话标签」。
+    title: str = ""
 
     def to_line(self) -> str:
         """渲染成目录里的一行（给模型看的短描述）。"""
         when = f"（{self.when_to_use}）" if self.when_to_use else ""
-        return f"- {self.name}：{self.description}{when}"
+        head = f"{self.title}（{self.name}）" if self.title else self.name
+        return f"- {head}：{self.description}{when}"
 
 
 @dataclass
@@ -126,6 +130,7 @@ def _parse(path: Path) -> Skill:
             when_to_use=str(meta_raw.get("when_to_use") or "").strip(),
             path=path,
             audience=audience,
+            title=str(meta_raw.get("title") or "").strip(),
         ),
         body=body,
         files=siblings,
@@ -181,6 +186,7 @@ def parse_skill_text(raw: str, *, name_hint: str = "") -> Skill:
             when_to_use=str(meta_raw.get("when_to_use") or "").strip(),
             path=None,
             audience=audience,
+            title=str(meta_raw.get("title") or "").strip(),
         ),
         body=m.group(2).strip(),
         files=[],

@@ -126,6 +126,8 @@ def build(ctx: ToolContext) -> list:
                 # reference_images——浅合并会把它 {} 盖进现值，等于清空整个
                 # 资产库定妆照（重跑一次风格指南就全丢，2026-11-11 审计发现）。
                 patch.pop("reference_images", None)
+                patch.pop("character_looks", None)
+                patch.pop("character_identity_anchors", None)
                 store.merge_video_style(p.id, patch)
             return result.summary
 
@@ -257,8 +259,8 @@ def build(ctx: ToolContext) -> list:
             # 实际重生成并覆盖整个资产库（2026-11-11 审计修掉的烧钱行为）。
             # 重读一次现值：生图在后台跑了几分钟，期间可能有人改过风格指南。
             current = store.get_video_style(p.id) or {}
-            merged_refs = {**(current.get("reference_images") or {}), **refs}
-            store.merge_video_style(p.id, {"reference_images": merged_refs})
+            from ...media.looks import register_generated_images
+            store.merge_video_style(p.id, register_generated_images(current, script, refs))
             names = "、".join(refs)
             return f"已生成并注册 {len(refs)} 张参考资产：{names}"
 

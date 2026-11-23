@@ -39,7 +39,7 @@ class VisionClient:
 
     def ask(
         self,
-        image_url: str,
+        image_url: str | list[str],
         question: str,
         *,
         max_tokens: int = 600,
@@ -49,6 +49,7 @@ class VisionClient:
         if not self.available:
             raise RuntimeError("未配置视觉模型（VISION_API_KEY，或任一支持视觉的厂商 key）")
 
+        image_urls = [image_url] if isinstance(image_url, str) else image_url
         body: dict[str, Any] = {
             "model": self.config.model,
             "max_tokens": max_tokens,
@@ -56,7 +57,7 @@ class VisionClient:
                 "role": "user",
                 "content": [
                     {"type": "text", "text": question},
-                    {"type": "image_url", "image_url": {"url": image_url}},
+                    *[{"type": "image_url", "image_url": {"url": url}} for url in image_urls],
                 ],
             }],
         }

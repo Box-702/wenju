@@ -94,7 +94,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     "\n"
     "【触发 → 动作】\n"
     "· 新建作品（新建项目 / 新建剧本 / 新开一部）→ create_project；缺标题或原文先问清楚\n"
-    "· 生成初稿（生成 / 初稿 / 第一版 / 出剧本）→ generate_script\n"
+    "· 生成初稿（生成 / 初稿 / 第一版 / 出剧本）→ 先 load_skill 'script-generation'，再 generate_script；长篇还要 load_skill 'novel-serial'\n"
     "· 读作品（那场戏怎么写的 / 有哪些场 / 造型与音色档案）→ read_script，先 outline 再 scenes+query\n"
     "· 改编（改对白 / 改节奏 / 压缩 / 反转 / 口语化）→ run_adaptation，细则见 script-review 技能\n"
     "· 咨询（剧本怎么样）→ ask，凭剧本概况与作者风格给有依据的回答\n"
@@ -116,9 +116,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     "· 记忆：系统提示里的「用户记忆」要主动遵循；说「记住… / 以后都…」→ remember；说「忘掉」→ forget；查旧话 → search_history\n"
     "· 长篇小说（原文超过约 1.4 万字）→ 先加载 novel-serial 技能，不要直接 generate_script\n"
     "\n"
-    "【可用技能】动手之前先 load_skill：本轮要执行某领域动作（生成 / 改编 / 拆解 / 提交 / 批准 / 合成）时，"
-    "第一个工具调用就应该是 load_skill 拿细则；纯只读盘点可先查，一旦动手再补。\n"
-    "   只加载与本轮任务相关的那个技能，不要为求保险全加载一遍；同一轮加载过的不必重复。\n"
+    "【技能】操作类任务先加载目录中的对应技能，再执行；纯只读可先查。每轮只加载相关技能一次。\n"
     "{skill_index}\n"
     "\n"
     "【沟通协议】\n"
@@ -462,6 +460,7 @@ def _finalize_turn(
     save_user: bool = True,
     images: list[dict[str, Any]] | None = None,
     turn_meta: dict[str, Any] | None = None,
+    guard_claims: bool = True,
 ) -> dict[str, Any]:
     """保存消息并返回对话结果。
 
@@ -470,7 +469,8 @@ def _finalize_turn(
     images：本轮用户消息的图片快照（[{id,url,mime,name}]），随消息落库，
     之后每轮重建上下文都会重新取回原图字节。
     """
-    final_text = _guard_unverified_claims(final_text, events)
+    if guard_claims:
+        final_text = _guard_unverified_claims(final_text, events)
     thread = conversation_id or GLOBAL_THREAD
     new_project_id = collector.get("project_id") or project_id
     if save_user:
@@ -940,6 +940,7 @@ def chat_stream(
     runner: SubAgentRunner | None = None,
     images: list[str] | None = None,
     refs: list[dict[str, Any]] | None = None,
+    interrupted: Any = None,
 ):
     """SSE 流式对话：逐条 yield {event, data} 事件。
 
@@ -964,6 +965,7 @@ def chat_stream(
         store, llm, runner,
         conversation_id, project_id, message, meta, images=turn_images, refs=refs,
     )
+    loop.interrupted = interrupted or (lambda: False)
     # 用户消息在流开始时就落库：生成中途断开（客户端切走/刷新）或出错时、
     # 至少保住用户说过的话——此前只在整轮结束时统一保存，一旦中断整段丢失。
     # 图片快照一并落库（历史回放与后续轮次的上下文重建都靠它）。
@@ -972,10 +974,11 @@ def chat_stream(
     events: list[dict[str, Any]] = []
     final_text = ""
     started = time.monotonic()
+    was_interrupted = False
 
     def _pump(msgs: list[dict[str, Any]]):
         """跑一遍内核并实时 yield 事件；正文增量累积到 holder。"""
-        nonlocal final_text
+        nonlocal final_text, was_interrupted
         text_parts: list[str] = []
         last_complete = ""
         for ev in loop.stream(msgs):
@@ -984,9 +987,12 @@ def chat_stream(
                 continue
             if ev.type == "_truncated":
                 continue
+            if ev.type == "_interrupted":
+                was_interrupted = True
+                continue
             if ev.type == "token":
                 text_parts.append(str(ev.data.get("delta") or ""))
-            elif ev.type in ("tool_call", "tool_result"):
+            elif ev.type in ("tool_call", "tool_result", "model_usage"):
                 events.append({"type": ev.type, **ev.data})
             yield {"event": ev.type, "data": ev.data}
         final_text = "".join(text_parts) or last_complete
@@ -994,7 +1000,7 @@ def chat_stream(
     try:
         for sse in _pump(messages):
             yield sse
-        if _claims_unverified(final_text, events):
+        if not was_interrupted and _claims_unverified(final_text, events):
             # 编造拦截：流式路径同样自动重跑一次（done 事件会用重跑结果覆盖正文）。
             log.warning("对话流式轮检测到未执行的动作报告，自动重跑一次")
             for sse in _pump(list(messages) + [user_message(_CORRECTION_PROMPT)]):
@@ -1021,8 +1027,11 @@ def chat_stream(
         yield {"event": "error", "data": {"message": str(e)}}
         return
 
+    if was_interrupted:
+        final_text = (final_text + "\n\n" if final_text else "") + "已按引导停止这一轮。"
     result = _finalize_turn(
         store, collector, conversation_id, project_id, message, meta, final_text, events,
-        save_user=False, turn_meta=_turn_meta(llm, started),
+        save_user=False, turn_meta=_turn_meta(llm, started), guard_claims=not was_interrupted,
     )
+    result["interrupted"] = was_interrupted
     yield {"event": "done", "data": result}

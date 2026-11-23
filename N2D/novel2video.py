@@ -322,6 +322,8 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
         patch = res.data.model_dump()
         # 必须 merge 且剔掉空的 reference_images（浅合并会清空定妆图注册表）
         patch.pop("reference_images", None)
+        patch.pop("character_looks", None)
+        patch.pop("character_identity_anchors", None)
         st.merge_video_style(p.id, patch)
         style_data = st.get_video_style(p.id) or {}
         guide = StyleGuide.model_validate(style_data)
@@ -338,9 +340,10 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
         t0 = time.time()
         refs = build_reference_assets(script, guide)
         current = st.get_video_style(p.id) or {}
-        merged = {**(current.get("reference_images") or {}), **refs}
-        st.merge_video_style(p.id, {"reference_images": merged})
-        registered = merged
+        from app.media.looks import register_generated_images
+        patch = register_generated_images(current, script, refs)
+        st.merge_video_style(p.id, patch)
+        registered = patch["reference_images"]
         _t(f"   完成（{time.time()-t0:.0f}s）：注册 {len(refs)} 张参考资产")
 
     # ---- 6. 摄影提示词 + 7. 批准 ----

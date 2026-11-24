@@ -69,7 +69,7 @@ def learn_from_decision(
         log.warning("从审阅决策学习记忆失败（不阻断审阅）：%s", e)
 
 
-# ---------- 记忆注入（系统提示） ----------
+# ---------- 记忆目录（系统提示） ----------
 
 
 def format_memory_note(
@@ -79,23 +79,26 @@ def format_memory_note(
     conversation_id: str | None,
     max_items: int = 12,
 ) -> str:
-    """把当前可见记忆格式化成系统提示的一个小节；没有记忆返回空串。
-
-    global → project → conversation 顺序（list_memories 已排好），
-    后出现的更具体，模型按「具体覆盖一般」理解。
-    """
+    """只注入记忆目录；正文由 Agent 按需调用 read_memory/search_memory。"""
     try:
         rows = store.list_memories(project_id=project_id, conversation_id=conversation_id)
     except Exception as e:  # noqa: BLE001
         log.warning("读取记忆失败（跳过注入）：%s", e)
         return ""
-    rows = [m for m in rows if m.content.strip()][:max_items]
+    rows = [m for m in rows if m.content.strip()]
     if not rows:
         return ""
-    lines = [f"- （{_KIND_LABELS.get(m.kind, m.kind)}）{m.content.strip()}" for m in rows]
+    groups = {}
+    for m in rows:
+        groups.setdefault((m.kind, m.scope), []).append(m)
+    lines = []
+    for (kind, scope), items in groups.items():
+        label = _KIND_LABELS.get(kind, kind)
+        previews = "；".join(f"{m.id}:{m.content.strip()[:24]}" for m in items[:3])
+        lines.append(f"- {label}/{scope}（{len(items)} 条）：{previews}")
     return (
-        "\n\n[用户记忆]\n以下是过去积累的用户偏好与项目决定，"
-        "改编和交流时遵循它们；与本次指令冲突时以本次指令为准：\n"
+        "\n\n[记忆目录]\n以下只列索引，不是完整事实。涉及既往偏好或项目决定时，"
+        "用 read_memory(id) 或 search_memory(query) 按需读取正文；本次用户指令优先：\n"
         + "\n".join(lines)
     )
 

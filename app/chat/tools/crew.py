@@ -219,7 +219,9 @@ def build(ctx: ToolContext) -> list:
         )
 
     @tool
-    def generate_reference_assets(project_id: str, notes: str = "", entities: str = "") -> str:
+    def generate_reference_assets(project_id: str, notes: str = "", entities: str = "",
+                                  provider_id: str = "", model_name: str = "",
+                                  location_state_id: str = "") -> str:
         """启动参考资产流水线：为角色与场景生成定妆图，用视觉模型质检后注册为全局视觉参考，供视频生成锁住跨镜一致性。在后台运行。
 
         参数：project_id=项目 id；entities=只给这些角色/场景出图（逗号或顿号分隔的名字，
@@ -231,8 +233,36 @@ def build(ctx: ToolContext) -> list:
         version = store.latest_version(p)
         if version is None:
             return "还没有剧本版本，请先生成初稿。"
+        if store.has_pending_model_choice(p.id, ctx.collector.get("conversation_id") or "", "image"):
+            return "请先在模型选择卡上确认，不能在卡片待确认时提交生图。"
+        chosen = store.take_confirmed_model_choice(
+            p.id, ctx.collector.get("conversation_id") or "", "image")
+        if chosen:
+            provider_id, model_name = chosen
+        elif not (provider_id and model_name):
+            from .generation_models import options
+            if len(options(store, "image")) > 1:
+                return "请先从模型选择卡确认本次图片模型。"
+        image_client = None
+        if provider_id or model_name:
+            if not provider_id or not model_name:
+                return "请同时提供已确认的图片厂商 id 和模型名。"
+            from .generation_models import resolve
+            from ...llm.registry import _from_db_row
+            from ...llm.image import build_image_client
+            try:
+                row, selected = resolve(store, "image", provider_id, model_name)
+            except ValueError as e:
+                return str(e)
+            image_client = build_image_client(_from_db_row(row, override_model=selected))
         script = version.script
         only = [x.strip() for x in str(entities or "").replace("、", ",").split(",") if x.strip()]
+        state_id = (location_state_id or "").strip()
+        if state_id:
+            state = ((store.get_video_style(p.id) or {}).get("location_states") or {}).get(state_id)
+            if not state:
+                return "场景状态不存在，请先在资产库建立状态。"
+            only = [state["location_id"]]
 
         def _run(task):
             from ...domain import StyleGuide
@@ -247,9 +277,11 @@ def build(ctx: ToolContext) -> list:
 
             refs = build_reference_assets(
                 script, guide,
+                image_client=image_client,
                 on_progress=_progress,
                 notes=_parse_notes(notes),
                 entities=only or None,
+                location_state_ids=[state_id] if state_id else None,
             )
             if not refs and only:
                 _progress("名单里的名字都对不上现有角色/场景，没有生成任何图")
@@ -260,8 +292,16 @@ def build(ctx: ToolContext) -> list:
             # 重读一次现值：生图在后台跑了几分钟，期间可能有人改过风格指南。
             current = store.get_video_style(p.id) or {}
             from ...media.looks import register_generated_images
-            store.merge_video_style(p.id, register_generated_images(current, script, refs))
-            names = "、".join(refs)
+            patch = register_generated_images(current, script, refs)
+            store.merge_video_style(p.id, patch)
+            # 返回真正入库的版本 id；同一地点重生图会新建状态，不能把旧地点 id
+            # 交给对话卡片，否则它会预览旧基础图，让用户误以为新图没变化。
+            registered = {
+                item.get("image"): sid
+                for registry in (patch.get("character_looks") or {}, patch.get("location_states") or {})
+                for sid, item in registry.items() if isinstance(item, dict) and item.get("image")
+            }
+            names = "、".join(registered.get(url, raw_id) for raw_id, url in refs.items())
             return f"已生成并注册 {len(refs)} 张参考资产：{names}"
 
         task_id = runner.start("参考资产", _run, project_id=p.id) if runner else "local"

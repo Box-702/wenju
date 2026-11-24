@@ -11,7 +11,7 @@
 资产与版本全部落库。
 
 ```
-用户 ←→ 对话 Agent（手写工具循环，45 个工具目录；基础工具常驻，其余按技能解锁）
+用户 ←→ 对话 Agent（手写工具循环，50 个工具目录；基础工具常驻，其余按技能解锁）
           ├── 改编工作流（LangGraph 7 节点 + interrupt 人审）→ 剧本版本
           ├── 剧组三函数（导演 → 美术 → 摄影）→ 分镜 / 视觉锚 / 视频提示词
           ├── 出片（Provider 抽象 → 队列 → 巡检 → 拼接 → 配音字幕）
@@ -42,7 +42,7 @@
 | 想改 | 去哪 |
 |---|---|
 | 写作 / 分镜规则 | `app/skills/*/SKILL.md`（不用动代码，改完跑 `python -m evals.run`） |
-| 对话行为与工具 | `app/chat/loop.py`（内核）+ `app/chat/tools/*`（45 个工具按域拆） |
+| 对话行为与工具 | `app/chat/loop.py`（内核）+ `app/chat/tools/*`（50 个工具按域拆） |
 | 改编流程 | `app/agent/graph.py` + `nodes.py` |
 | 模型厂商 | `app/llm/providers.py` 加一条 `ProviderSpec` |
 | 出片供应商 | `app/video/providers/` + `registry.py` |
@@ -61,15 +61,15 @@ app/
 ├── home.py                                 产品主目录 ~/.wenju（D-44：app.db + workspace/ + runs/，懒迁移）
 ├── keys.py                                 同厂商多把 key 的轮换与冷却（「哪把能过用哪把」）
 ├── domain.py / store.py / workspace.py      领域模型 / 持久化 / 文件系统
-├── memory.py                               三层用户记忆 + 会话滚动摘要
+├── memory.py                               用户记忆目录 + 会话滚动摘要
 │
 ├── skills/     技能（长指令）—— SKILL.md 按需加载，代码只留装配
 ├── llm/        模型接入层   —— 对上提供能力，对下屏蔽厂商
 ├── pipeline/   内容生产线   —— 纯逻辑，不依赖 LangGraph / HTTP
 ├── agent/      改编智能体   —— LangGraph 状态图（固定流程 + interrupt 人机协同）+ 后台任务运行器
-├── chat/       对话编排层   —— 手写工具循环（loop.py）+ 会话消息队列（turn_queue.py）+ 工具实现（chat/tools/）
+├── chat/       对话编排层   —— 手写工具循环（loop.py）+ 会话消息队列（turn_queue.py）+ 工具实现（chat/tools/，含 generation_models.py）
 ├── crew/       剧组 Agent   —— 导演 / 美术指导 / 摄影指导
-├── media/      参考资产层   —— 资产键解析（assets）/ 角色造型选型（looks，D-80）/ 定妆图 → 质检 → 注册 → 回填 / 配音 / 字幕 / 白模施工单（D-54）
+├── media/      参考资产层   —— 资产键解析（assets）/ 角色造型（looks）/ 地点状态（location_states，D-82）/ 图片质检注册回填 / 配音 / 字幕 / 白模施工单
 └── video/      视频生成层   —— Provider 抽象 + 队列 + 巡检 + 连续性 + 拼接 + 成片合成 + 质检 + 用量摘要（D-53）
 
 N2D/                          小说→成片直跑工作流（体检/批处理用，与产品共用同一套 app/* 函数）
@@ -85,16 +85,16 @@ N2D/                          小说→成片直跑工作流（体检/批处理�
 | 包 / 模块 | 行数 | 说明 |
 |---|---|---|
 | `video/` | 4417 | Provider 适配 + 队列 + 巡检 + 拼接 + 合成 + 质检 + 用量摘要 |
-| `chat/` | 4900 | 内核 + 编排 + 会话消息队列 + **45 个工具实现**（按域拆 12 个模块） |
-| `media/` | 3300 | 参考资产 / 配音 / 字幕 / 白模施工 / 资产实体层 |
-| `api/` | 3743 | 10 个域模块（+ common/schemas/deps），**109 条路由** |
+| `chat/` | 5090 | 内核 + 编排 + 会话消息队列 + **50 个工具实现**（2026-11-24 实测） |
+| `media/` | 3640 | 参考资产 / 地点状态 / 配音 / 字幕 / 白模施工 / 资产实体层 |
+| `api/` | 3909 | REST 接口（含场景状态与记忆编辑） |
 | `pipeline/` | 4064 | 内容生产线：导入、两阶段生成、patch、评审、题材画像、建图、提示词包、故事规划、台词修复 |
 | `crew/` | 3537 | 三个剧组角色的编排（提示词正文已外置到 `skills/`） |
-| `store.py` | 2084 | **19 张表**的持久化层（含出片意图 claim 表 `video_job_claims`，见 D-38） |
+| `store.py` | 2262 | 持久化层（含出片意图 claim 表 `video_job_claims`，见 D-38） |
 | `agent/` | 1780 | 7 节点图 + 后台任务运行器 |
 | `llm/` | 1461 | 门面 + 厂商表 + 视觉/文生图/TTS 客户端 |
 | `skills/` | 349 | 只有加载器；**长指令在 10 个 SKILL.md 里**（不计入 Python 行数） |
-| `domain.py` | 636 | Pydantic 领域模型（含 id 格式约束） |
+| `domain.py` | 648 | Pydantic 领域模型（含 id 格式约束） |
 
 `app/api/` 内部再分一层，避免路由堆在一个大文件里：
 
@@ -248,7 +248,7 @@ OpenAI 兼容服务都支持它——**MiniMax 实测报 `2013 unknown response_
 
 先给结论，因为这块最容易想歪：
 
-> **只有一个 LLM Agent（对话编排层），调度 45 个工具。剧组三个「角色」是函数，不是进程。**
+> **只有一个 LLM Agent（对话编排层），调度 50 个工具。剧组三个「角色」是函数，不是进程。**
 > **「按需加载」只发生在主 Agent 那一层；剧组三个角色的技能是每次全量拼进系统提示的。**
 
 为什么不做进程级多 Agent（每个角色独立上下文、独立工具集、互相通信）：它们各自只做
@@ -260,7 +260,7 @@ OpenAI 兼容服务都支持它——**MiniMax 实测报 `2013 unknown response_
 
 | Agent | 角色 | 职责 |
 |---|---|---|
-| **ChatConductor** | 前厅 / 调度 | 绑定 45 个工具理解用户意图，把请求路由到确定性流水线或后台剧组任务 |
+| **ChatConductor** | 前厅 / 调度 | 绑定 50 个工具理解用户意图，把请求路由到确定性流水线或后台剧组任务 |
 
 **内核是手写的显式循环**（`app/chat/loop.py`，2026-11-05 替换掉 LangGraph 的 StateGraph + ToolNode）：
 
@@ -282,7 +282,7 @@ for step in range(max_steps):        # 上限 8 轮，防止无限工具调用
 系统提示分两层：**触发器留在提示词**（决定该调哪个工具，每轮都要用），**执行细则进技能**
 （`audience: main` 的八个 SKILL.md，由 `load_skill` 工具按需拉）。见 [`DECISIONS.md` D-14](DECISIONS.md)。
 
-45 个工具的实现按域拆在 `app/chat/tools/`（conductor 只留编排，`build_chat_tools` 是装配壳）：
+50 个工具的实现按域拆在 `app/chat/tools/`（conductor 只留编排，`build_chat_tools` 是装配壳）：
 `screenplay.py`（项目与改编）/ `project.py`（换作品，D-77）/ `source.py`（读原文）/ `script_reader.py`（读作品）/
 `production.py`（一键流水线）/ `crew.py`（剧组）/ `asset.py`（资产与音色）/
 `video.py`（出片与素材）/ `memory_tools.py`（记忆与技能），
@@ -296,7 +296,7 @@ for step in range(max_steps):        # 上限 8 轮，防止无限工具调用
 | 剧组与素材 | `breakdown_scenes` `generate_style_guide` `generate_video_prompts` `generate_reference_assets` `clone_voice` `list_assets` |
 | 一键流水线 | `start_production` |
 | 出片 | `approve_video_prompts` `submit_videos` `rerun_video` `edit_shot_prompt` `cancel_video_job` `finalize_film` |
-| 状态与记忆 | `get_status` `remember` `recall` `forget` |
+| 状态与记忆 | `get_status` `remember` `recall` `read_memory` `search_memory` `forget` |
 | 技能 | `load_skill` |
 
 **批准是服务端硬闸门（D-43）**：`approve_video_prompts` 只「发起批准请求」（落 pending + 对话确认卡片），
@@ -703,5 +703,3 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
 | 加一个技能 | 建 `app/skills/<name>/SKILL.md`（frontmatter 必填 `name` + `description` + `audience`），代码里 `render_skill(name, **vars)` 取正文 |
 | 加一个查询能力 | **不要加新工具**——先看 `get_status` 的 `detail` 参数能不能扩。五个查询工具合并成一个就是因为模型会选错，选错后它会编结果 |
 | 改完工具名 | 全仓搜一遍技能里的旧名；`tests/test_skills.py::test_skill_tool_refs_exist` 会拦住漏改（技能里提到的工具必须真实存在） |
-
-

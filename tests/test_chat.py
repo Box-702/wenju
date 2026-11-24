@@ -32,7 +32,7 @@ def test_side_effect_tool_capabilities_are_skill_gated(store, llm):
         "blockout_build": "blockout",
         "switch_project": "project-switch",
     }
-    assert len(tools) == 45
+    assert len(tools) == 50
     for name, skill in required.items():
         assert (tools[name].metadata or {}).get("required_skill") == skill
     assert (tools["generate_script"].metadata or {}).get("conditional_skill") == "novel-serial"
@@ -399,7 +399,7 @@ def test_format_memory_note(store):
     assert format_memory_note(store, project_id=None, conversation_id=None) == ""
     store.add_memory(kind="preference", scope="global", content="喜欢短句")
     note = format_memory_note(store, project_id="p1", conversation_id="c1")
-    assert "[用户记忆]" in note and "喜欢短句" in note
+    assert "[记忆目录]" in note and "喜欢短句" in note
 
 
 def test_compress_history_truncates_without_llm(store):

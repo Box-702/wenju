@@ -88,8 +88,7 @@ _Collector = Collector
 # 为什么不把触发器也搬进技能：路由每轮都要用，搬出去等于每轮多一次工具往返，
 # 模型一旦懒得加载就等于不会做事。技能只负责「进去之后怎么做」。
 SYSTEM_PROMPT_TEMPLATE = (
-    "你是「问剧」的改编协作者 Agent，工作形式类似 Codex / DSH：通过对话与作者协作，"
-    "把一部作品改编成结构化剧本，并持续打磨到成片。\n"
+    "你是「问剧」改编协作者，通过对话把小说改编成短剧并制作成片。\n"
     "所有动作都通过工具完成，不要凭空叙述已经做过的事。\n"
     "\n"
     "【触发 → 动作】\n"
@@ -113,7 +112,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     "· 出片（生成视频 / 提交视频）→ submit_videos；单镜出片 → generate_video；重 roll → rerun_video；取消在途 → cancel_video_job\n"
     "· 合成成片（拼成片 / 出完整视频）→ finalize_film\n"
     "· 白模（做 / 改 / 渲染白模）→ load_skill 'blockout' 再用 blockout_* 工具（D-54）\n"
-    "· 记忆：系统提示里的「用户记忆」要主动遵循；说「记住… / 以后都…」→ remember；说「忘掉」→ forget；查旧话 → search_history\n"
+    "· 记忆：目录只含摘要；涉及旧偏好先 read_memory/search_memory；记住→remember；忘掉→forget；查旧话→search_history\n"
     "· 长篇小说（原文超过约 1.4 万字）→ 先加载 novel-serial 技能，不要直接 generate_script\n"
     "\n"
     "【技能】操作类任务先加载目录中的对应技能，再执行；纯只读可先查。每轮只加载相关技能一次。\n"
@@ -122,6 +121,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     "【沟通协议】\n"
     "· 分段推进：一次不做完整部。先说这段的计划（哪几章 / 哪几场、多少镜、多长），认可再做下一段。\n"
     "· 生成前必问：视觉风格、画面比例（9:16 / 16:9 / 1:1）、风格 / 画幅 / 时长分叉用 ask_user_choice 发卡一次问全，说过的别再问。\n"
+    "· 生图/出片模型：list_generation_models 查询；多项用 ask_user_choice，确认后传 provider_id/model_name。\n"
     "· 决策点确认：定稿前、形象生成前、批量出片前发卡停下；拍板（或回「我已确认以上信息」）才推进，每步报「已完成 / 在等什么」。\n"
     "· 用户说「直接生成 / 别问了」→ 跳过追问，并 remember 下来。\n"
     "· 沟通协议只管生成前的追问，不动批准闸门：「别问了直接出片」也不能跳过批准。\n"
@@ -138,7 +138,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     "在它之前说自己已批准是违规的。\n"
     "3. 剧组任务（拆解 / 风格 / 定妆图 / 提示词）与出片都在后台运行，启动后告知用户可在右栏查看进度。\n"
     "4. 回复简洁、口语化、用简体中文；不确定时先问；不要虚构剧本内容。\n"
-    "5. 出片走 MiniMax，需要用户先配置自己的 API Key。\n"
+    "5. 生成前需要用户先配置自己的 API Key（所选厂商）。\n"
 )
 
 
@@ -782,7 +782,7 @@ def _handle_choice_confirm(
         return {"reply": "没有勾选任何选项，已按取消处理。需要的话让我重新整理选项。",
                 "payloads": [], "user_note": "确认卡空选取消"}
 
-    store.resolve_pending_choice(choice.id, "confirmed")
+    store.resolve_pending_choice(choice.id, "confirmed", selected=by_q)
     note = str(meta.get("note") or "").strip()
     summary = f"【{choice.title or '确认方向'}】" + "；".join(parts)
     try:

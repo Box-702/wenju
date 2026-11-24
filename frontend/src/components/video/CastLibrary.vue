@@ -28,6 +28,27 @@ const saving = ref('')        // 正在保存的角色名
 
 const characters = computed(() => lib.value?.characters || [])
 const locations = computed(() => lib.value?.locations || [])
+const newState = ref({})
+
+async function addLocationState(loc) {
+  const name = (newState.value[loc.loc_id]?.name || '').trim()
+  const description = (newState.value[loc.loc_id]?.description || '').trim()
+  if (!name || !description) { notify('请填写状态名称和画面描述'); return }
+  try {
+    await api(`/projects/${store.pid}/location-states`, 'POST', {
+      location_id: loc.loc_id, name, description,
+    })
+    newState.value[loc.loc_id] = {}
+    await load()
+  } catch (e) { notify(`添加状态失败：${e.message}`) }
+}
+
+async function chooseLocationState(sceneId, stateId) {
+  try {
+    await api(`/projects/${store.pid}/scene/${sceneId}/location-state`, 'PUT', { state_id: stateId })
+    await load()
+  } catch (e) { notify(`选择场景状态失败：${e.message}`) }
+}
 const warnings = computed(() => lib.value?.warnings || [])
 const styleLabel = computed(() => {
   const map = { realistic: '实拍写实', anime: '二次元（漫剧）', '3d': '三维动画', ink: '水墨国风' }
@@ -48,6 +69,7 @@ async function load() {
   loading.value = true
   try {
     lib.value = await api(`/projects/${store.pid}/library`)
+    for (const loc of lib.value.locations || []) newState.value[loc.loc_id] ||= { name: '', description: '' }
   } catch (e) {
     notify(`资产库读取失败：${e.message}`)
   } finally {
@@ -90,8 +112,8 @@ async function patchLocation(name, change) {
 const uploadTarget = ref(null)   // { kind: 'character' | 'location', name }
 const fileInput = ref(null)
 
-function pickImage(kind, name) {
-  uploadTarget.value = { kind, name }
+function pickImage(kind, name, stateId = '') {
+  uploadTarget.value = { kind, name, stateId }
   fileInput.value?.click()
 }
 
@@ -115,7 +137,10 @@ async function onImagePicked(e) {
     }
     const { url } = await res.json()
     if (t.kind === 'character') await patchCharacter(t.name, { image: url })
-    else await patchLocation(t.name, { image: url })
+    else if (t.kind === 'state') {
+      await api(`/projects/${store.pid}/location-states/${t.stateId}/image`, 'PUT', { image: url })
+      await load()
+    } else await patchLocation(t.name, { image: url })
   } catch (err) {
     notify(`图片上传失败：${err.message}`)
     saving.value = ''
@@ -241,6 +266,22 @@ watch(() => props.open, (open) => { if (open) load() })
               <div class="name-row"><span class="name">{{ l.name }}</span></div>
               <div class="meta">{{ l.scenes }} 场</div>
               <div class="look">{{ l.description || '（还没有环境描述）' }}</div>
+              <div v-for="state in l.states" :key="state.id" class="meta">
+                {{ state.name }} · {{ state.image ? '有图' : '待上传图片' }}
+                <button class="ghost" @click="pickImage('state', l.name, state.id)">上传此状态图片</button>
+              </div>
+              <div v-for="sceneId in (lib.location_scenes?.[l.loc_id] || [])" :key="sceneId" class="row">
+                <label>{{ sceneId }} 使用</label>
+                <select :value="lib.location_state_selections?.scenes?.[sceneId] || `location_state_${l.loc_id}_base`"
+                        @change="chooseLocationState(sceneId, $event.target.value)">
+                  <option v-for="state in l.states" :key="state.id" :value="state.id">{{ state.name }}</option>
+                </select>
+              </div>
+              <div class="row">
+                <input v-model="newState[l.loc_id].name" placeholder="新状态名称，如夜晚停电" />
+                <input v-model="newState[l.loc_id].description" placeholder="画面描述" />
+                <button class="ghost" @click="addLocationState(l)">添加状态</button>
+              </div>
             </div>
           </div>
         </div>

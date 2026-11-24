@@ -59,12 +59,37 @@ def build(ctx: ToolContext) -> list:
         return "当前生效的记忆：\n" + "\n".join(lines)
 
     @tool
+    def read_memory(memory_id: str) -> str:
+        """按记忆目录中的 id 读取一条记忆正文；只能读取当前作品/对话可见的记忆。"""
+        rows = store.list_memories(project_id=ctx.collector.get("project_id"),
+                                   conversation_id=ctx.collector.get("conversation_id"))
+        row = next((m for m in rows if m.id == memory_id), None)
+        return f"[{row.id}] {row.content}" if row else "这条记忆不存在或当前不可见。"
+
+    @tool
+    def search_memory(query: str, limit: int = 5) -> str:
+        """按关键词在当前可见的长期记忆中检索；返回少量相关条目和 id，必要时再用 read_memory 读全文。"""
+        q = (query or "").strip().lower()
+        if not q:
+            return "请给出要找的关键词。"
+        rows = store.list_memories(project_id=ctx.collector.get("project_id"),
+                                   conversation_id=ctx.collector.get("conversation_id"))
+        hits = [m for m in rows if q in m.content.lower()]
+        if not hits:
+            return "没有匹配的记忆。"
+        return "\n".join(f"- [{m.id}] {m.content[:180]}" for m in hits[:max(1, min(limit, 10))])
+
+    @tool
     def forget(memory_id: str) -> str:
         """删除一条记忆（用户说「忘掉 / 删掉那条「…」的记忆」时调用）。先用 recall 拿到 id 再删，不要凭记忆猜 id。参数：memory_id=recall 列出的方括号 id。"""
         # store.delete_memory 早就有，此前没暴露成工具——remember 单向（审计缺口）。
         mid = (memory_id or "").strip()
         if not mid:
             return "要删除的记忆 id 不能为空，先用 recall 查 id。"
+        visible = store.list_memories(project_id=ctx.collector.get("project_id"),
+                                      conversation_id=ctx.collector.get("conversation_id"))
+        if not any(m.id == mid for m in visible):
+            return "没有找到记忆，或这条记忆在当前作品/对话中不可见，不能删除。"
         if store.delete_memory(mid):
             return f"已删除记忆 {mid}。"
         return f"没有找到记忆 {mid}——先用 recall 确认可见的 id（已删的或不属于当前范围的去不掉）。"
@@ -137,4 +162,4 @@ def build(ctx: ToolContext) -> list:
             lines.append(f"- [{mid}] {role}：{excerpt}")
         return "\n".join(lines)
 
-    return [load_skill, remember, recall, forget, search_history]
+    return [load_skill, remember, recall, read_memory, search_memory, forget, search_history]

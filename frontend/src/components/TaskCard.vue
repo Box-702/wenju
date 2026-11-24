@@ -24,6 +24,15 @@
         {{ state === 'running' ? '正在排队启动…' : '这一步没有留下过程记录。' }}
       </p>
       <p v-if="resultText" class="tc-result">{{ resultText }}</p>
+      <div v-if="referenceImages.length" class="tc-images">
+        <button v-for="a in referenceImages" :key="a.id" type="button" class="tc-image"
+          :title="`查看${a.name}大图`" @click="store.assetPreview = a">
+          <img :src="a.image" :alt="a.name" />
+          <span>{{ a.name }} · 查看大图</span>
+        </button>
+      </div>
+      <button v-else-if="isReference && state === 'done'" class="tc-link" type="button"
+        @click="store.wbView = 'roles'">去资产库查看图片</button>
     </div>
   </div>
 </template>
@@ -42,6 +51,7 @@
 // =====================================================================
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '../api'
+import { store, loadAssetIndex } from '../stores/app'
 
 const props = defineProps({
   payload: { type: Object, required: true },
@@ -49,7 +59,9 @@ const props = defineProps({
 
 const open = ref(false)
 const task = ref(null)
+const referenceImages = ref([])
 let timer = null
+let completed = false
 
 const title = computed(() => props.payload.name || '后台任务')
 const state = computed(() => {
@@ -66,10 +78,39 @@ const stateLabel = computed(() => ({
 }[state.value]))
 const steps = computed(() => task.value?.steps || [])
 const resultText = computed(() => {
-  if (state.value === 'done') return task.value?.result || ''
+  if (state.value === 'done') {
+    const raw = task.value?.result || ''
+    if (isReference.value) {
+      const count = raw.match(/已生成并注册 (\d+) 张参考资产/)
+      if (count) return `已生成 ${count[1]} 张图片，可在下方查看。`
+    }
+    return raw
+  }
   if (state.value === 'failed') return task.value?.result || task.value?.error || ''
   return ''
 })
+const isReference = computed(() => props.payload.name === '参考资产')
+
+async function showReferenceImages(result) {
+  const pid = props.payload.project_id
+  const ids = String(result || '').match(/已生成并注册 \d+ 张参考资产：(.+)/)?.[1]
+    ?.split('、').map(s => s.trim()).filter(Boolean) || []
+  if (!pid || !ids.length) return
+  try {
+    const lib = await api(`/projects/${pid}/library`)
+    const all = [
+      ...(lib.characters || []).flatMap(c => [
+        { id: c.char_id, name: c.name, kind: 'character', image: c.image },
+        ...(c.looks || []).map(l => ({ id: l.id, name: `${c.name} · ${l.name}`, kind: 'character', image: l.image })),
+      ]),
+      ...(lib.locations || []).flatMap(l => [
+        { id: l.loc_id, name: l.name, kind: 'location', image: l.image },
+        ...(l.states || []).map(s => ({ id: s.id, name: `${l.name} · ${s.name}`, kind: 'location', image: s.image })),
+      ]),
+    ]
+    referenceImages.value = all.filter(a => ids.includes(a.id) && a.image)
+  } catch { /* 状态文字仍会显示，用户可去资产库查看 */ }
+}
 
 async function poll() {
   const id = props.payload.task_id
@@ -79,6 +120,13 @@ async function poll() {
     task.value = t
     if (t.status === 'done' || t.status === 'failed') {
       if (timer) { clearInterval(timer); timer = null }
+      if (!completed) {
+        completed = true
+        if (t.status === 'done' && isReference.value) {
+          store.assetRefreshSeq += 1
+          await Promise.all([loadAssetIndex(), showReferenceImages(t.result)])
+        }
+      }
     }
   } catch {
     // 任务查不到（进程重启且无快照）：停在当前显示，不打扰对话
@@ -87,8 +135,8 @@ async function poll() {
 }
 
 onMounted(() => {
-  poll()
   timer = setInterval(poll, 2500)
+  poll()
 })
 onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 </script>
@@ -150,4 +198,10 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
   background: rgba(255, 255, 255, .04); font-size: 11.5px; line-height: 1.55;
   color: var(--muted); white-space: pre-wrap;
 }
+.tc-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.tc-image { width: 150px; padding: 0; overflow: hidden; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--surface-2); color: var(--ink); text-align: left; cursor: pointer; }
+.tc-image img { display: block; width: 100%; height: 96px; object-fit: cover; }
+.tc-image span { display: block; padding: 5px 7px; font-size: 11px; }
+.tc-link { margin-top: 8px; border: 0; padding: 0; background: none; color: var(--accent); cursor: pointer; }
 </style>

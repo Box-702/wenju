@@ -78,7 +78,9 @@ def build_library(
     style = normalize_style(style, script)
     idx = build_index(script)
     from .looks import all_looks, base_id
+    from .location_states import all_states, base_id as location_base_id
     looks = all_looks(style, script)
+    location_states = all_states(style, script)
     appearances = dict(style.get("character_appearances") or {})
     environments = dict(style.get("environment_descriptions") or {})
     images = dict(style.get("reference_images") or {})
@@ -128,11 +130,13 @@ def build_library(
     locations: list[dict[str, Any]] = []
     for loc in script.locations:
         st = stats.get(loc.id, {"lines": 0, "scenes": 0})
+        base_state = location_states.get(location_base_id(loc.id))
         locations.append({
             "loc_id": loc.id,
             "name": loc.name,
             "description": lookup(environments, loc.id, idx) or (loc.description or ""),
-            "image": lookup(images, loc.id, idx),
+            "image": (base_state or {}).get("image") or lookup(images, loc.id, idx),
+            "states": [s for s in location_states.values() if s.get("location_id") == loc.id],
             "scenes": st["scenes"],
             "has_image": bool(lookup(images, loc.id, idx)),
             "note": art_notes.get(loc.id, ""),

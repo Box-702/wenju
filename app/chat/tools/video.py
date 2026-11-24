@@ -13,6 +13,7 @@ from typing import Any
 from langchain_core.tools import tool
 
 from .context import PROMPT_STATUS_LABELS, ToolContext, short
+from .generation_models import options as generation_options, resolve as resolve_generation_model
 
 # 任务状态 -> 中文展示。提示词状态用 context.PROMPT_STATUS_LABELS（单一来源）。
 JOB_STATUS_LABELS = {
@@ -24,6 +25,44 @@ JOB_STATUS_LABELS = {
 def build(ctx: ToolContext) -> list:
     """装配出片域工具。"""
     store, runner = ctx.store, ctx.runner
+
+    @tool
+    def list_generation_models(kind: str) -> str:
+        """列出当前可用的图片或视频生成模型。kind=image 或 video。生成前用结果给用户发确认卡；不要猜模型名。"""
+        try:
+            rows = generation_options(store, kind)
+        except ValueError as e:
+            return str(e)
+        if not rows:
+            return "没有已配置且启用的生成模型，请先到模型设置配置。"
+        project_id = ctx.current_project_id or ctx.collector.get("project_id")
+        if kind == "image" and len(rows) > 1 and project_id:
+            question = {
+                "question": "这次生成使用哪个模型？", "multi": False,
+                "options": [
+                    {"id": f"q1o{i}", "label": f"{r['label']} · {r['model']}",
+                     "desc": "按所选模型本次计费；价格请以厂商账单为准", "recommended": False,
+                     "provider_id": r["provider_id"], "model_name": r["model"]}
+                    for i, r in enumerate(rows, start=1)
+                ],
+            }
+            choice = store.create_pending_choice(
+                project_id=project_id,
+                conversation_id=ctx.collector.get("conversation_id") or "",
+                title="选择图片模型" if kind == "image" else "选择视频模型",
+                questions=[question],
+            )
+            ctx.collector["payloads"].append({
+                "type": "option_confirm", "choice_id": choice.id,
+                "project_id": project_id, "title": choice.title,
+                "questions": [question], "status": "pending",
+            })
+            return (
+                "已向用户展示模型选择卡，本轮到此为止；等待用户点选确认后再生成。"
+                "确认后直接调用生成工具；服务端会把这次选择应用到一次生成任务。"
+                "不要向用户展示 provider_id，也不要猜测质量、速度或费用。"
+            )
+        return "\n".join(f"- {r['label']} / {r['model']}（provider_id: {r['provider_id']}）" for r in rows)
 
     @tool
     def approve_video_prompts(project_id: str, shot_ids: str = "") -> str:
@@ -67,12 +106,15 @@ def build(ctx: ToolContext) -> list:
         shot_ids: str = "",
         reference_asset_ids: str = "",
         ratio: str = "",
+        provider_id: str = "",
+        model_name: str = "",
     ) -> str:
         """提交视频生成：为提示词已批准的镜头启动批量出片（串行推进，前一镜成片自动作为后一镜的接力参考）。参数：project_id=项目 id；shot_ids 可选（逗号分隔只出指定镜头），留空=全部已批准的镜头；reference_asset_ids 可选（逗号分隔的素材 id，当作本次出片的参考锚，如白模视频，id 从 list_assets 取）；ratio=画面比例（9:16 / 16:9 / 1:1 等，留空=用全局默认 16:9）。
 
         ratio 必须能传下来：用户刚回答过画幅（Agent 问过就得用），批量这条路
         不能把答案吞掉——2026-11-19 实测，Agent 问完画幅走批量提交，
-        批量接口没有画幅参数，结果按默认横屏出片，问了等于没问。"""
+        批量接口没有画幅参数，结果按默认横屏出片，问了等于没问。
+        provider_id/model_name 是用户在确认卡上选中的本次模型；两者同时提供。"""
         p = ctx.project(project_id)
         v = ctx.latest_video_version(p)
         if v is None or not v.shots:
@@ -103,6 +145,14 @@ def build(ctx: ToolContext) -> list:
         # 视频厂商按 DB 里 enabled 的行来（别写死——写死过一次，用户选了方舟
         # 而 Agent 打去了欠费的 MiniMax 户，402；见 pick_video_provider 注释）。
         video_provider, video_model = pick_video_provider()
+        if provider_id or model_name:
+            if not provider_id or not model_name:
+                return "请同时提供已确认的视频厂商 id 和模型名。"
+            try:
+                row, video_model = resolve_generation_model(store, "video", provider_id, model_name)
+            except ValueError as e:
+                return str(e)
+            video_provider = row.name
         # 画幅：用户明确给过就照给（留空=全局默认）。两条提交路径都要带上——
         # 单镜提交早就支持 ratio，批量这条 2026-11-19 才补上。
         ratio_clean = (ratio or "").strip()
@@ -152,7 +202,8 @@ def build(ctx: ToolContext) -> list:
                 return not_approved
             # 整片：走批次（串行推进，前一镜成片自动作为后一镜接力参考）。
             batch = generate_batch(p.id, BatchCreateRequest(
-                version_id=v.id, aspect_ratio=ratio_clean or None))
+                version_id=v.id, aspect_ratio=ratio_clean or None,
+                provider=video_provider, model=video_model))
         except Exception as e:  # noqa: BLE001  FastAPI HTTPException 也走这里，转成用户可读文本
             detail = getattr(e, "detail", None) or str(e)
             return f"提交视频生成失败：{detail}"
@@ -171,6 +222,8 @@ def build(ctx: ToolContext) -> list:
         style: str = "",
         ratio: str = "",
         duration: int = 0,
+        provider_id: str = "",
+        model_name: str = "",
     ) -> str:
         """生成一个镜头的视频（单镜出片）。参数：project_id=项目 id；shot_id=镜头 id；
         style=视觉风格（实拍 / 二次元 / 三维 / 水墨，留空=用项目已设定的）；
@@ -178,6 +231,7 @@ def build(ctx: ToolContext) -> list:
 
         缺 style / ratio 时**先问用户**，不要自己替用户定——它们直接决定成片长什么样。
         提示词必须已批准；组镜头的出片单位是组头。
+        provider_id/model_name 为本次模型选择，两者同时提供。
         """
         p = ctx.project(project_id)
         sid = (shot_id or "").strip()
@@ -209,6 +263,14 @@ def build(ctx: ToolContext) -> list:
         )
 
         video_provider, video_model = pick_video_provider()
+        if provider_id or model_name:
+            if not provider_id or not model_name:
+                return "请同时提供已确认的视频厂商 id 和模型名。"
+            try:
+                row, video_model = resolve_generation_model(store, "video", provider_id, model_name)
+            except ValueError as e:
+                return str(e)
+            video_provider = row.name
 
         # 组镜头：提交单位是组头，发的是折叠后的组提示词
         unit = next(
@@ -241,8 +303,9 @@ def build(ctx: ToolContext) -> list:
         return f"{head}镜头 {target_id} 的视频生成。稍后可问我进度。"
 
     @tool
-    def rerun_video(project_id: str, shot_id: str) -> str:
-        """重新生成某个镜头的视频：任务失败时重试；对成片不满意时重新出一版。参数：project_id=项目 id；shot_id=镜头 id（形如 shot_scene001_001）。"""
+    def rerun_video(project_id: str, shot_id: str, provider_id: str = "",
+                    model_name: str = "") -> str:
+        """重新生成某个镜头的视频：任务失败时重试；对成片不满意时重新出一版。参数：project_id=项目 id；shot_id=镜头 id（形如 shot_scene001_001）；provider_id/model_name=用户选定的本次模型。"""
         p = ctx.project(project_id)
         shot_id = shot_id.strip()
         v = ctx.latest_video_version(p)
@@ -261,9 +324,17 @@ def build(ctx: ToolContext) -> list:
         )
 
         video_provider, video_model = pick_video_provider()
+        if provider_id or model_name:
+            if not provider_id or not model_name:
+                return "请同时提供已确认的视频厂商 id 和模型名。"
+            try:
+                row, video_model = resolve_generation_model(store, "video", provider_id, model_name)
+            except ValueError as e:
+                return str(e)
+            video_provider = row.name
 
         try:
-            if job is not None and job.status in ("failed", "cancelled"):
+            if job is not None and job.status in ("failed", "cancelled") and not (provider_id and model_name):
                 retry_video_job(job.id)
                 return f"已重新排队镜头 {shot_id}（之前失败/取消的任务重试）。"
             if not shot.get("video_prompt") or shot.get("prompt_status") != "approved":
@@ -542,6 +613,7 @@ def build(ctx: ToolContext) -> list:
         return "\n".join(blocks)
 
     return [
+        list_generation_models,
         get_status,
         approve_video_prompts,
         submit_videos,

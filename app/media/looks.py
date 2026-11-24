@@ -45,7 +45,6 @@ def register_generated_images(style: dict[str, Any], script: Any,
             continue
         cid = idx.resolve(raw_id) or raw_id
         if cid not in {c.id for c in script.characters}:
-            legacy[cid] = url
             continue
         existing = [v for v in current.values() if v.get("character_id") == cid and v.get("image")]
         lid = f"look_{uuid4().hex[:12]}" if existing else base_id(cid)
@@ -54,7 +53,9 @@ def register_generated_images(style: dict[str, Any], script: Any,
                       "description": (style.get("character_appearances") or {}).get(cid, ""),
                       "image": url, "available_from_shot_id": "", "status": "ready"}
         current[lid] = saved[lid]
-    return {"reference_images": legacy, "character_looks": saved}
+    from .location_states import register_generated_images as register_locations
+    location_patch = register_locations({**style, "reference_images": legacy}, script, refs)
+    return {**location_patch, "character_looks": saved}
 
 
 def selected_look(*, character_id: str, scene: Any, shot: Any,

@@ -1,12 +1,11 @@
 <script setup>
 // =====================================================================
-// RolesView.vue —— 工作台·角色页（即梦「资产库」形态）
+// RolesView.vue —— 工作台·资产画布
 //
 // 即梦的资产库页一句话能说完：**类型 tab（带计数）+ 缺口横幅 + 大卡网格**。
 // 本页照这个形态重做（旧版只是包一层 AssetPanel，观感差距太大）：
 //   - tab：角色 / 场景 / 图片 / 视频 / 音频，计数来自 library + assets；
-//   - 缺口横幅：「有 N 个形象未生成」+「生成」按钮（POST reference-assets
-//     后台批量出图，按张计费——title 里如实说明，D-53 不显示 ¥）；
+//   - 上方是作品资产与产出图，下方是单图生成输入区；
 //   - 大卡网格：角色卡 = 定妆照大图 + 名字 + 音色 chip + 缺图虚线占位 +
 //     本地上传绑定（images/upload → PATCH library）；场景卡同构；媒体卡直接预览。
 // 音色试听/克隆/演员库等深功能仍在「完整资产库」（AssetPanel 全屏页）里，
@@ -26,6 +25,40 @@ const tab = ref('characters')
 const lookDraft = ref({})
 const anchorDraft = ref({})
 const lookBusy = ref('')
+const targetKind = ref('')
+const targetId = ref('')
+const imagePrompt = ref('')
+const variantName = ref('')
+const modelOptions = ref([])
+const modelKey = ref('')
+const ratio = ref('1:1')
+const quality = ref('1K')
+
+async function loadModels() {
+  if (!store.pid) { modelOptions.value = []; modelKey.value = ''; return }
+  try {
+    modelOptions.value = await api(`/projects/${store.pid}/reference-assets/canvas/models`)
+    if (!modelOptions.value.some(m => `${m.provider_id}|${m.model_name}` === modelKey.value)) {
+      const first = modelOptions.value[0]
+      modelKey.value = first ? `${first.provider_id}|${first.model_name}` : ''
+    }
+  } catch (e) { modelOptions.value = []; notify(`图片模型加载失败：${e.message}`, 'error') }
+}
+const selectedModel = computed(() => modelOptions.value.find(m => `${m.provider_id}|${m.model_name}` === modelKey.value))
+const selectedTarget = computed(() => (targetKind.value === 'character' ? chars.value : locs.value)
+  .find(a => (a.char_id || a.loc_id) === targetId.value))
+const generateLabel = computed(() => selectedTarget.value
+  ? `生成${selectedTarget.value.name}${targetKind.value === 'character' ? '定妆图' : '场景图'}`
+  : '选择一个角色或场景')
+function selectTarget(a, kind) {
+  targetKind.value = kind
+  targetId.value = a.char_id || a.loc_id
+}
+watch(selectedModel, (model) => {
+  if (!model) return
+  if (!model.ratios.includes(ratio.value)) ratio.value = model.ratios[0]
+  if (!model.qualities.includes(quality.value)) quality.value = model.qualities[0]
+})
 async function addLook(c) {
   const d = lookDraft.value[c.char_id] || {}
   if (!d.name?.trim() || !d.description?.trim() || !d.available_from_shot_id?.trim()) {
@@ -79,6 +112,8 @@ async function refresh() {
 onMounted(refresh)
 watch(() => store.pid, refresh)
 watch(() => store.assetRefreshSeq, refresh)
+onMounted(loadModels)
+watch(() => store.pid, loadModels)
 
 const TABS = [
   { key: 'characters', label: '角色' },
@@ -87,32 +122,62 @@ const TABS = [
   { key: 'video', label: '视频' },
   { key: 'audio', label: '音频' },
 ]
+const generatedImages = computed(() => [
+  ...chars.value.flatMap(c => {
+    const looks = (c.looks || []).filter(l => l.image)
+    return looks.length
+      ? looks.map(l => ({ id: l.id, name: `${c.name} · ${l.name}`, kind: 'image', url: l.image, source: 'generation' }))
+      : (c.image ? [{ id: c.char_id, name: c.name, kind: 'image', url: c.image, source: 'generation' }] : [])
+  }),
+  ...locs.value.flatMap(l => {
+    const states = (l.states || []).filter(s => s.image)
+    return states.length
+      ? states.map(s => ({ id: s.id, name: `${l.name} · ${s.name}`, kind: 'image', url: s.image, source: 'generation' }))
+      : (l.image ? [{ id: l.loc_id, name: l.name, kind: 'image', url: l.image, source: 'generation' }] : [])
+  }),
+])
+const allImages = computed(() => {
+  const seen = new Set()
+  return [...generatedImages.value, ...assets.value.filter(a => a.kind === 'image')]
+    .filter(a => {
+      if (!a.url || seen.has(a.url)) return false
+      seen.add(a.url)
+      return true
+    })
+})
 const counts = computed(() => ({
   characters: chars.value.length,
   locations: locs.value.length,
-  image: assets.value.filter(a => a.kind === 'image').length,
+  image: allImages.value.length,
   video: assets.value.filter(a => a.kind === 'video').length,
   audio: assets.value.filter(a => a.kind === 'audio').length,
 }))
 const shown = computed(() =>
   tab.value === 'characters' ? chars.value
   : tab.value === 'locations' ? locs.value
+  : tab.value === 'image' ? allImages.value
   : assets.value.filter(a => a.kind === tab.value))
 
 const missingImages = computed(() =>
   chars.value.filter(c => !c.has_image).length + locs.value.filter(l => !l.has_image).length)
 
-// ---- 批量生成资产图（按张计费，后台任务，轮询到完成自动刷新） ----
+// ---- 单图生成：用户在画布上选对象、提示词、模型、比例和清晰度 ----
 const generating = ref(false)
 let genTaskId = ''
 let pollTimer = null
-async function generateAll() {
-  if (!store.pid || generating.value) return
+async function generateCanvas() {
+  if (!store.pid || generating.value || !selectedTarget.value || !selectedModel.value) return
+  if (!imagePrompt.value.trim()) { notify('先描述想要的画面', 'info'); return }
   generating.value = true
   try {
-    const r = await api(`/projects/${store.pid}/reference-assets`, 'POST')
+    const r = await api(`/projects/${store.pid}/reference-assets/canvas`, 'POST', {
+      target_kind: targetKind.value, target_id: targetId.value,
+      prompt: imagePrompt.value.trim(), variant_name: variantName.value.trim(),
+      provider_id: selectedModel.value.provider_id, model_name: selectedModel.value.model_name,
+      ratio: ratio.value, quality: quality.value,
+    })
     genTaskId = r.task_id || ''
-    notify('已启动形象图生成（按张计费，后台进行，完成后自动刷新）', 'ok')
+    notify(`正在生成${selectedTarget.value.name}的 1 张图片`, 'ok')
     pollTimer = setInterval(pollGenTask, 4000)
     pollGenTask()
   } catch (e) {
@@ -127,15 +192,15 @@ async function pollGenTask() {
     if (t.status === 'done' || t.status === 'failed' || t.status === 'cancelled') {
       clearInterval(pollTimer); pollTimer = null
       generating.value = false
-      if (t.status === 'done') notify(t.result || '形象图生成完成', 'ok')
-      else notify(`形象图生成${t.status === 'failed' ? '失败' : '已取消'}${t.error ? '：' + t.error : ''}`, t.status === 'done' ? 'ok' : 'error')
+      if (t.status === 'done') { notify(t.result || '图片生成完成', 'ok'); tab.value = 'image' }
+      else notify(`图片生成${t.status === 'failed' ? '失败' : '已取消'}${t.error ? '：' + t.error : ''}`, 'error')
       await refresh()
       store.assetRefreshSeq += 1
     }
   } catch {
     clearInterval(pollTimer); pollTimer = null
     generating.value = false
-    await refresh()
+    notify('进度查询中断，请稍后在任务面板查看', 'error')
   }
 }
 onBeforeUnmount(() => clearInterval(pollTimer))

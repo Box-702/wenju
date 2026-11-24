@@ -1495,17 +1495,52 @@ class Store:
         with self.session() as s:
             return s.get(PendingChoice, choice_id)
 
-    def resolve_pending_choice(self, choice_id: str, status: str) -> PendingChoice | None:
+    def resolve_pending_choice(self, choice_id: str, status: str,
+                               selected: dict[str, list[str]] | None = None) -> PendingChoice | None:
         """置 confirmed / cancelled。非 pending 不再改（幂等，防双击重复提交）。"""
         with self.session() as s:
             row = s.get(PendingChoice, choice_id)
             if row is None or row.status != "pending":
                 return row
+            if selected:
+                questions = row.questions
+                for question in questions:
+                    ids = selected.get(question.get("question") or "", [])
+                    for option in question.get("options") or []:
+                        option["selected"] = option.get("id") in ids
+                row.questions_json = json.dumps(questions, ensure_ascii=False)
             row.status = status
             row.resolved_at = _now()
             s.commit()
             s.refresh(row)
             return row
+
+    def take_confirmed_model_choice(self, project_id: str, conversation_id: str,
+                                    kind: str) -> tuple[str, str] | None:
+        """Consume one confirmed model card for the next generation in this chat."""
+        title = "选择图片模型" if kind == "image" else "选择视频模型"
+        with self.session() as s:
+            row = (s.query(PendingChoice)
+                   .filter_by(project_id=project_id, conversation_id=conversation_id or "",
+                              title=title)
+                   .order_by(PendingChoice.created_at.desc()).first())
+            if not row or row.status != "confirmed":
+                return None
+            options = (row.questions[0].get("options") or []) if row.questions else []
+            picked = next((o for o in options if o.get("selected")), None)
+            if not picked:
+                return None
+            row.status = "used"
+            s.commit()
+            return str(picked.get("provider_id") or ""), str(picked.get("model_name") or "")
+
+    def has_pending_model_choice(self, project_id: str, conversation_id: str,
+                                 kind: str) -> bool:
+        title = "选择图片模型" if kind == "image" else "选择视频模型"
+        with self.session() as s:
+            return (s.query(PendingChoice.id)
+                    .filter_by(project_id=project_id, conversation_id=conversation_id or "",
+                               title=title, status="pending").first() is not None)
 
     # ---- Memory（三层用户记忆）----
 
@@ -1629,6 +1664,16 @@ class Store:
             if not m:
                 return None
             m.active = bool(active)
+            s.commit()
+            s.refresh(m)
+            return m
+
+    def update_memory_content(self, memory_id: str, content: str) -> Memory | None:
+        with self.session() as s:
+            m = s.get(Memory, memory_id)
+            if not m:
+                return None
+            m.content = content
             s.commit()
             s.refresh(m)
             return m

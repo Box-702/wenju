@@ -584,6 +584,7 @@ class StyleGuide(BaseModel):
     environment_descriptions: dict[str, str] = Field(default_factory=dict)
     reference_images: dict[str, str] = Field(default_factory=dict)
     character_looks: dict[str, dict] = Field(default_factory=dict)
+    location_states: dict[str, dict] = Field(default_factory=dict)
     # 空间锚：{scene_id::group_id: 空间锚文字}，来自白模施工单（D-56）。
     # 与其它锚同性质——下游逐字复用，不允许模型改写。
     spatial_anchors: dict[str, str] = Field(default_factory=dict)

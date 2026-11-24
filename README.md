@@ -39,7 +39,7 @@
 ### AI 短剧制作
 
 - **只做短剧，画风可换**：改编类型专注短剧（竖屏、1–2 分钟、前 3 秒抓人），节奏默认 4–6 秒一镜、导演缺省 `pacing=fast`。画风是**正交维度**（实拍 / 二次元 / 三维 / 水墨）——漫剧不是另一种类型，而是「短剧 + 二次元画风」，共用同一套导演与节奏逻辑，只改定妆图、提示词画风声明与配音气质。
-- **资产库（Casting Bible）**：一张表给出每个角色的**外貌锚 / 定妆图 / 性别（含判定依据）/ 音色（含分配依据）/ 台词量**，以及每个场景的环境锚与场景图。音色可直接改、可试听；性别改配音色池重排。成片报告里也会带上这份选角表，避免「男主开口是御姐音」这类问题只能等成片出来才发现。
+- **资产库（Casting Bible）**：一张表给出每个角色的**外貌锚 / 定妆图 / 性别（含判定依据）/ 音色（含分配依据）/ 台词量**，以及每个地点按剧情状态保存的多张场景图。角色造型与地点状态可按场次选择、按镜头覆盖。音色可直接改、可试听；性别改配音色池重排。成片报告里也会带上这份选角表，避免「男主开口是御姐音」这类问题只能等成片出来才发现。
 - **剧组 Agent 系统**：导演 / 美术指导 / 摄影指导三个 Agent 各司其职（美术指导产出的角色造型与环境描述是全片视觉锚的唯一来源，下游逐字复用）。
 - **参考资产流水线（图像级一致性）**：为角色与场景生成定妆图 → 视觉模型质检 → 注册为全局参考 → 回填到镜头，让视频模型「看见」同一个角色，而不是只靠文字描述。
 - **镜头级视频生成**：镜头数由导演按剧情内容决定（分镜 = 一段连贯的角色动作或一段连贯的角色对话剧情）。摄影指导只提出 Prompt 草稿，用户可逐镜编辑、保存、标记需修改或批准；只有批准后的 Prompt 才能提交视频任务。首尾帧接力 + 参考图/参考视频锁一致性，最后 FFmpeg 拼接。
@@ -55,7 +55,7 @@
 
 ### 工具集
 
-**对话 Conductor 工具（45 个）**：剧本侧 `create_project`（超长原文主动提示）/ `map_novel` / `propose_arcs` / `generate_script` / `run_adaptation` / `read_script`（读作品的台本 / 目录 / 镜头 / 视觉资产）/ `ask`；作品侧 `list_projects` / `switch_project`（对话里换作品，D-77）；原文侧 `read_source` / `search_source`；剧组 `breakdown_scenes` / `generate_style_guide` / `generate_video_prompts` / `generate_reference_assets` / `clone_voice`；出片 `approve_video_prompts` / `submit_videos` / `generate_video`（单镜出片，缺风格/比例先问用户）/ `rerun_video` / `cancel_video_job` / `finalize_film`；生产 `start_production`（先报预算、用户确认才跑，D-62）/ `import_storyboard`（成品分镜直出，D-47）；查询只有一个 `get_status`（五合一，别再拆）；记忆 `remember` / `recall` / `forget` / `search_history`（带 id 的历史条目，可引用）；资产 `list_assets` / `search_assets` / `save_asset`（存成定妆照）/ `attach_asset`（挂到镜头上）；技能 `load_skill`（能读技能的附属文件）；白模 `blockout_sheet_save` / `blockout_build` / `blockout_check`（施工单对话调整，D-54）。从导入小说到出片的全流程都能在对话里完成；每轮的工具轨迹压缩后进入历史上下文，多轮不丢事实。
+**对话 Conductor 工具（50 个）**：剧本侧 `create_project`（超长原文主动提示）/ `map_novel` / `propose_arcs` / `generate_script` / `run_adaptation` / `read_script`（读作品的台本 / 目录 / 镜头 / 视觉资产）/ `ask`；作品侧 `list_projects` / `switch_project`（对话里换作品，D-77）；原文侧 `read_source` / `search_source`；剧组 `breakdown_scenes` / `generate_style_guide` / `generate_video_prompts` / `generate_reference_assets` / `clone_voice`；出片 `approve_video_prompts` / `submit_videos` / `generate_video`（单镜出片，缺风格/比例先问用户）/ `rerun_video` / `cancel_video_job` / `finalize_film`；生产 `start_production`（先报预算、用户确认才跑，D-62）/ `import_storyboard`（成品分镜直出，D-47）；查询只有一个 `get_status`（五合一，别再拆）；记忆 `remember` / `recall` / `read_memory` / `search_memory` / `forget` / `search_history`（带 id 的历史条目，可引用）；资产 `list_assets` / `create_location_state` / `select_location_state` / `list_generation_models` / `search_assets` / `save_asset`（存成定妆照）/ `attach_asset`（挂到镜头上）；技能 `load_skill`（能读技能的附属文件）；白模 `blockout_sheet_save` / `blockout_build` / `blockout_check`（施工单对话调整，D-54）。从导入小说到出片的全流程都能在对话里完成；每轮的工具轨迹压缩后进入历史上下文，多轮不丢事实。
 
 **主 Agent 按需加载技能**：系统提示只放「触发 → 动作」的路由表 + 七个主技能的目录（另有四个剧组技能由代码 `render_skill` 加载），真正怎么做（步骤顺序、硬门槛、失败处理）在 `app/skills/{novel-serial,crew-pipeline,production-delivery,script-review,asset-generation,blockout,project-switch}/SKILL.md` 里，进入该领域时由 `load_skill` 按需拉取。实测（每例连跑 3 次）：长篇直接要初稿 3/3 会先加载细则并拒绝整本生成，改编 3/3、出片 3/3 在动手前加载，「拆好了吗」3/3 不多花一次往返。改流程只动 `.md`，不碰代码。
 
@@ -305,7 +305,7 @@ Wenju/
 │   ├── runner.py             #   引擎
 │   └── fixtures/             #   录制的真实产出（离线回归用）
 │
-└── tests/                    # 测试套件（845 tests，71 个测试文件）
+└── tests/                    # 测试套件（850 tests，73 个测试文件）
 ```
 
 ## 环境变量
@@ -343,7 +343,7 @@ Wenju/
 
 ```bash
 python -m pytest tests -q
-# 845 passed（2026-11-23 实测）
+# 850 passed（2026-11-24 实测）
 ```
 
 ## 提示词质量 eval

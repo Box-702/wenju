@@ -162,115 +162,6 @@ async function chooseModel(provider, m) {
   }
 }
 
-// ---- 模型面板：对话 / 生图 / 视频 三行（D-47 配套；厂商与 Key 管理仍走设置弹窗） ----
-const panelTab = ref('chat')      // 当前展开的维度行
-const allProviders = ref([])      // 全 kind 厂商（面板打开时拉）
-const modelPrefs = ref([])        // 全部任务偏好
-
-async function refreshPanel() {
-  try { allProviders.value = await api('/providers') } catch { allProviders.value = [] }
-  try { modelPrefs.value = await api('/models/preferences') || [] } catch { modelPrefs.value = [] }
-}
-
-// 面板列的厂商 = 配置好**且启用**的（与批次路由 _pick_video_provider 同口径，
-// 2026-11-13：minimax 停用后面板必须显示在用的 seedance，不能还列停用那家）
-const imageProviders = computed(() =>
-  (allProviders.value || []).filter((p) => p.kind === 'image' && p.configured && p.enabled !== false))
-const videoProviders = computed(() =>
-  (allProviders.value || []).filter((p) => p.kind === 'video' && p.configured && p.enabled !== false))
-
-/** 当前在用的生图厂商：偏好指定的那家优先，否则第一个配好的——
-    面板只列这一家（选厂商/换 key 是完整设置的职责，用户定 2026-11-12）。 */
-const currentImageProvider = computed(() => {
-  const prefId = imagePref.value?.provider_id
-  return (prefId && imageProviders.value.find((p) => p.id === prefId))
-    || imageProviders.value[0] || null
-})
-
-/** 生图 tab 的可选模型：当前厂商配置里的清单；厂商没配清单时，
-    按厂商家族给官方现役档（与后端 image.py 实测模型名一致），
-    并保证在用的那个一定在列。 */
-const IMAGE_FAMILY = {
-  minimax: ['MiniMax-H3-Image'],
-  cogview: ['cogview-4-250304', 'cogview-3-flash'],
-  zhipu: ['cogview-4-250304', 'cogview-3-flash'],
-  openai: ['gpt-image-1'],
-}
-const imageModelChoices = computed(() => {
-  const p = currentImageProvider.value
-  if (!p) return []
-  const listed = modelsOf(p).map((m) => m.model)
-  const fam = String(p.name).toLowerCase()
-  const base = listed.length ? listed : (IMAGE_FAMILY[fam] || listed)
-  const cur = currentImageLabel.value
-  if (cur && cur !== '未配置' && !base.includes(cur)) base.unshift(cur)
-  return base
-})
-
-/** 生图偏好：同 task_type 可能有多行历史（每换一次厂商多一行），
-    取 is_default 那行才是当前在用的（2026-11-22 实测踩过）。 */
-const imagePref = computed(() => {
-  const rows = modelPrefs.value.filter((x) => x.task_type === 'image_gen' && x.provider_id)
-  return rows.find((x) => x.is_default) || rows[0] || null
-})
-const currentImageLabel = computed(() => {
-  if (imagePref.value?.model_name) return imagePref.value.model_name
-  const p = imageProviders.value[0]
-  return p?.config?.model || '未配置'
-})
-const currentVideoLabel = computed(() => {
-  const p = videoProviders.value.find((x) => x.name === 'minimax') || videoProviders.value[0]
-  return p?.config?.model || '未配置'
-})
-
-/** 在用的视频厂商行：偏好/第一个启用的——面板只列这一家的模型清单
-    （2026-11-13 与对话/生图同口径：行显厂商，点进去选模型）。 */
-const currentVideoProvider = computed(() => videoProviders.value[0] || null)
-
-/** 当前视频厂商的可选模型：厂商清单优先，没清单按家族给常用档。 */
-const videoModelChoices = computed(() => {
-  const p = currentVideoProvider.value
-  if (!p) return []
-  const listed = modelsOf(p).map((m) => m.model)
-  const fam = String(p.name).toLowerCase()
-  const base = listed.length ? listed
-    : fam.includes('seedance') || fam.includes('doubao')
-      ? ['doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-0-fast-260128', 'doubao-seedance-2-0-260128']
-      : VIDEO_TIERS
-  const cur = p.config?.model
-  if (cur && !base.includes(cur)) base.unshift(cur)
-  return base
-})
-
-async function chooseImageModel(p, m) {
-  modelOpen.value = false
-  try {
-    await api('/models/preferences', 'PUT', {
-      task_type: 'image_gen', provider_id: p.id, model_name: m, is_default: true,
-    })
-    await Promise.all([loadModelStatus(), refreshPanel()])
-    notify(`生图模型已切到 ${m}`, 'ok')
-  } catch (e) {
-    notify('切换失败：' + (e.detail || e.message))
-  }
-}
-
-/** 视频档位切换 = 改厂商行的 config.model（与设置页同路径，后端热生效）。 */
-async function chooseVideoModel(p, m) {
-  modelOpen.value = false
-  try {
-    await api(`/providers/${p.id}`, 'PATCH', { config: { ...(p.config || {}), model: m } })
-    await refreshPanel()
-    notify(`视频模型已切到 ${m}`, 'ok')
-  } catch (e) {
-    notify('切换失败：' + (e.detail || e.message))
-  }
-}
-
-const VIDEO_TIERS = ['MiniMax-H3-Lite', 'MiniMax-H3-Highspeed', 'MiniMax-H3']
-
-watch(modelOpen, (v) => { if (v) refreshPanel() })
-
 onMounted(() => {
   loadProviders()
   loadChatPref()
@@ -570,79 +461,24 @@ function onInput(e) {
               <AppIcon name="gear" />
               <!-- 徽标常驻「模型设置」：模型名太长显示不过来，徽标不塞具体名字，
                    当前用了谁在面板三行里看（用户定，2026-11-12）。 -->
-              <span>模型设置</span>
+              <span>{{ modelLabel || '对话模型' }}</span>
               <AppIcon name="chevron-down" class="cc-chev" />
             </button>
             <Transition name="ccpop">
               <div v-if="modelOpen" class="cc-model-pop mp-panel" role="menu">
-                <!-- 三行：对话 / 生图 / 视频，点击行内展开该维度清单 -->
-                <button class="mp-row" type="button" :class="{ on: panelTab === 'chat' }"
-                        @click.stop="panelTab = 'chat'">
-                  <span class="mr-key">对话</span>
-                  <!-- 行显示厂商（2026-11-13 用户指正：选中模型按厂商显示，
-                       点进去选的才是该厂商模型列表里的哪一个） -->
-                  <span class="mr-val">{{ activeVendor || '对话厂商' }}</span>
-                  <AppIcon name="chevron-right" class="mr-chev" />
-                </button>
-                <button class="mp-row" type="button" :class="{ on: panelTab === 'image' }"
-                        @click.stop="panelTab = 'image'">
-                  <span class="mr-key">生图</span>
-                  <span class="mr-val">{{ currentImageProvider?.label || currentImageProvider?.name || '生图厂商' }}</span>
-                  <AppIcon name="chevron-right" class="mr-chev" />
-                </button>
-                <button class="mp-row" type="button" :class="{ on: panelTab === 'video' }"
-                        @click.stop="panelTab = 'video'">
-                  <span class="mr-key">视频</span>
-                  <span class="mr-val">{{ currentVideoProvider?.label || currentVideoProvider?.name || '视频厂商' }}</span>
-                  <AppIcon name="chevron-right" class="mr-chev" />
-                </button>
-
-                <!-- 展开区：当前 tab 的可选清单 -->
-                <div class="mp-body">
-                  <!-- 对话：只列当前厂商的模型清单（换厂商/换 key 去完整设置） -->
-                  <template v-if="panelTab === 'chat'">
-                    <div class="mp-label">{{ activeVendor || '当前厂商' }}</div>
-                    <button v-for="m in chatModels" :key="m.model"
-                            class="mp-item" type="button" role="menuitemradio"
-                            :aria-checked="m.model === activeModelName"
-                            @click.stop="chooseModel(currentProvider, m)">
-                      <span class="mi-name">{{ m.name }}</span>
-                      <span class="mi-model">{{ m.model }}</span>
-                      <span v-if="m.model === activeModelName" class="mi-check">✓</span>
-                    </button>
-                    <div v-if="!chatModels.length" class="mp-empty">当前厂商还没配模型。</div>
-                  </template>
-
-                  <!-- 生图：只列当前在用厂商的模型清单（换厂商去完整设置） -->
-                  <template v-else-if="panelTab === 'image'">
-                    <template v-if="currentImageProvider">
-                      <div class="mp-label">{{ currentImageProvider.label || currentImageProvider.name }}</div>
-                      <button v-for="m in imageModelChoices" :key="m"
-                              class="mp-item" type="button" role="menuitemradio"
-                              :aria-checked="m === currentImageLabel"
-                              @click.stop="chooseImageModel(currentImageProvider, m)">
-                        <span class="mi-name">{{ m }}</span>
-                        <span v-if="m === currentImageLabel" class="mi-check">✓</span>
-                      </button>
-                    </template>
-                    <div v-else class="mp-empty">还没有配置生图厂商，去「完整模型设置」里加。</div>
-                  </template>
-
-                  <!-- 视频：当前厂商的模型清单（换厂商去完整设置） -->
-                  <template v-else-if="panelTab === 'video'">
-                    <template v-if="currentVideoProvider">
-                      <div class="mp-label">{{ currentVideoProvider.label || currentVideoProvider.name }}</div>
-                      <button v-for="m in videoModelChoices" :key="m" class="mp-item" type="button"
-                              role="menuitemradio" :aria-checked="m === currentVideoLabel"
-                              @click.stop="chooseVideoModel(currentVideoProvider, m)">
-                        <span class="mi-name">{{ m }}</span>
-                        <span v-if="m === currentVideoLabel" class="mi-check">✓</span>
-                      </button>
-                    </template>
-                    <div v-else class="mp-empty">还没有配置视频厂商。</div>
-                  </template>
-                </div>
-
+                <div class="mp-label">选择本轮对话使用的文本模型</div>
+                <template v-for="group in modelGroups" :key="group.provider.id">
+                  <div class="mp-label">{{ group.label }}</div>
+                  <button v-for="m in group.models" :key="m.model"
+                          class="mp-item" type="button" role="menuitemradio"
+                          :aria-checked="group.provider.id === currentProvider?.id && m.model === activeModelName"
+                          @click.stop="chooseModel(group.provider, m)">
+                    <span class="mi-name">{{ m.name }}</span>
+                    <span class="mi-model">{{ m.model }}</span>
+                    <span v-if="group.provider.id === currentProvider?.id && m.model === activeModelName" class="mi-check">✓</span>
+                  </button>
+                </template>
+                <div v-if="!modelGroups.length" class="mp-empty">还没有配置文本模型。</div>
                 <button class="mp-more" type="button" @click.stop="modelOpen = false; emit('open-settings')">
                   完整模型设置（厂商 / Key）<AppIcon name="chevron-right" />
                 </button>

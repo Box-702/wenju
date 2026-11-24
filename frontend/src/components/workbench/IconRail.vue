@@ -13,7 +13,7 @@ import { store, toggleAgentPanel } from '../../stores/app'
 // ——分集切换在分镜页顶栏面包屑里，合成全片在闸门条上（2026-11-21 回查截图修正）。
 const VIEWS = [
   { key: 'script', label: '剧本', icon: 'file' },
-  { key: 'roles', label: '角色', icon: 'user' },
+  { key: 'roles', label: '资产库', icon: 'folder' },
   { key: 'clips', label: '分镜', icon: 'film' },
 ]
 </script>

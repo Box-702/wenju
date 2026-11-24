@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 from langchain_core.tools import tool
 
@@ -13,6 +14,60 @@ from .context import ToolContext
 
 
 def build_asset_tools(ctx: ToolContext) -> list[Any]:
+    @tool
+    def create_location_state(project_id: str, location: str, name: str,
+                              description: str) -> str:
+        """为已有地点建立一个新的剧情状态（如夜晚停电、火灾后）。只登记描述，不生成图片；之后用 generate_reference_assets 的 location_state_id 单独生图。参数：location=地点名或 id；name=状态名称；description=该状态画面细节。"""
+        p = ctx.project(project_id)
+        version = ctx.store.latest_version(p)
+        if not version:
+            return "还没有剧本，无法建立地点状态。"
+        from ...media.assets import build_index
+        idx = build_index(version.script)
+        lid = idx.resolve(location) or location
+        if lid not in {loc.id for loc in version.script.locations}:
+            return "剧本中找不到该地点，请先核对地点名称。"
+        if not name.strip() or not description.strip():
+            return "状态名称和画面描述都不能为空。"
+        sid = f"location_state_{uuid4().hex[:12]}"
+        style = ctx.store.get_video_style(p.id) or {}
+        states = dict(style.get("location_states") or {})
+        states[sid] = {"id": sid, "location_id": lid, "name": name.strip(),
+                       "description": description.strip(), "image": "", "status": "draft"}
+        ctx.store.merge_video_style(p.id, {"location_states": states})
+        return f"已为{idx.display(lid)}建立场景状态「{name.strip()}」（{sid}）；尚未生成图片。"
+
+    @tool
+    def select_location_state(project_id: str, scope: str, target_id: str,
+                              state_id: str) -> str:
+        """把已保存的地点状态用于一个场次或镜头。scope=scene/shot；target_id=场次或镜头 id；state_id 从 list_assets 取得。必须按用户确认的剧情范围选择，不要自动套用到所有镜头。"""
+        p = ctx.project(project_id)
+        version = ctx.store.latest_version(p)
+        if not version:
+            return "还没有剧本，无法选择场景状态。"
+        style = ctx.store.get_video_style(p.id) or {}
+        from ...media.location_states import all_states
+        state = all_states(style, version.script).get(state_id)
+        if not state:
+            return "场景状态不存在，请先用 list_assets 查 id。"
+        if scope == "scene":
+            scene = next((s for s in version.script.scenes if s.id == target_id), None)
+            key = "scene_location_state_ids"
+        elif scope == "shot":
+            video = ctx.latest_video_version(p)
+            shot = next((s for s in (video.shots if video else [])
+                         if isinstance(s, dict) and s.get("id") == target_id), None)
+            scene = next((s for s in version.script.scenes if s.id == shot.get("scene_id")), None) if shot else None
+            key = "shot_location_state_ids"
+        else:
+            return "scope 只能是 scene 或 shot。"
+        if not scene or scene.location_id != state.get("location_id"):
+            return "这个场次/镜头不存在，或状态不属于它的地点。"
+        mapping = dict(style.get(key) or {})
+        mapping[target_id] = state_id
+        ctx.store.merge_video_style(p.id, {key: mapping})
+        return f"已为 {target_id} 选用场景状态「{state.get('name') or state_id}」。"
+
     @tool
     def list_assets(project_id: str, kind: str = "") -> str:
         """列出资产库：上传过的素材（参考视频/音频样本/图片）、已注册的定妆图与场景图、已克隆的音色，带 id。用户要「看看资产库 / 有哪些素材」时调用；clone_voice 需要音频样本 id、submit 需要参考视频时，id 都从这里取，不要让用户去界面里找。参数：project_id=项目 id；kind 可选 video/audio/image，留空=全部。"""
@@ -39,6 +94,11 @@ def build_asset_tools(ctx: ToolContext) -> list[Any]:
         refs = style.get("reference_images") or {}
         if refs:
             blocks.append("【定妆图/场景图】已注册 " + "、".join(f"{k}→参考图" for k in list(refs)[:12]) + "（按实体 id 索引）")
+        states = style.get("location_states") or {}
+        if states:
+            blocks.append("【场景状态】\n" + "\n".join(
+                f"- [{sid}] {item.get('location_id')} / {item.get('name')}（{'有图' if item.get('image') else '待生成'}）"
+                for sid, item in list(states.items())[:20] if isinstance(item, dict)))
 
         voices = ctx.store.list_user_voices(p.id)
         if voices:
@@ -275,4 +335,5 @@ def build_asset_tools(ctx: ToolContext) -> list[Any]:
         )
         return f"已把素材 {aid} 挂到 {touched} 个镜头上（新镜头版本 {new_version.id}）。"
 
-    return [list_assets, clone_voice, search_assets, save_asset, attach_asset]
+    return [list_assets, create_location_state, select_location_state,
+            clone_voice, search_assets, save_asset, attach_asset]

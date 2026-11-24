@@ -21,7 +21,9 @@ audience: main
    用户没写就问；**风格指南里的锚是默认，不是用户的决定**，别拿来当要求回填。
 3. **声音描述**（音色）：音色高低、语速、年龄感、情绪、是否有口音。
 
-已经有的东西先问一句：角色已有定妆照 / 已有音色 →「覆盖还是保留？」。
+已有定妆照或场景图时，先说明会保存为新造型/新状态；问清新版本从哪些场次或镜头开始使用。音色改绑仍需确认。
+同一地点出现白天、停电、火灾后等状态时，先用 `create_location_state` 建立独立状态，保存画面描述；不要把多个状态都写到地点的基础图。
+图片模型先用 `list_generation_models(kind="image")` 查询；有多个可用模型时，把模型选择与生成范围放进同一张 `ask_user_choice` 确认卡。只列实际可用项，说明速度、质量与费用信息中已知的部分。
 
 **这些不用问，问了就是打扰**：
 - **画风**：作品已有既定画风就沿用；没定过就按项目默认走（写实），生成时在汇报里
@@ -46,13 +48,16 @@ audience: main
 
 ## 三、生成
 
-- **定妆照 / 场景图**：`generate_reference_assets(project_id, notes, entities)`
+- **定妆照 / 场景图**：`generate_reference_assets(project_id, notes, entities, provider_id, model_name, location_state_id)`
   - `entities`：**点名范围**（逗号分隔的角色名/场景名）——只生成点名的那几个，
     未点名的已有定妆图原样保留；留空才等于全部。确认清单里有谁，这里就填谁。
   - `notes` 每行一条：`名字: 要求`（名字用角色名/场景名，或 id）。
   - 要求会拼进该对象自己的 prompt；点名了但没写要求的对象按风格指南的锚生成。
   - 名单里的名字都对不上角色/场景时，工具会**什么都不生成**并如实报告——
     不要改成不传 entities 来「试试」，那会变成全量重生成（花用户的钱）。
+  - 场景状态单独生图时填 `location_state_id`；它会只生成该状态，不覆盖地点的其他图。
+    生图完成后用 `select_location_state` 按用户确认的场次/镜头选用；不要自动套用全片。
+  - 用户选择了模型时，填写本次 `provider_id` 与 `model_name`；不要更改全局默认。
 - **音色**：`clone_voice(project_id, character, sample_asset_id, description, name)`
   - `sample_asset_id` 是资产库里那段样本音频的 id——用 `list_assets(project_id, kind="audio")`
     查真实 id（用户没上传就先请他在资产库「导入」里上传）；不要让模型自己编 id。
@@ -66,7 +71,7 @@ audience: main
 - 生成了哪些、质检过没过（定妆照会过视觉模型质检：构图、面孔、**画风与项目一致**）。
 - 生成完提醒用户在资产库逐张看一眼：质检只拦致命问题，气质合不合用户的意
   要人来定；不满意就让他说「掌柜的重生成，要凶一点」，用 notes 带要求重跑那一个。
-- 定妆照生成后提醒：**它会回填到所有提到该角色的镜头**（这正是它锁一致性的方式）。
+- 定妆照或场景状态生成后提醒：需要在场次或镜头上选择该版本，未选择不会自动替换已有基础图。
 - 音色生成后提醒：之后配音就用它，可以在资产库里试听或换。
 
 ## 硬规矩
@@ -82,7 +87,7 @@ audience: main
 
 # 相关工具
 
-`generate_reference_assets` · `clone_voice` · `list_assets` ·
+`generate_reference_assets` · `create_location_state` · `select_location_state` · `list_generation_models` · `clone_voice` · `list_assets` ·
 `search_assets`（按名字/类型搜素材，返回带 id 的条目）·
 `save_asset`（把某个图片素材存成某个角色/场景的定妆照/场景图）·
 `attach_asset`（把素材挂到镜头上，当参考锚）·

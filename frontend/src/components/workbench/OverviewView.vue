@@ -16,7 +16,7 @@ const pct = computed(() => ov.value?.progress_pct ?? 0)
 
 const JUMPS = [
   { key: 'script', label: '剧本', icon: 'file', desc: '设定 · 分集大纲 · 正文 · 修改历史' },
-  { key: 'roles', label: '角色', icon: 'user', desc: '定妆照 · 音色 · 场景图' },
+  { key: 'roles', label: '资产库', icon: 'folder', desc: '定妆照 · 音色 · 场景图' },
   { key: 'clips', label: '分镜', icon: 'film', desc: '整集片段同页 · 连播 · 合成全片' },
 ]
 

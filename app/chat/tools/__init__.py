@@ -79,6 +79,8 @@ def build_chat_tools(
         "breakdown_scenes": "crew-pipeline", "generate_style_guide": "crew-pipeline",
         "generate_video_prompts": "crew-pipeline",
         "generate_reference_assets": "asset-generation", "save_asset": "asset-generation",
+        "create_location_state": "asset-generation",
+        "select_location_state": "asset-generation",
         "clone_voice": "asset-generation", "attach_asset": "asset-generation",
         "start_production": "production-delivery", "import_storyboard": "production-delivery",
         "approve_video_prompts": "production-delivery", "submit_videos": "production-delivery",

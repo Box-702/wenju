@@ -14,10 +14,15 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from . import deps
 
 router = APIRouter()
+
+
+class MemoryEdit(BaseModel):
+    content: str = Field(min_length=1, max_length=2000)
 
 
 def _memory_dict(m: Any) -> dict[str, Any]:
@@ -69,3 +74,14 @@ def delete_memory(memory_id: str) -> dict[str, Any]:
     if not deps.store().delete_memory(memory_id):
         raise HTTPException(404, "记忆不存在")
     return {"id": memory_id, "deleted": True}
+
+
+@router.patch("/memories/{memory_id}")
+def edit_memory(memory_id: str, payload: MemoryEdit) -> dict[str, Any]:
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(400, "记忆内容不能为空")
+    m = deps.store().update_memory_content(memory_id, content)
+    if m is None:
+        raise HTTPException(404, "记忆不存在")
+    return _memory_dict(m)

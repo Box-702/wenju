@@ -14,7 +14,7 @@ audience: main
    否则服务端直接拒绝（不会静默出一部分）。用户说「出片」但还没批准 → 先 `get_status`
    报出待审数量，引导他批准。
 2. **要有镜头方案**：没拆解过就没有镜头可提交。
-3. **视频厂商要配置**：走 MiniMax，用户自带 API Key。没配就直说，不要反复试。
+3. **视频厂商要配置**：用 `list_generation_models(kind="video")` 查已启用且有 Key 的模型；没配就直说。有多个可用项时用 `ask_user_choice` 给用户选择，同时确认范围、画幅等。确认后在本次 `submit_videos` 或 `generate_video` 传 `provider_id` 和 `model_name`；不要更改全局默认。
 
 # 提交：整片 vs 指定镜头，行为不一样
 
@@ -77,6 +77,6 @@ audience: main
 
 # 相关工具
 
-`get_status` · `approve_video_prompts` · `submit_videos` ·
+`get_status` · `list_generation_models` · `ask_user_choice` · `approve_video_prompts` · `submit_videos` ·
 `generate_video`（单镜出片：要用户先定风格/比例/时长，缺了就问，不要替他定）·
 `edit_shot_prompt` · `rerun_video` · `cancel_video_job` · `finalize_film`

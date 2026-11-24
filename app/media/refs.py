@@ -117,6 +117,7 @@ def build_reference_assets(
     entities: list[str] | None = None,
     regenerate: bool = False,
     look_ids: list[str] | None = None,
+    location_state_ids: list[str] | None = None,
 ) -> dict[str, str]:
     """为角色与场景生成定妆图并质检，返回 {实体id: 图片URL}。
 
@@ -153,6 +154,7 @@ def build_reference_assets(
     appearances = rekey(dict(getattr(style_guide, "character_appearances", {}) or {}), idx) if style_guide else {}
     identity_anchors = rekey(dict(getattr(style_guide, "character_identity_anchors", {}) or {}), idx) if style_guide else {}
     named_looks = dict(getattr(style_guide, "character_looks", {}) or {}) if style_guide else {}
+    named_states = dict(getattr(style_guide, "location_states", {}) or {}) if style_guide else {}
     prior_images = rekey(dict(getattr(style_guide, "reference_images", {}) or {}), idx) if style_guide else {}
     environments = rekey(dict(getattr(style_guide, "environment_descriptions", {}) or {}), idx) if style_guide else {}
     # 画风决定出的是「剧照」还是「立绘」：漫剧用写实 prompt 会毁掉整片一致性。
@@ -252,6 +254,27 @@ def build_reference_assets(
         loc_ids = [lid for lid in loc_ids if lid in environments]
     if wanted:
         loc_ids = [lid for lid in loc_ids if lid in wanted]
+    # 只在明确点名状态 id 时生成版本图；普通“生成场景图”不能悄悄把所有草稿状态也烧一遍。
+    for sid, state in (named_states.items() if location_state_ids is not None else []):
+        if not isinstance(state, dict) or (location_state_ids is not None and sid not in location_state_ids):
+            continue
+        lid = idx.resolve(state.get("location_id")) or state.get("location_id")
+        if lid not in loc_ids or (state.get("image") and not regenerate):
+            continue
+        name = idx.display(lid)
+        desc = str(state.get("description") or "").strip()
+        if not desc:
+            _emit(f"[场景·{name}·{state.get('name') or sid}] 状态描述为空，已跳过")
+            continue
+        prompt = environment_prompt(name, desc, visual_style)
+        refs[sid] = _generate_with_qa(
+            provider, prompt, _QA_ENVIRONMENT.format(expect=desc),
+            kind=f"场景·{name}·{state.get('name') or sid}", vision=vision,
+            max_retry=max_retry, emit=_emit,
+            negative_prompt=f"{_style_negative(visual_style)}，{_NEG_EMPTY_PLATE}",
+        )
+    if location_state_ids is not None:
+        loc_ids = []
     for lid in loc_ids:
         name = idx.display(lid)
         desc = environments.get(lid, "")
@@ -312,6 +335,7 @@ def _generate_with_qa(
     emit: Any,
     negative_prompt: str = "",
     identity_reference: str = "",
+    size: str = "",
 ) -> str:
     """生成 → 质检 → 不合格重试；返回最终采用的图片 URL。
 
@@ -321,7 +345,8 @@ def _generate_with_qa(
     """
     url = ""
     for attempt in range(max_retry + 1):
-        url = provider.generate(prompt, negative_prompt=negative_prompt)
+        options = {"size": size} if size else {}
+        url = provider.generate(prompt, negative_prompt=negative_prompt, **options)
         if not vision.available:
             emit(f"[{kind}] 已生成（未配置视觉模型，跳过质检）")
             return url
@@ -362,15 +387,19 @@ def apply_reference_images(
     返回被填充的镜头数。
     """
     if not refs and not any((style or {}).get(key) for key in
-                            ("character_looks", "scene_look_ids", "shot_look_ids")):
+                            ("character_looks", "scene_look_ids", "shot_look_ids",
+                             "location_states", "scene_location_state_ids", "shot_location_state_ids")):
         return 0
     # 注册表可能来自老版本（名字键）或新版本（id 键）：先统一成 id 键再查。
     idx = build_index(script)
     refs = rekey(refs, idx)
     scene_map = {sc.id: sc for sc in script.scenes}
     from .looks import all_looks, selected_look
+    from .location_states import all_states, selected_state
 
-    looks = all_looks(style or {"reference_images": refs}, script)
+    effective_style = {**(style or {}), "reference_images": refs}
+    looks = all_looks(effective_style, script)
+    states = all_states(effective_style, script)
     plan = shot_plan or shots
 
     filled = 0
@@ -379,7 +408,9 @@ def apply_reference_images(
         if sc is None:
             continue
         urls: list[str] = []
-        env_url = refs.get(sc.location_id) or refs.get(idx.display(sc.location_id))
+        state = selected_state(location_id=sc.location_id, scene_id=sc.id,
+                               shot_id=shot.id, states=states, style=style or {})
+        env_url = str(state.get("image") or "")
         if env_url:
             urls.append(env_url)
         for cid in sc.characters:

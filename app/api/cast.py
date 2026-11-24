@@ -66,6 +66,121 @@ class LookSelection(BaseModel):
     look_id: str
 
 
+class LocationStateCreate(BaseModel):
+    location_id: str
+    name: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    image: str = ""
+
+
+class LocationStateSelection(BaseModel):
+    state_id: str
+
+
+@router.post("/projects/{project_id}/location-states")
+def create_location_state(project_id: str, payload: LocationStateCreate) -> dict[str, Any]:
+    store = deps.store()
+    script = _script_of(store, common.get_project(project_id))
+    if payload.location_id not in {loc.id for loc in script.locations}:
+        raise HTTPException(404, "地点不存在")
+    sid = f"location_state_{uuid4().hex[:12]}"
+    state = {"id": sid, **payload.model_dump(),
+             "status": "ready" if payload.image else "draft"}
+    style = store.get_video_style(project_id) or {}
+    states = dict(style.get("location_states") or {})
+    states[sid] = state
+    store.merge_video_style(project_id, {"location_states": states})
+    return state
+
+
+@router.put("/projects/{project_id}/location-states/{state_id}/image")
+def set_location_state_image(project_id: str, state_id: str,
+                             payload: dict[str, str]) -> dict[str, Any]:
+    store = deps.store()
+    common.get_project(project_id)
+    style = store.get_video_style(project_id) or {}
+    states = dict(style.get("location_states") or {})
+    if state_id not in states:
+        raise HTTPException(404, "场景状态不存在")
+    image = str(payload.get("image") or "").strip()
+    if not image:
+        raise HTTPException(400, "图片地址不能为空")
+    states[state_id] = {**states[state_id], "image": image, "status": "ready"}
+    store.merge_video_style(project_id, {"location_states": states})
+    return states[state_id]
+
+
+@router.post("/projects/{project_id}/location-states/{state_id}/generate")
+def generate_location_state_image(project_id: str, state_id: str) -> dict[str, Any]:
+    """Generate one location state without replacing the other states."""
+    from ..domain import StyleGuide
+    from ..media.refs import build_reference_assets
+
+    store = deps.store()
+    script = _script_of(store, common.get_project(project_id))
+    style = store.get_video_style(project_id) or {}
+    state = (style.get("location_states") or {}).get(state_id)
+    if not state:
+        raise HTTPException(404, "场景状态不存在")
+    runner = deps.subagent_runner()
+
+    def _run(task: object) -> str:
+        current = store.get_video_style(project_id) or {}
+        refs = build_reference_assets(
+            script, StyleGuide.model_validate(current),
+            entities=[state["location_id"]], regenerate=True,
+            location_state_ids=[state_id],
+            on_progress=lambda m: runner.update_step(task.id, m, "running"),
+        )
+        url = refs.get(state_id)
+        if not url:
+            raise ValueError("没有生成场景状态图片")
+        fresh = store.get_video_style(project_id) or {}
+        states = dict(fresh.get("location_states") or {})
+        states[state_id] = {**states[state_id], "image": url, "status": "ready"}
+        store.merge_video_style(project_id, {"location_states": states})
+        return f"场景状态「{state['name']}」已生成"
+
+    task_id = runner.start("生成场景状态", _run, project_id=project_id)
+    return {"task_id": task_id, "started": True}
+
+
+@router.put("/projects/{project_id}/{scope}/{target_id}/location-state")
+def select_location_state(project_id: str, scope: str, target_id: str,
+                          payload: LocationStateSelection) -> dict[str, Any]:
+    from ..media.location_states import all_states
+
+    store = deps.store()
+    project = common.get_project(project_id)
+    script = _script_of(store, project)
+    style = store.get_video_style(project_id) or {}
+    state = all_states(style, script).get(payload.state_id)
+    if not state:
+        raise HTTPException(404, "场景状态不存在")
+    if scope == "scene":
+        scene = next((s for s in script.scenes if s.id == target_id), None)
+        if scene is None:
+            raise HTTPException(404, "场次不存在")
+        location_id = scene.location_id
+        key = "scene_location_state_ids"
+    elif scope == "shot":
+        version = store.get_video_version(project.current_video_version_id) if project.current_video_version_id else None
+        shot = next((s for s in (version.shots if version else []) if s.get("id") == target_id), None)
+        if shot is None:
+            raise HTTPException(404, "镜头不存在")
+        scene = next((s for s in script.scenes if s.id == shot.get("scene_id")), None)
+        location_id = scene.location_id if scene else ""
+        key = "shot_location_state_ids"
+    else:
+        raise HTTPException(404, "选型范围不存在")
+    if state.get("location_id") != location_id:
+        raise HTTPException(400, "场景状态不属于该地点")
+    mapping = dict(style.get(key) or {})
+    mapping[target_id] = payload.state_id
+    store.merge_video_style(project_id, {key: mapping})
+    return {"ok": True, "state_id": payload.state_id}
+
+
 class IdentityAnchor(BaseModel):
     description: str = Field(min_length=1)
 
@@ -328,6 +443,12 @@ def get_library(project_id: str, version_id: str | None = None) -> dict[str, Any
     lib["look_selections"] = {"scenes": style.get("scene_look_ids") or {},
                               "shots": style.get("shot_look_ids") or {}}
     lib["scene_characters"] = {sc.id: sc.characters for sc in script.scenes}
+    lib["location_scenes"] = {loc.id: [sc.id for sc in script.scenes if sc.location_id == loc.id]
+                              for loc in script.locations}
+    lib["location_state_selections"] = {
+        "scenes": style.get("scene_location_state_ids") or {},
+        "shots": style.get("shot_location_state_ids") or {},
+    }
     for char in lib["characters"]:
         char["identity_anchor"] = (style.get("character_identity_anchors") or {}).get(char["char_id"], "")
     return lib

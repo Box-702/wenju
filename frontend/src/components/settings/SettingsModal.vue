@@ -501,7 +501,8 @@
             <div v-if="!memories.length" class="pop-empty">还没有记忆。</div>
             <div v-for="m in memories" :key="m.id" class="memory-row">
               <div class="mem-main">
-                <div class="mem-text">{{ m.content }}</div>
+                <textarea v-if="editingMemory === m.id" v-model="memoryDraft" class="modal-input" rows="3" />
+                <div v-else class="mem-text">{{ m.content }}</div>
                 <div class="mem-meta">
                   <span class="mono">{{ scopeLabel(m.scope) }}</span>
                   <span class="mono">{{ kindLabel(m.kind) }}</span>
@@ -509,6 +510,8 @@
                 </div>
               </div>
               <div class="mem-actions">
+                <button v-if="editingMemory === m.id" class="small ghost" @click="saveMemory(m)">保存</button>
+                <button v-else class="small ghost" @click="editingMemory = m.id; memoryDraft = m.content">编辑</button>
                 <button class="small ghost" @click="toggleMemory(m)">
                   {{ m.active ? '停用' : '启用' }}
                 </button>
@@ -1385,10 +1388,23 @@ async function refreshStoreAfterPrefChange(task) {
 
 // ---- 记忆管理 ----
 const memories = ref([])
+const editingMemory = ref('')
+const memoryDraft = ref('')
+
+async function saveMemory(m) {
+  if (!memoryDraft.value.trim()) return
+  try {
+    await api(`/memories/${m.id}`, 'PATCH', { content: memoryDraft.value.trim() })
+    editingMemory.value = ''
+    await loadMemories()
+  } catch (e) { alert(`保存失败：${e.message}`) }
+}
 
 async function loadMemories() {
   try {
-    const q = store.pid ? `?project_id=${encodeURIComponent(store.pid)}` : ''
+    const q = store.pid
+      ? `?project_id=${encodeURIComponent(store.pid)}&include_inactive=true`
+      : '?include_inactive=true'
     const r = await api('/memories' + q)
     memories.value = r.memories || []
   } catch { memories.value = [] }

@@ -12,13 +12,109 @@
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from . import deps
 
 router = APIRouter()
 log = logging.getLogger(__name__)
+
+
+class CanvasImageRequest(BaseModel):
+    target_kind: Literal["character", "location"]
+    target_id: str = Field(min_length=1)
+    prompt: str = Field(min_length=1, max_length=4000)
+    variant_name: str = Field(default="", max_length=40)
+    provider_id: str = Field(min_length=1)
+    model_name: str = Field(min_length=1)
+    ratio: str = "1:1"
+    quality: str = "1K"
+
+
+@router.get("/projects/{project_id}/reference-assets/canvas/models")
+def canvas_image_models(project_id: str) -> list[dict]:
+    if deps.store().get_project(project_id) is None:
+        raise HTTPException(404, "作品不存在")
+    from ..media.image_canvas import image_model_options
+    return image_model_options(deps.store())
+
+
+@router.post("/projects/{project_id}/reference-assets/canvas")
+def generate_canvas_image(project_id: str, payload: CanvasImageRequest) -> dict[str, object]:
+    """Generate exactly one named character/location image from the asset canvas."""
+    from ..llm.image import build_image_client
+    from ..llm.registry import _from_db_row
+    from ..media.image_canvas import canvas_prompt, image_model_options, output_size
+
+    store = deps.store()
+    project = store.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, "作品不存在")
+    version = store.latest_version(project)
+    if version is None:
+        raise HTTPException(400, "还没有剧本版本，先在对话里生成初稿")
+    entities = version.script.characters if payload.target_kind == "character" else version.script.locations
+    target = next((item for item in entities if item.id == payload.target_id), None)
+    if target is None:
+        raise HTTPException(404, "角色或场景不存在")
+    option = next((item for item in image_model_options(store)
+                   if item["provider_id"] == payload.provider_id
+                   and item["model_name"] == payload.model_name), None)
+    if option is None:
+        raise HTTPException(400, "所选图片模型未配置或已停用")
+    try:
+        size = output_size(option["provider"], payload.ratio, payload.quality)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    client = build_image_client(_from_db_row(store.get_api_provider(payload.provider_id),
+                                            override_model=payload.model_name))
+    if client is None:
+        raise HTTPException(400, "图片模型不可用")
+    runner = deps.subagent_runner()
+
+    def _run(task: object) -> str:
+        from ..media.looks import register_generated_images
+        from ..media.refs import (_NEG_COMPOSITION, _NEG_EMPTY_PLATE, _QA_CHARACTER,
+                                  _QA_ENVIRONMENT, _generate_with_qa, _style_label,
+                                  _style_negative)
+
+        style = store.get_video_style(project_id) or {}
+        description = (style.get("character_appearances") or {}).get(target.id, "") if payload.target_kind == "character" else (style.get("environment_descriptions") or {}).get(target.id, "")
+        if not description:
+            description = getattr(target, "description", "") or ""
+        anchor = (style.get("character_identity_anchors") or {}).get(target.id, "")
+        prompt = canvas_prompt(kind=payload.target_kind, name=target.name,
+                               description=description, request=payload.prompt,
+                               visual_style=style.get("visual_style"),
+                               identity_anchor=anchor)
+        label = "角色" if payload.target_kind == "character" else "场景"
+        def progress(message: str) -> None:
+            runner.update_step(task.id, message, "running")
+        progress(f"正在生成{label}「{target.name}」 · {payload.ratio} · {payload.quality}")
+        vision = deps.llm().vision()
+        qa = (_QA_CHARACTER.format(expect=payload.prompt, style=_style_label(style.get("visual_style")))
+              if payload.target_kind == "character" else _QA_ENVIRONMENT.format(expect=payload.prompt))
+        negative = _style_negative(style.get("visual_style")) + "，" + (
+            _NEG_COMPOSITION if payload.target_kind == "character" else _NEG_EMPTY_PLATE)
+        url = _generate_with_qa(client, prompt, qa, kind=f"{label}·{target.name}",
+                                vision=vision, max_retry=0, emit=progress,
+                                negative_prompt=negative, size=size)
+        patch = register_generated_images(store.get_video_style(project_id) or {},
+                                          version.script, {target.id: url})
+        registry_key = "character_looks" if payload.target_kind == "character" else "location_states"
+        registry = patch.get(registry_key) or {}
+        generated = next((entry for entry in registry.values()
+                          if isinstance(entry, dict) and entry.get("image") == url), None)
+        if generated and payload.variant_name.strip():
+            generated["name"] = payload.variant_name.strip()
+        store.merge_video_style(project_id, patch)
+        return f"已生成{label}「{target.name}」的 1 张图片（{payload.ratio} · {payload.quality}）"
+
+    task_id = runner.start(f"生成{target.name}图片", _run, project_id=project_id)
+    return {"task_id": task_id, "started": True, "count": 1, "target": target.name}
 
 
 def _start_pipeline(project_id: str, limit: int = 0) -> dict[str, object]:

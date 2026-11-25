@@ -8,7 +8,7 @@
 #
 # 用法（在项目根目录）：
 #   uv run python N2D/novel2video.py 素材/孔乙己.txt --title 孔乙己
-#   可选：--shot-limit 15  --out 自定义.mp4  --no-dubbing  --no-subtitles
+#   可选：--shot-limit 15  --out 自定义.mp4  --no-dubbing  --subtitles（默认不烧）
 #
 # 断点续跑：每一步的产物都实时落库（script_versions / video_versions /
 # video_style / video_jobs / media_assets）。中途挂了不用从头再来：
@@ -153,7 +153,8 @@ def main() -> int:
                     help="成片声音：native=模型原生音画同生（默认）dub=TTS 配音 silent=静片")
     ap.add_argument("--no-dubbing", action="store_true",
                     help="（旧参数，等价 --audio-mode silent 的前身）不再使用 dub 默认")
-    ap.add_argument("--no-subtitles", action="store_true", help="不烧字幕")
+    ap.add_argument("--subtitles", action="store_true",
+                    help="成片烧台词字幕（默认不烧，D-88）")
     args = ap.parse_args()
     if args.no_dubbing and args.audio_mode == "native":
         args.audio_mode = "silent"   # 旧参数：不配音=静片
@@ -483,7 +484,7 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
     _t(f"⑧ 成片合成：实测时长校准 → 拼接 → 声音({args.audio_mode}) → 字幕 …")
     info = finalize_film(
         p.id, version_id=approved_v.id,
-        subtitles=not args.no_subtitles, audio_mode=args.audio_mode,
+        subtitles=args.subtitles, audio_mode=args.audio_mode,
         on_progress=lambda m: _t(f"   · {m}"),
     )
     _t(f"   合成完成：{info['shots_used']}/{info['shots_total']} 镜 · "

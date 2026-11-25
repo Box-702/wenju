@@ -4142,3 +4142,10 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **根因**：① 批次状态只存 `BatchManager._batches` 内存字典，进程死即清零，不落盘；② `~/.wenju` 的 NTFS ACL 给 `BOX\CodexSandboxUsers` 组仅 (RX) 读执行，工作区本地 `.venv\Scripts\python.exe` 的进程带该沙箱组 SID → 写被拒；conda base 与 `AppData\Roaming\uv` 下的解释器以真实用户身份运行（`BOX\19387:(F)`）不受限。实测 Git Bash 自身 `mkdir` 可写，拦截只针对带沙箱组 SID 的进程。
 - **解法**：批次对账一律查 video_jobs 表（succeeded 判已出片，别信日志最后一行）；跑 N2D/后端用**可信解释器**：`uv venv C:/Users/19387/AppData/Roaming/uv/venvs/wenju312 --python 3.12.14` + `uv pip install --python <该venv> -e .`（项目 `.venv` 是 3.14，pydantic_core 等编译扩展不兼容 3.12，PYTHONPATH 注入走不通）。
 - **涉及文件**：`app/video/batch.py` · `N2D/novel2video.py`（无代码改动）· 本机环境（venv 固定在 `C:/Users/19387/AppData/Roaming/uv/venvs/wenju312`）。
+
+### 5.107 声音/字幕设置没有入口，成片默认烧字幕（2026-11-25）
+
+- **症状**：分镜页「合成全片」旁没有任何声音或字幕选项；成片默认带烧录字幕；用户指出「默认不出字幕，用户要可选」，实际设置项（`setVideoSubtitle` / `setVideoAudioMode`）写好了却没有任何 UI 调用，用户找不到入口。
+- **根因**：① finalize 链路四处默认 `subtitles=True`（`finalize_film` / API 请求体 / 对话工具 / N2D）；② 前端字幕/声音开关只写进 localStorage，分镜页没有控件；③ 参考音频门控按厂商名硬编码 `("seedance","minimax")`，`VideoProvider` 没有能力声明字段。
+- **解法**：四处默认统一为「native 声音 + 不烧字幕」，N2D 改 `--subtitles` 显式开；分镜页闸门栏常驻「声音（音画同生/TTS 配音/静片）+ 字幕开关」两个控件，设置落 localStorage；`VideoProvider` 增加 `supports_reference_audio` 能力声明（MiniMax/方舟为真），参考音频门控改按能力判断。浏览器实测字幕开/关、声音切换与持久化均生效。
+- **涉及文件**：`app/video/finalize.py` · `app/api/video.py` · `app/chat/tools/video.py` · `app/video/base.py` · `app/video/providers/minimax.py` · `app/video/providers/seedance.py` · `app/video/service.py` · `app/skills/production-delivery/SKILL.md` · `N2D/novel2video.py` · `frontend/src/components/workbench/ClipsView.vue` · `frontend/src/stores/app.js` · `tests/test_subtitles.py`。

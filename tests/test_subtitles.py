@@ -478,3 +478,21 @@ def test_finalize_silent_strips_audio(monkeypatch, tmp_path):
     result = fin.finalize_film("p1", subtitles=False, audio_mode="silent", store=store)
     assert any("静片模式" in m for m in result.get("messages", [])
                ) or result.get("dubbed") is False
+
+
+def test_成片默认不烧字幕且声音默认音画同生():
+    """D-88：字幕是可选口味默认关；声音默认 native（音画同生）。
+
+    默认值在四个入口要一致：finalize_film 签名、API 请求体、对话工具签名。
+    前端默认值走 localStorage 判定，不在这里断言。
+    """
+    import inspect
+
+    import app.video.finalize as fin
+    from app.api.video import FinalizeCreate
+
+    sig = inspect.signature(fin.finalize_film)
+    assert sig.parameters["subtitles"].default is False
+    assert sig.parameters["audio_mode"].default == "native"
+    assert FinalizeCreate().subtitles is False
+    assert FinalizeCreate().audio_mode == "native"

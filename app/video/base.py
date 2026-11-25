@@ -127,6 +127,9 @@ class VideoProvider(ABC):
     # 可能还在跑、费用照计。调用方要如实告诉用户这一点，别让「已取消」
     # 被当成「不花钱了」（MiniMax V2 没有取消端点，见 providers/minimax.py）。
     supports_cancel: bool = False
+    # 是否接受参考音频（音色样音 ≤3 段）——native 音画同生下这是把「该角色
+    # 用什么嗓子」传给模型的唯一通道。按能力声明，不按厂商名硬编码名单。
+    supports_reference_audio: bool = False
 
     def __init__(self, api_key: str = "", base_url: str = "", **kwargs: Any) -> None:
         self.api_key = api_key

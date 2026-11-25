@@ -642,6 +642,24 @@ def _shot_speakers(shot_plan: list[dict[str, Any]], shot_id: str, script: Any) -
     return out
 
 
+def _provider_supports_reference_audio(provider: str) -> bool:
+    """该厂商是否接受参考音频：按 VideoProvider.supports_reference_audio 能力声明判断。
+
+    以前是按厂商名硬编码 ("seedance", "minimax")——新增厂商时要记得回来改，
+    声明的字段却没被读。未知厂商/注册表失败一律按否处理（不阻断出片）。
+    """
+    name = (provider or "").strip().lower()
+    if not name:
+        return False
+    try:
+        from . import get_registry
+
+        prov = get_registry().get_provider(name)
+        return bool(getattr(prov, "supports_reference_audio", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _voice_sample(store: Any, project_id: str, char_id: str, voice_id: str,
                   *, create: bool = True) -> str | None:
     """角色音色样音的素材回放地址（有缓存则复用，没有则 TTS 合成一条入库）。
@@ -704,16 +722,16 @@ def voice_audios_for(
     音色的样音，模型生成的台词人声向它靠（Seedance 2.0 官方：≤3 段、
     单段 2–15s、必须同时带 ≥1 张图或视频——定妆图回填保证了这条）。
 
-    只在满足全部条件时给：① 厂商的 content 有 audio_url 分支（方舟/MiniMax）；
-    ② 调用方没显式给过 reference_audios（显式优先，不覆盖）；③ 有剧本
-    （说话人要从节拍里解析）。任何一步失败返回空——音色锚是锦上添花，
-    绝不阻断出片。
+    只在满足全部条件时给：① 厂商声明了参考音频能力（VideoProvider.
+    supports_reference_audio，MiniMax/方舟为真）；② 调用方没显式给过
+    reference_audios（显式优先，不覆盖）；③ 有剧本（说话人要从节拍里解析）。
+    任何一步失败返回空——音色锚是锦上添花，绝不阻断出片。
 
     提交侧与比对侧（_unit_intent）共用这一份口径：回填进了 stored_params 的
     reference_audios 必须能被比对侧重算出来，否则幂等会把「没变的任务」判成
     新意图白烧钱（_INTENT_PARAM_KEYS 含 reference_audios，与参考图同坑同修）。
     """
-    if (provider or "").strip().lower() not in ("seedance", "minimax"):
+    if not _provider_supports_reference_audio(provider):
         return []
     if stored_params is not None and stored_params.get("reference_audios"):
         return []

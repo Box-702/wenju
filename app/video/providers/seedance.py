@@ -90,6 +90,7 @@ class SeedanceProvider(VideoProvider):
     # 方舟有 DELETE 任务端点（cancel_job 里在调）；端点存在与否未实测，
     # 失败只当没取消——所以这里标的是「尽力而为」，不是「保证能取消」。
     supports_cancel = True
+    supports_reference_audio = True  # content audio_url role=reference_audio（≤3 段、2–15s）
 
     def __init__(self, api_key: str = "", base_url: str = "", **kwargs: Any) -> None:
         # key 只从调用方注入（DB api_providers 行，D-48：env 不再是配置入口）。

@@ -498,9 +498,9 @@ def build(ctx: ToolContext) -> list:
                 "镜头方案与已批准的提示词保持不变，随时可以重跑或继续其他镜头。")
 
     @tool
-    def finalize_film(project_id: str, subtitles: bool = True,
+    def finalize_film(project_id: str, subtitles: bool = False,
                       audio_mode: str = "native") -> str:
-        """把已生成成功的镜头合成为完整成片（拼装 + 台词字幕，后台执行）。用户说「合成成片 / 拼成片 / 出完整视频」时调用。参数：project_id=项目 id，subtitles=是否烧台词字幕（默认开），audio_mode=声音模式：native（默认，用视频模型原生音轨，台词随提示词音画同生、唇形同步）/ dub（用 TTS 重新配音）/ silent（静片，台词只走字幕）。用户没特别要求声音时用默认 native。"""
+        """把已生成成功的镜头合成为完整成片（拼装 + 可选字幕，后台执行）。用户说「合成成片 / 拼成片 / 出完整视频」时调用。参数：project_id=项目 id，subtitles=是否烧台词字幕（默认关；用户明确要字幕、或画面台词需要可读时才传 true），audio_mode=声音模式：native（默认，用视频模型原生音轨，台词随提示词音画同生、唇形同步）/ dub（用 TTS 重新配音）/ silent（静片，台词只走字幕）。用户没特别要求声音时用默认 native；模型支持原生音画同生时不要改成 dub。"""
         from ...deps import finalize_manager as _manager
 
         p = ctx.project(project_id)

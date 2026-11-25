@@ -86,8 +86,8 @@ export const store = reactive({
   videoMode: localStorage.getItem('sw_video_mode') || 'auto',   // 生成模式：auto | approval
   videoResolution: localStorage.getItem('sw_video_resolution') || '',  // 空=全局默认(768P)
   videoAspect: localStorage.getItem('sw_video_aspect') || '16:9',  // 画幅：默认横屏 16:9（工作台可切竖屏）
-  videoSubtitle: localStorage.getItem('sw_video_subtitle') !== 'off',
-  videoAudioMode: localStorage.getItem('sw_video_audio_mode') || 'native',  // native 音画同生 / dub TTS / silent  // 成片合成时烧台词字幕（默认开）
+  videoSubtitle: localStorage.getItem('sw_video_subtitle') === 'on',  // 成片烧台词字幕（默认关，D-88；用户显式开）
+  videoAudioMode: localStorage.getItem('sw_video_audio_mode') || 'native',  // native 音画同生（默认）/ dub TTS / silent
   videoFinalize: null,    // 成片合成任务状态（null/对象）
   // 视频播放器
   playingVideo: null,     // { url, title, meta }
@@ -1287,12 +1287,13 @@ export function setVideoAspect(ratio) {
   localStorage.setItem('sw_video_aspect', ratio)
 }
 
-/** 设置成片字幕烧录开关（合成成片时生效，默认开）。 */
+/** 设置成片声音模式（native 音画同生 / dub TTS / silent 静片；默认 native）。 */
 export function setVideoAudioMode(mode) {
   store.videoAudioMode = ['native', 'dub', 'silent'].includes(mode) ? mode : 'native'
   localStorage.setItem('sw_video_audio_mode', store.videoAudioMode)
 }
 
+/** 设置成片字幕烧录开关（合成成片时生效，默认关，D-88）。 */
 export function setVideoSubtitle(on) {
   store.videoSubtitle = !!on
   localStorage.setItem('sw_video_subtitle', on ? 'on' : 'off')

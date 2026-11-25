@@ -984,13 +984,13 @@ def batch_command(batch_id: str, payload: BatchCommandRequest) -> dict[str, Any]
 class FinalizeCreate(BaseModel):
     """成片合成请求。version_id 缺省用项目当前视频版本。
 
-    subtitles：台词字幕烧录（默认开）；audio_mode：声音模式——
-    native（默认，视频模型原生音轨，台词随提示词音画同生）/
+    subtitles：台词字幕烧录（默认关，D-88；用户要才传 true）；audio_mode：
+    声音模式——native（默认，视频模型原生音轨，台词随提示词音画同生）/
     dub（TTS 配音混入）/ silent（静片，字幕承担台词）。
     """
 
     version_id: str | None = None
-    subtitles: bool = True
+    subtitles: bool = False
     audio_mode: str = "native"
 
 

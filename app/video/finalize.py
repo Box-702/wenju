@@ -161,7 +161,7 @@ def finalize_film(
     project_id: str,
     *,
     version_id: str | None = None,
-    subtitles: bool = True,
+    subtitles: bool = False,
     audio_mode: str = "native",
     on_progress: Any = None,
     store: Any = None,
@@ -174,6 +174,7 @@ def finalize_film(
       dub    —— 两段式：TTS 配音混入、原生音轨压成环境声底；配音失败
               且本片有台词时剥音轨交静片（旧行为，兜底不乱响）。
       silent —— 一律静片（字幕承担台词）。
+    subtitles 默认关（D-88）：成片默认不带烧录字幕，用户要用时才显式打开。
     返回 result 字典；致命失败（无可用镜头/拼装失败）抛异常，由调用方记录。
     """
     audio_mode = (audio_mode or "native").strip().lower()

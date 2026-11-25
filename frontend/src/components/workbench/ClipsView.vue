@@ -27,6 +27,7 @@ import {
   openPromptEditor, saveShotParams,
   rerollShot, submitVideoJob, submitSampleVideo,
   startFinalize, ensureFinalizePolling,
+  setVideoSubtitle, setVideoAudioMode,
 } from '../../stores/app'
 
 // ---------------------------------------------------------------------
@@ -233,6 +234,10 @@ function composeAll() {
   if (!gate.value.allApproved || finalizing.value) return
   startFinalize()
   ensureFinalizePolling()
+}
+// 合成设置：声音模式与字幕开关（D-88 字幕默认关，用户显式开）
+function onAudioMode(e) {
+  setVideoAudioMode(e.target.value)
 }
 
 // ---------------------------------------------------------------------
@@ -444,15 +449,29 @@ const hasChatModel = computed(() => store.modelInfo?.available === true)
           <AppIcon v-else-if="s.state === 'locked'" name="lock" class="g-ic" />
         </span>
       </template>
-      <button
-        class="g-final" type="button"
-        :class="{ ready: gate.allApproved }"
-        :disabled="!gate.allApproved || finalizing"
-        :title="gate.allApproved ? '把已出片的片段拼成成片（配音/字幕按当前设置）' : '批准全部提示词后可合成全片'"
-        @click="composeAll"
-      >
-        <AppIcon name="film" /> {{ finalizing ? '合成中…' : '合成全片' }}
-      </button>
+      <span class="g-right">
+        <label class="g-opt" title="成片声音：音画同生 = 视频模型原生音轨（默认）；TTS 配音 = 另配人声；静片 = 无声">
+          <select :value="store.videoAudioMode" @change="onAudioMode">
+            <option value="native">音画同生</option>
+            <option value="dub">TTS 配音</option>
+            <option value="silent">静片</option>
+          </select>
+        </label>
+        <button
+          class="g-opt" type="button" :class="{ on: store.videoSubtitle }"
+          :title="store.videoSubtitle ? '合成时烧台词字幕（当前开）' : '合成时不烧字幕（默认关）'"
+          @click="setVideoSubtitle(!store.videoSubtitle)"
+        >字幕{{ store.videoSubtitle ? '开' : '关' }}</button>
+        <button
+          class="g-final" type="button"
+          :class="{ ready: gate.allApproved }"
+          :disabled="!gate.allApproved || finalizing"
+          :title="gate.allApproved ? '把已出片的片段拼成成片（声音/字幕按左侧设置）' : '批准全部提示词后可合成全片'"
+          @click="composeAll"
+        >
+          <AppIcon name="film" /> {{ finalizing ? '合成中…' : '合成全片' }}
+        </button>
+      </span>
     </nav>
 
     <div v-if="loadError" class="cl-error">{{ loadError }}（点刷新重试）</div>
@@ -721,8 +740,26 @@ const hasChatModel = computed(() => store.modelInfo?.available === true)
 .g-step.ready .g-note { color: var(--ink); }
 .g-sep { color: var(--dim); display: inline-flex; }
 .g-sep :deep(svg) { width: 10px; height: 10px; }
+.g-right { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.g-opt {
+  display: inline-flex; align-items: center;
+  height: 26px; padding: 0 10px; border-radius: var(--radius-full);
+  border: none; background: rgba(255, 255, 255, .06);
+  color: var(--muted); font-size: 11.5px; cursor: pointer;
+}
+.g-opt select {
+  appearance: none; border: none; background: transparent;
+  color: inherit; font: inherit; padding: 0 14px 0 6px; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(135deg, var(--dim) 50%, transparent 50%);
+  background-position: calc(100% - 8px) 11px, calc(100% - 4px) 11px;
+  background-size: 4px 4px; background-repeat: no-repeat;
+}
+.g-opt select option { background: var(--surface-2); color: var(--ink); }
+.g-opt:has(select) { padding: 0 2px 0 4px; }
+.g-opt:hover { color: var(--ink); background: rgba(255, 255, 255, .12); }
+.g-opt.on { color: var(--ink); background: rgba(255, 255, 255, .12); }
 .g-final {
-  margin-left: auto; flex: none;
+  flex: none;
   display: inline-flex; align-items: center; gap: 6px;
   height: 26px; padding: 0 10px; border-radius: var(--radius-full);
   border: none; background: rgba(255, 255, 255, .06);

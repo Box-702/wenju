@@ -92,6 +92,7 @@ class MiniMaxProvider(VideoProvider):
     # 只有「创建任务」与「查询任务」两个接口。所以远端取消不了——
     # 本地能把这条任务置为已取消，但服务端那条可能还在生成、费用照计。
     supports_cancel = False
+    supports_reference_audio = True  # content.audio_url role=reference_audio（≤3 段）
 
     # H3 系列档位表（官方定价页 2026-11-12 截图逐格核对）。要点：
     # - 秒价**按分辨率分档**（H3: 2K ¥0.80 / 768P ¥0.50；Highspeed: 768P ¥0.40 /

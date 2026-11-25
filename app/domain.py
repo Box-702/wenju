@@ -221,27 +221,25 @@ def normalize_adaptation_type(value: object) -> AdaptationType:
 
 
 def normalize_visual_style(value: object) -> VisualStyle:
-    """把画风的各种写法归一到枚举；无法识别回退 ``realistic``（实拍）。
-
-    为什么兜底是实拍而不是二次元：默认画风决定整片观感，猜错成二次元
-    比猜错成实拍更突兀，且实拍是当前视频模型最稳的产出。
-    """
+    """把画风的各种写法归一到枚举；未指定时优先三维漫剧。"""
     text = str(value or "").strip().lower()
     if text in {"realistic", "live", "live_action", "写实", "实拍", "真人"}:
         return "realistic"
-    if text in {"anime", "2d", "comic", "漫剧", "二次元", "动画", "动态漫"}:
+    if text in {"anime", "2d", "comic", "二次元", "二维", "动态漫"}:
         return "anime"
-    if text in {"3d", "cgi", "三维"}:
+    if text in {"3d", "cgi", "三维", "漫剧", "动画"}:
         return "3d"
     if text in {"ink", "水墨"}:
         return "ink"
-    if "anime" in text or "漫" in text or "二次元" in text or "动画" in text:
+    if "3d" in text or "三维" in text or "cgi" in text:
+        return "3d"
+    if "anime" in text or "2d" in text or "二次元" in text or "二维" in text:
         return "anime"
-    if "3d" in text or "三维" in text:
+    if "漫" in text or "动画" in text:
         return "3d"
     if "水墨" in text or "ink" in text:
         return "ink"
-    return "realistic"
+    return "3d"
 
 
 # ---- 领域模型 -----
@@ -576,7 +574,7 @@ class StyleGuide(BaseModel):
     camera_style: str = ""
     # 画风（写实/二次元/三维/水墨）：决定定妆图 prompt 与视频提示词的画风声明。
     # 与 adaptation_type 正交——短剧可以是实拍，也可以做成漫剧。
-    visual_style: VisualStyle = "realistic"
+    visual_style: VisualStyle = "3d"
     visual_references: list[str] = Field(default_factory=list)
     character_appearances: dict[str, str] = Field(default_factory=dict)
     character_identity_anchors: dict[str, str] = Field(default_factory=dict)

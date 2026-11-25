@@ -260,4 +260,6 @@ def test_质检问题里带画风标签():
 
     q = _QA_CHARACTER.format(expect="少年", style=_style_label("anime"))
     assert "二次元（漫剧）" in q and "真人照片感" in q
-    assert _style_label(None) == "写实实拍"
+    # 未指定画风默认三维漫剧（D-87）；实拍仍显式可用。
+    assert _style_label(None) == "三维漫剧"
+    assert _style_label("realistic") == "写实实拍"

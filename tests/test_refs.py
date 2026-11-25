@@ -79,7 +79,7 @@ def test_character_sheet_layout_preserves_visual_style():
     from app.pipeline.visual_styles import character_prompt as styled_prompt
 
     for style, cue in (("realistic", "写实电影摄影"), ("anime", "赛璐璐"),
-                       ("3d", "三维动画"), ("ink", "水墨")):
+                       ("3d", "三维漫剧"), ("ink", "水墨")):
         prompt = styled_prompt("齐夏", "黑色外套，银色胸针", style)
         assert cue in prompt
         assert "黑色外套，银色胸针" in prompt

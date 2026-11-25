@@ -108,8 +108,10 @@ def generate_canvas_image(project_id: str, payload: CanvasImageRequest) -> dict[
         registry = patch.get(registry_key) or {}
         generated = next((entry for entry in registry.values()
                           if isinstance(entry, dict) and entry.get("image") == url), None)
-        if generated and payload.variant_name.strip():
-            generated["name"] = payload.variant_name.strip()
+        if generated:
+            generated["description"] = payload.prompt.strip()
+            if payload.variant_name.strip():
+                generated["name"] = payload.variant_name.strip()
         store.merge_video_style(project_id, patch)
         return f"已生成{label}「{target.name}」的 1 张图片（{payload.ratio} · {payload.quality}）"
 

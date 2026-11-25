@@ -186,7 +186,7 @@ class ArtDirectorAgent(CrewAgent):
             lighting_style=str(raw.get("lighting_style") or ""),
             camera_style=str(raw.get("camera_style") or ""),
             # 画风以项目设定为准；模型给的只作兜底（它常把 anime 写成 "动漫风"）。
-            visual_style=visual_style or raw.get("visual_style") or "realistic",
+            visual_style=visual_style or raw.get("visual_style") or "3d",
             visual_references=raw.get("visual_references", []) or [],
             character_appearances=rekey({str(k): str(v) for k, v in chars.items() if v}, _idx)
             if isinstance(chars, dict) else {},
@@ -200,7 +200,7 @@ class ArtDirectorAgent(CrewAgent):
             color_palette=["#1a1a2e", "#16213e", "#0f3460", "#e94560"],
             lighting_style="自然光为主",
             camera_style="稳定拍摄",
-            visual_style=visual_style or "realistic",
+            visual_style=visual_style or "3d",
         )
         return CrewTaskResult(data=guide, summary="（无模型回退）生成默认风格指南")
 

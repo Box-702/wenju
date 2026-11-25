@@ -112,7 +112,7 @@ def test_同片内不同角色不共用同一把嗓子():
 def test_戏份最多的人先挑音色():
     """主角排在第 4 个出场，也必须拿到池里第一把（磁性男声）。"""
     script = _script(_KONGYIJI_CAST, dialogue={"char_004": 9})
-    cast = cast_script(script)
+    cast = cast_script(script, visual_style="realistic")
     by_name = {m.name: m for m in cast.members}
     assert by_name["孔乙己"].voice_id == MALE_POOL[0]
 
@@ -177,12 +177,14 @@ def test_短剧比电影快():
 def test_漫剧是短剧的画风而不是另一个类型():
     """核心建模判断：短剧包含漫剧。
 
-    漫剧 = 短剧 + 二次元画风。所以它不该出现在 adaptation_type 里，
+    漫剧 = 短剧 + 动画画风。所以它不该出现在 adaptation_type 里，
     只该出现在 visual_style 里；节奏表与导演逻辑完全共用，不分叉。
     """
     assert normalize_adaptation_type("漫剧") != "漫剧"          # 别名里没有它
     assert normalize_adaptation_type("漫剧") in {"other", "short_drama"}
-    assert normalize_visual_style("漫剧") == "anime"
+    assert normalize_visual_style("漫剧") == "3d"
+    assert normalize_visual_style("3D 漫剧") == "3d"
+    assert normalize_visual_style(None) == "3d"
     assert normalize_visual_style("二次元") == "anime"
     assert normalize_visual_style("写实") == "realistic"
     # 节奏表里不存在「漫剧」这一档——它不该有独立的节奏

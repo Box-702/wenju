@@ -104,11 +104,10 @@
           <button
             class="small ghost"
             type="button"
-            title="用生图模型给角色和场景补齐定妆照与场景图"
-            :disabled="generatingAssets"
-            @click="onGenerateAssets"
+            title="选择角色或场景，设置提示词和生图参数"
+            @click="openImageCanvas"
           >
-            <AppIcon name="image" /> {{ generatingAssets ? '生成中…' : '生成资产图' }}
+            <AppIcon name="image" /> 去生成图片
           </button>
           <button class="small ghost" type="button" title="查询并勾选可用音色" @click="voiceLibOpen = true">
             <AppIcon name="sound" /> 声音库
@@ -439,7 +438,7 @@
 // =====================================================================
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
-  store, selectProject, notify, loadShots, generateAssetImages,
+  store, selectProject, notify, loadShots,
   castProfiles, loadCastProfiles, saveCastProfile, deleteCastProfile, applyCastProfile,
 } from '../stores/app.js'
 
@@ -749,17 +748,10 @@ const styleGuideEntries = computed(() => {
   return out
 })
 
-/* 「生成资产图」：此前 store 里有这个动作但界面上没有入口（只在输入框的
-   「＋」菜单里塞了一句触发语）。用户要的是「点一下就把资产补齐」。 */
-const generatingAssets = ref(false)
-async function onGenerateAssets() {
-  generatingAssets.value = true
-  try {
-    await generateAssetImages()
-    await loadLibrary()
-  } finally {
-    generatingAssets.value = false
-  }
+function openImageCanvas() {
+  store.overlay = null
+  store.mode = 'workspace'
+  store.wbView = 'roles'
 }
 
 const GENDER_ZH = { male: '男', female: '女' }

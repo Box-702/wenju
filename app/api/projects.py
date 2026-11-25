@@ -161,7 +161,7 @@ async def import_project(
     raw_text: str | None = Form(default=None),
     title: str | None = Form(default=None),
     adaptation_type: str = Form(default="short_drama"),
-    visual_style: str = Form(default="realistic"),
+    visual_style: str = Form(default="3d"),
     language: str = Form(default="zh-CN"),
 ) -> dict[str, Any]:
     """新建剧本：上传原著文件（.txt/.md/.docx）或直接粘贴原文，自动建知识库。"""
@@ -195,7 +195,7 @@ async def import_project(
         raw_text=text,
     )
     common.persist_original(p)
-    # 画风与改编类型正交（漫剧 = 短剧 + 二次元画风），存进项目风格，供美术/
+    # 画风与改编类型正交（漫剧 = 短剧 + 动画画风），存进项目风格，供美术/
     # 定妆图/选角读取。与 adaptation_type 分开存，避免「一个画风一个类型」的组合爆炸。
     deps.store().merge_video_style(p.id, {"visual_style": normalize_visual_style(visual_style)})
     # 作者风格只做规则画像（无网络调用），避免创建流程被 LLM 阻塞

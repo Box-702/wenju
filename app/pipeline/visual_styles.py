@@ -3,8 +3,8 @@
 #
 # 为什么单独成模块，而不是再加一个 adaptation_type：
 #   短剧是按**载体与分发**定义的（竖屏、1–2 分钟、前 3 秒抓人、按完播投流），
-#   漫剧是按**画风**定义的（二次元、分格、符号化表演）。两者不在同一根轴上——
-#   漫剧就是「短剧 + 二次元画风」，是短剧的子类，不是并列体裁。
+#   漫剧是按**画风**定义的（二维或三维动画）。两者不在同一根轴上——
+#   漫剧是短剧的动画画风，不是并列体裁。
 #   做成并列类型，会让导演拆镜、节奏取值、连续性校验全部为一个画风分叉；
 #   而画风真正只影响三处：
 #     1. 美术锚与定妆图 / 场景图的生成 prompt（立绘还是剧照）；
@@ -59,17 +59,19 @@ VISUAL_STYLES: dict[str, dict[str, Any]] = {
         "voice_pool": "anime",
     },
     "3d": {
-        "label": "三维动画",
-        "description": "3D 动画电影质感",
-        "render_note": "三维动画渲染（3D animation），电影级材质与体积光，皮克斯式角色设计",
+        "label": "三维漫剧",
+        "description": "中国风 3D 漫剧，精细角色建模与电影级光影",
+        "render_note": "高品质中国风三维漫剧（3D animation），稳定的角色面部结构、精细服饰材质、电影级体积光与场景纵深",
         "character_sheet": (
-            "三维动画渲染，材质与发型结构清楚；东亚面孔。"
+            "高品质中国风写实比例三维漫剧角色设定，东亚面孔，成年人自然头身比与眼睛大小；"
+            "面部骨相、眼鼻嘴比例和发际线清晰且有辨识度，发丝分束、衣料纹理与层次、"
+            "配饰结构精细，肤质自然，身材比例稳定，与同剧角色保持统一的半写实三维渲染。"
         ),
         "environment_sheet": (
-            "3D 场景设定图。{desc}。广角空镜，画面里没有人物，三维动画渲染，"
+            "3D 场景设定图。{desc}。广角空镜，画面里没有任何人物，三维动画渲染，"
             "空间结构与光照清楚。不要出现任何文字。"
         ),
-        "negative": "真人照片、二维线稿、像素风",
+        "negative": "真人照片、二维线稿、二维平涂、Q版大眼、塑料肤质、蜡像脸、粗糙建模、比例失衡、像素风",
         "voice_pool": "anime",  # 三维动画片同样偏年轻化配音
     },
     "ink": {
@@ -88,7 +90,7 @@ VISUAL_STYLES: dict[str, dict[str, Any]] = {
     },
 }
 
-DEFAULT_VISUAL_STYLE = "realistic"
+DEFAULT_VISUAL_STYLE = "3d"
 
 # 前端下拉用的清单。
 STYLE_CHOICES: list[dict[str, str]] = [
@@ -98,7 +100,7 @@ STYLE_CHOICES: list[dict[str, str]] = [
 
 
 def get_visual_style(name: object = None) -> dict[str, Any]:
-    """取画风配置；未知值回退实拍。返回的 dict 保证含全部键。"""
+    """取画风配置；未知值回退三维漫剧。返回的 dict 保证含全部键。"""
     key = normalize_visual_style(name)
     return VISUAL_STYLES.get(key, VISUAL_STYLES[DEFAULT_VISUAL_STYLE])
 

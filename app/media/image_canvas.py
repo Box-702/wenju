@@ -25,7 +25,8 @@ def image_model_options(store: Any) -> list[dict[str, Any]]:
         models = [str(item["model"]) for item in config.get("models") or []
                   if isinstance(item, dict) and item.get("model") and item.get("enabled") is not False]
         if not models and not config.get("models"):
-            models = [str(config.get("model") or "")]
+            from ..llm.registry import _from_db_row
+            models = [str(config.get("model") or _from_db_row(row).model or "")]
         for model in dict.fromkeys(m for m in models if m):
             capable = row.name in {"minimax", "seedance"}
             result.append({
@@ -48,7 +49,9 @@ def output_size(provider: str, ratio: str, quality: str) -> str:
 
 def canvas_prompt(*, kind: str, name: str, description: str, request: str,
                   visual_style: str | None, identity_anchor: str = "") -> str:
-    detail = "；".join(part for part in (description.strip(), request.strip()) if part)
+    # A new version may deliberately change time of day, clothing or damage state.
+    # The user's description must not inherit a conflicting old-state description.
+    detail = request.strip() or description.strip()
     if kind == "character":
         return character_prompt(name, detail, visual_style, identity_anchor=identity_anchor)
     if kind == "location":

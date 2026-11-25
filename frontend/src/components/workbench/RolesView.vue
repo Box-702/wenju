@@ -22,6 +22,7 @@ const warnings = ref([])
 const assets = ref([])
 const loading = ref(false)
 const tab = ref('characters')
+let firstLoad = true
 const lookDraft = ref({})
 const anchorDraft = ref({})
 const lookBusy = ref('')
@@ -53,6 +54,11 @@ const generateLabel = computed(() => selectedTarget.value
 function selectTarget(a, kind) {
   targetKind.value = kind
   targetId.value = a.char_id || a.loc_id
+}
+function onTargetChange(value) {
+  const [kind, id] = value.split('|')
+  targetKind.value = kind || ''
+  targetId.value = id || ''
 }
 watch(selectedModel, (model) => {
   if (!model) return
@@ -103,6 +109,11 @@ async function refresh() {
     locs.value = lib.locations || []
     warnings.value = lib.warnings || []
     assets.value = [...(imgs || []), ...(vids || []), ...(auds || [])]
+    if (firstLoad) {
+      tab.value = (chars.value.some(c => c.image) || locs.value.some(l => l.image)
+        || assets.value.some(a => a.kind === 'image')) ? 'image' : 'characters'
+      firstLoad = false
+    }
   } catch (e) {
     notify(`资产加载失败：${e.message}`, 'error')
   } finally {
@@ -164,6 +175,7 @@ const missingImages = computed(() =>
 // ---- 单图生成：用户在画布上选对象、提示词、模型、比例和清晰度 ----
 const generating = ref(false)
 let genTaskId = ''
+let genTaskProjectId = ''
 let pollTimer = null
 async function generateCanvas() {
   if (!store.pid || generating.value || !selectedTarget.value || !selectedModel.value) return
@@ -177,6 +189,8 @@ async function generateCanvas() {
       ratio: ratio.value, quality: quality.value,
     })
     genTaskId = r.task_id || ''
+    genTaskProjectId = store.pid
+    if (genTaskId) sessionStorage.setItem(`wenju-image-task:${genTaskProjectId}`, genTaskId)
     notify(`正在生成${selectedTarget.value.name}的 1 张图片`, 'ok')
     pollTimer = setInterval(pollGenTask, 4000)
     pollGenTask()
@@ -187,13 +201,18 @@ async function generateCanvas() {
 }
 async function pollGenTask() {
   if (!genTaskId) return
+  const taskId = genTaskId
+  const pid = genTaskProjectId
   try {
-    const t = await api(`/tasks/${genTaskId}`)
+    const t = await api(`/tasks/${taskId}`)
+    if (taskId !== genTaskId || pid !== store.pid) return
     if (t.status === 'done' || t.status === 'failed' || t.status === 'cancelled') {
       clearInterval(pollTimer); pollTimer = null
+      sessionStorage.removeItem(`wenju-image-task:${pid}`)
+      genTaskId = ''
       generating.value = false
       if (t.status === 'done') { notify(t.result || '图片生成完成', 'ok'); tab.value = 'image' }
-      else notify(`图片生成${t.status === 'failed' ? '失败' : '已取消'}${t.error ? '：' + t.error : ''}`, 'error')
+      else notify(`图片生成${t.status === 'failed' ? '失败' : '已取消'}${t.result || t.error ? '：' + (t.result || t.error) : ''}`, 'error')
       await refresh()
       store.assetRefreshSeq += 1
     }
@@ -204,6 +223,24 @@ async function pollGenTask() {
   }
 }
 onBeforeUnmount(() => clearInterval(pollTimer))
+function resumeGenTask() {
+  if (genTaskProjectId !== store.pid) {
+    clearInterval(pollTimer); pollTimer = null
+    genTaskId = ''
+    generating.value = false
+  }
+  if (!store.pid) return
+  const saved = sessionStorage.getItem(`wenju-image-task:${store.pid}`)
+  if (!saved || genTaskId === saved) return
+  genTaskId = saved
+  genTaskProjectId = store.pid
+  generating.value = true
+  clearInterval(pollTimer)
+  pollTimer = setInterval(pollGenTask, 4000)
+  pollGenTask()
+}
+onMounted(resumeGenTask)
+watch(() => store.pid, resumeGenTask)
 
 // ---- 本地上传绑定到角色/场景（即梦卡上的「上传」路） ----
 const fileInput = ref(null)
@@ -255,8 +292,13 @@ function previewOf(a) {
 <template>
   <div class="roles">
     <input ref="fileInput" type="file" accept="image/*" hidden @change="onFilePicked" />
+    <div class="canvas-output">
 
     <header class="rl-head">
+      <div class="canvas-heading">
+        <strong>资产库</strong>
+        <span>选择角色或场景，在下方描述下一张图</span>
+      </div>
       <div class="rl-tabs seg-tabs">
         <button
           v-for="(t, i) in TABS" :key="t.key"
@@ -275,31 +317,31 @@ function previewOf(a) {
       </div>
     </header>
 
-    <!-- 缺口横幅（即梦：「有 N 个未有完整形象图，可手动上传或 AI 批量生成」） -->
+    <!-- 缺口横幅：说明缺口，不从这里直接触发付费批量任务。 -->
     <div v-if="tab === 'characters' || tab === 'locations'" class="gap-bar" :class="{ clean: !missingImages }">
       <template v-if="missingImages">
         <AppIcon name="warning" />
-        <span>有 {{ missingImages }} 个形象未生成，你可以逐卡上传，或者 AI 批量生成</span>
-        <button class="small primary" type="button" :disabled="generating"
-          title="用生图模型批量补全（按张计费，后台进行）" @click="generateAll">
-          <AppIcon name="sparkle" /> {{ generating ? '生成中…' : '批量生成' }}
-        </button>
+        <span>还有 {{ missingImages }} 个角色或场景没有图片。选中一项，在下方生成一张。</span>
       </template>
       <template v-else>
         <AppIcon name="check" />
         <span>全部形象已就位</span>
       </template>
     </div>
-    <p v-for="(w, i) in warnings" :key="'w' + i" class="warn-line">
-      <AppIcon name="info" /> {{ w }}
-    </p>
+    <details v-if="warnings.length" class="warn-details">
+      <summary>制作提醒 · {{ warnings.length }}</summary>
+      <p v-for="(w, i) in warnings" :key="'w' + i" class="warn-line">
+        <AppIcon name="info" /> {{ w }}
+      </p>
+    </details>
 
     <p v-if="loading" class="rl-state">加载中…</p>
     <div v-else-if="!store.pid" class="rl-state">还没有进入作品。</div>
 
     <!-- 角色 / 场景：大卡网格 -->
     <div v-else-if="tab === 'characters' || tab === 'locations'" class="grid">
-      <article v-for="a in shown" :key="a.char_id || a.loc_id" class="card">
+      <article v-for="a in shown" :key="a.char_id || a.loc_id" class="card"
+        :class="{ selected: targetId === (a.char_id || a.loc_id) && targetKind === (tab === 'characters' ? 'character' : 'location') }">
         <button class="card-media" type="button"
           :title="a.image ? '点开大图' : '还没有形象图'"
           @click="a.image && (store.assetPreview = previewOf(a))">
@@ -320,7 +362,9 @@ function previewOf(a) {
             </span>
             <span v-else>{{ a.scenes || 0 }} 场戏</span>
           </p>
-          <div v-if="tab === 'characters'" class="look-list" @click.stop>
+          <details v-if="tab === 'characters'" class="look-details" @click.stop>
+            <summary>造型与脸部设定</summary>
+            <div class="look-list">
             <input v-model.trim="anchorDraft[a.char_id]" placeholder="跨造型脸部特征，如眉眼、痣、鼻梁" aria-label="跨造型脸部特征" />
             <button class="mini" type="button" @click="saveAnchor(a)">保存脸部特征</button>
             <div v-for="look in a.looks || []" :key="look.id" class="look-row">
@@ -334,8 +378,13 @@ function previewOf(a) {
             <input v-model.trim="lookDraft[a.char_id].description" placeholder="服饰、发型、身体状态" aria-label="新造型描述" />
             <input v-model.trim="lookDraft[a.char_id].available_from_shot_id" placeholder="首次可用镜头 ID" aria-label="首次可用镜头" />
             <button class="mini" type="button" :disabled="lookBusy === a.char_id" @click="addLook(a)">新增造型</button>
-          </div>
+            </div>
+          </details>
           <div class="card-foot">
+            <button class="mini select-asset" type="button"
+              @click="selectTarget(a, tab === 'characters' ? 'character' : 'location')">
+              <AppIcon name="sparkle" /> {{ targetId === (a.char_id || a.loc_id) ? '已选中' : `为${a.name}生成` }}
+            </button>
             <button class="mini" type="button"
               :title="tab === 'characters' ? '本地上传图片并绑定为该角色形象' : '本地上传图片并绑定为该场景图'"
               @click="pickUpload({ id: a.char_id || a.loc_id, kind: tab === 'characters' ? 'character' : 'location', name: a.name })">
@@ -364,16 +413,74 @@ function previewOf(a) {
       </article>
       <p v-if="!shown.length" class="rl-state">还没有{{ TABS.find(t => t.key === tab)?.label }}资产。</p>
     </div>
+    </div>
+
+    <form class="canvas-composer" @submit.prevent="generateCanvas">
+      <div class="composer-top">
+        <div>
+          <span class="composer-eyebrow">图片生成</span>
+          <strong>{{ selectedTarget ? `为「${selectedTarget.name}」生成新图片` : '选一个角色或场景开始' }}</strong>
+        </div>
+        <span class="composer-hint">每次 1 张 · 按模型计费 · 质检不自动重生</span>
+      </div>
+      <div class="target-row">
+        <label class="target-select">对象
+          <select :value="targetKind && targetId ? `${targetKind}|${targetId}` : ''"
+            @change="onTargetChange($event.target.value)">
+            <option value="">选择要生成的角色或场景</option>
+            <optgroup label="角色">
+              <option v-for="c in chars" :key="c.char_id" :value="`character|${c.char_id}`">{{ c.name }}</option>
+            </optgroup>
+            <optgroup label="场景">
+              <option v-for="l in locs" :key="l.loc_id" :value="`location|${l.loc_id}`">{{ l.name }}</option>
+            </optgroup>
+          </select>
+        </label>
+        <label class="version-name">版本名 <small>可选</small>
+          <input v-model.trim="variantName" maxlength="40" placeholder="如：雨夜、受伤后" />
+        </label>
+      </div>
+      <label class="prompt-label" for="asset-image-prompt">描述想要的画面</label>
+      <textarea id="asset-image-prompt" v-model="imagePrompt" maxlength="4000" rows="3"
+        placeholder="写下人物或场景的变化、光线、构图和氛围。会沿用作品画风，旧图会保留。" />
+      <div class="composer-bottom">
+        <label>图片模型
+          <select v-model="modelKey" :disabled="!modelOptions.length">
+            <option v-if="!modelOptions.length" value="">尚未配置图片模型</option>
+            <option v-for="m in modelOptions" :key="`${m.provider_id}|${m.model_name}`"
+              :value="`${m.provider_id}|${m.model_name}`">{{ m.label }} · {{ m.model_name }}</option>
+          </select>
+        </label>
+        <label>比例
+          <select v-model="ratio" :disabled="!selectedModel">
+            <option v-for="r in selectedModel?.ratios || []" :key="r" :value="r">{{ r }}</option>
+          </select>
+        </label>
+        <label>清晰度
+          <select v-model="quality" :disabled="!selectedModel">
+            <option v-for="q in selectedModel?.qualities || []" :key="q" :value="q">{{ q }}</option>
+          </select>
+        </label>
+        <button class="generate-button" type="submit"
+          :disabled="generating || !selectedTarget || !selectedModel || !imagePrompt.trim()">
+          <AppIcon name="sparkle" /> {{ generating ? '正在生成…' : generateLabel }}
+        </button>
+      </div>
+    </form>
   </div>
 </template>
 
 <style scoped>
 .roles { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
+.canvas-output { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; }
 .rl-head {
-  display: flex; align-items: flex-end; justify-content: space-between; gap: 10px;
-  padding: 14px 18px 0; flex: none;
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px;
+  padding: 18px 18px 0; flex: none;
 }
-.rl-tabs { flex: 1; min-width: 0; }
+.canvas-heading { display: flex; flex-direction: column; gap: 3px; width: 100%; }
+.canvas-heading strong { color: var(--ink); font-size: 18px; }
+.canvas-heading span { color: var(--muted); font-size: 12px; }
+.rl-tabs { flex: 1; min-width: 0; overflow-x: auto; }
 .cnt { font-style: normal; color: var(--gold); font-family: var(--mono); font-size: 10px; margin-left: 4px; }
 .rl-acts { flex: none; padding-bottom: 6px; }
 
@@ -395,15 +502,17 @@ function previewOf(a) {
 .gap-bar.clean :deep(svg) { color: var(--ok); }
 .warn-line {
   display: flex; gap: 8px; align-items: baseline;
-  margin: 8px 18px 0; font-size: 11.5px; color: var(--dim);
+  margin: 6px 0 0; font-size: 11.5px; color: var(--dim);
 }
 .warn-line :deep(svg) { width: 11px; height: 11px; flex: none; }
+.warn-details { margin: 8px 18px 0; color: var(--dim); font-size: 11px; }
+.warn-details summary { cursor: pointer; }
 .rl-state { padding: 24px; text-align: center; color: var(--dim); font-size: 12.5px; }
 
 .grid {
-  flex: 1; min-height: 0; overflow-y: auto;
+  flex: 1; min-height: 180px;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 14px; padding: 14px 18px 20px;
+  align-content: start; gap: 14px; padding: 14px 18px 20px;
 }
 .card {
   display: flex; flex-direction: column;
@@ -412,6 +521,7 @@ function previewOf(a) {
   transition: border-color 150ms var(--ease);
 }
 .card:hover { border-color: var(--line-strong); }
+.card.selected { border-color: var(--gold); box-shadow: 0 0 0 1px color-mix(in oklch, var(--gold) 35%, transparent); }
 .card-media {
   display: block; width: 100%; aspect-ratio: 4/3; padding: 0;
   border: none; background: #000; cursor: zoom-in;
@@ -443,7 +553,12 @@ function previewOf(a) {
 }
 .voice-chip :deep(svg) { width: 11px; height: 11px; }
 .card-foot { margin-top: 2px; }
+.card-foot { display: flex; gap: 6px; flex-wrap: wrap; }
+.select-asset { background: color-mix(in oklch, var(--gold) 15%, var(--surface-2)); color: var(--ink); }
+.look-details { border-top: 1px solid var(--line); padding-top: 7px; }
+.look-details summary { color: var(--muted); font-size: 11px; cursor: pointer; }
 .look-list { display: grid; gap: 5px; }
+.look-details .look-list { padding-top: 8px; }
 .look-list input { width: 100%; min-width: 0; background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 5px; }
 .look-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
 .look-row img { width: 32px; height: 32px; object-fit: cover; }
@@ -457,4 +572,35 @@ function previewOf(a) {
 }
 .mini:hover { color: var(--ink); background: rgba(255, 255, 255, .12); }
 .mini :deep(svg) { width: 11px; height: 11px; }
+.canvas-composer {
+  flex: none; display: grid; gap: 9px; padding: 15px 18px 17px;
+  border-top: 1px solid var(--line-strong); background: var(--panel-solid);
+  box-shadow: 0 -8px 25px rgba(0, 0, 0, .16);
+}
+.composer-top { display: flex; align-items: end; justify-content: space-between; gap: 8px; }
+.composer-top > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.composer-eyebrow { color: var(--gold); font-size: 11px; white-space: nowrap; }
+.composer-top strong { color: var(--ink); font-size: 13px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.composer-hint { color: var(--dim); font-size: 10.5px; text-align: right; }
+.target-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .7fr); gap: 8px; }
+.canvas-composer label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; }
+.canvas-composer label small { color: var(--dim); }
+.canvas-composer select, .canvas-composer input, .canvas-composer textarea {
+  width: 100%; min-width: 0; border: 1px solid var(--line-strong); border-radius: 7px;
+  background: var(--surface-2); color: var(--ink); font: inherit; font-size: 12px;
+  padding: 7px 9px; outline: none;
+}
+.canvas-composer :is(select, input, textarea):focus { border-color: var(--gold); }
+.canvas-composer textarea { min-height: 68px; max-height: 140px; resize: vertical; line-height: 1.5; }
+.composer-bottom { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(70px, .6fr) minmax(75px, .6fr) auto; gap: 8px; align-items: end; }
+.generate-button { display: inline-flex; gap: 6px; align-items: center; justify-content: center;
+  min-height: 32px; border: 0; border-radius: 7px; padding: 7px 12px;
+  background: var(--gold); color: #1a150d; font-weight: 700; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.generate-button:disabled { cursor: not-allowed; opacity: .5; }
+.generate-button :deep(svg) { width: 13px; height: 13px; }
+@media (max-width: 760px) {
+  .composer-bottom { grid-template-columns: minmax(0, 1fr) 90px 90px; }
+  .generate-button { grid-column: 1 / -1; }
+  .composer-hint { display: none; }
+}
 </style>

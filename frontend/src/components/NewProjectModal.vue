@@ -16,18 +16,18 @@ import AppIcon from './AppIcon.vue'
 const ADAPT_TYPE = 'short_drama'
 
 // 画风：决定定妆图怎么出、提示词怎么写、配音用哪套声线。
-// 「二次元」就是漫剧——同一部短剧换一种画法，不改节奏与导演逻辑。
+// 二维与三维漫剧共用短剧节奏；未选画风时默认三维。
 const VISUAL_STYLES = [
   { value: 'realistic', label: '实拍写实', hint: '真人质感，电影摄影' },
-  { value: 'anime', label: '二次元（漫剧）', hint: '日式二维动画，赛璐璐上色' },
-  { value: '3d', label: '三维动画', hint: '3D 动画电影质感' },
+  { value: 'anime', label: '二维漫剧', hint: '日式二维动画，赛璐璐上色' },
+  { value: '3d', label: '三维漫剧', hint: '精细角色建模，电影级光影' },
   { value: 'ink', label: '水墨国风', hint: '水墨笔触，留白构图' },
 ]
 const ACCEPT = /\.(txt|md|markdown|docx|pdf)$/i
 
 const title = ref('')
 const adapt = ref(ADAPT_TYPE)
-const visual = ref('realistic')
+const visual = ref('3d')
 const raw = ref('')
 const file = ref(null)          // 选中的 File 对象
 const dropText = ref('点击选择或拖入文件')

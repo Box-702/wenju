@@ -69,7 +69,7 @@ app/
 ├── agent/      改编智能体   —— LangGraph 状态图（固定流程 + interrupt 人机协同）+ 后台任务运行器
 ├── chat/       对话编排层   —— 手写工具循环（loop.py）+ 会话消息队列（turn_queue.py）+ 工具实现（chat/tools/，含 generation_models.py）
 ├── crew/       剧组 Agent   —— 导演 / 美术指导 / 摄影指导
-├── media/      参考资产层   —— 资产键解析（assets）/ 角色造型（looks）/ 地点状态（location_states，D-82）/ 图片质检注册回填 / 配音 / 字幕 / 白模施工单
+├── media/      参考资产层   —— 资产键解析（assets）/ 角色造型（looks）/ 地点状态（location_states，D-82）/ 单图画布规格（image_canvas，D-86）/ 图片质检注册回填 / 配音 / 字幕 / 白模施工单
 └── video/      视频生成层   —— Provider 抽象 + 队列 + 巡检 + 连续性 + 拼接 + 成片合成 + 质检 + 用量摘要（D-53）
 
 N2D/                          小说→成片直跑工作流（体检/批处理用，与产品共用同一套 app/* 函数）

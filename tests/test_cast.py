@@ -273,3 +273,44 @@ def test_改音色后立刻生效(client, store):
     # 再读一次仍然在（已落库）
     again = client.get(f"/api/projects/{project.id}/library").json()
     assert next(c for c in again["characters"] if c["name"] == "孔乙己")["voice_id"] == "male-qn-jingying"
+
+
+# ---------- 年龄分池（2026-11-25：老道士拿到大学生音色的事故） ----------
+
+
+def test_从设定文字读年龄():
+    from app.media.casting import age_from_text
+
+    assert age_from_text("六十余岁男子，长白眉，眼窝深陷") == 60
+    assert age_from_text("二十岁上下女子，柳叶眉杏眼") == 20
+    assert age_from_text("年过六旬的老道士") == 60
+    assert age_from_text("38 岁男子") == 38
+    assert age_from_text("少年模样") == 15
+    assert age_from_text("一位老者盘坐") == 65
+    assert age_from_text("二十出头男子") is None   # 没有明确岁数，不乱猜
+    assert age_from_text("") is None
+
+
+def test_六十岁老道士优先拿磁性男声():
+    """3D 漫剧池原顺序是「清亮优先」，老道士不能排到青年大学生音色。"""
+    from app.media.casting import VOICE_MALE_MATURE
+
+    chars = [
+        {"id": "char_001", "name": "王生", "role": "protagonist"},
+        {"id": "char_002", "name": "老道士", "role": "mentor"},
+    ]
+    script = _script(chars, dialogue={"char_001": 3, "char_002": 1})
+    cast = cast_script(
+        script, visual_style="3d",
+        appearances={"char_001": "二十出头男子，浓眉细眼",
+                     "char_002": "六十余岁男子，长白眉，山羊白须"},
+    )
+    by_name = {m.name: m.voice_id for m in cast.members}
+    assert by_name["王生"] in MALE_POOL_ANIME[:2]      # 青年主角仍清亮优先
+    assert by_name["老道士"] == VOICE_MALE_MATURE      # 老年配角拿磁性男声
+
+
+def test_读不出年龄时行为不变():
+    chars = [{"id": "char_001", "name": "孔乙己", "role": "protagonist"}]
+    cast = cast_script(_script(chars, dialogue={"char_001": 2}), visual_style="3d")
+    assert cast.members[0].voice_id == MALE_POOL_ANIME[0]

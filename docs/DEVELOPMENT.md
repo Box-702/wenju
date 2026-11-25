@@ -4149,3 +4149,20 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **根因**：① finalize 链路四处默认 `subtitles=True`（`finalize_film` / API 请求体 / 对话工具 / N2D）；② 前端字幕/声音开关只写进 localStorage，分镜页没有控件；③ 参考音频门控按厂商名硬编码 `("seedance","minimax")`，`VideoProvider` 没有能力声明字段。
 - **解法**：四处默认统一为「native 声音 + 不烧字幕」，N2D 改 `--subtitles` 显式开；分镜页闸门栏常驻「声音（音画同生/TTS 配音/静片）+ 字幕开关」两个控件，设置落 localStorage；`VideoProvider` 增加 `supports_reference_audio` 能力声明（MiniMax/方舟为真），参考音频门控改按能力判断。浏览器实测字幕开/关、声音切换与持久化均生效。
 - **涉及文件**：`app/video/finalize.py` · `app/api/video.py` · `app/chat/tools/video.py` · `app/video/base.py` · `app/video/providers/minimax.py` · `app/video/providers/seedance.py` · `app/video/service.py` · `app/skills/production-delivery/SKILL.md` · `N2D/novel2video.py` · `frontend/src/components/workbench/ClipsView.vue` · `frontend/src/stores/app.js` · `tests/test_subtitles.py`。
+
+### 5.108 参考音频单段之外还有合计 15 秒上限（2026-11-25）
+
+- **症状**：组 2 重出时提交被拒，2013：`invalid params, total audio duration 15588 ms exceeds 15000 ms`。该单元未出片（提交阶段拒收，未计费）。
+- **根因**：把样音换成角色台词后，王生一条 13.2s + 妻子 2.4s，单段都在限制内，但 MiniMax 参考音频还有**合计 ≤15 秒**的上限，旧的中性句样音（3s）时代从未触发。
+- **解法**：按单元说话人数分配样音字符预算（1 人 40 字 / 2 人各 26 字 / 3 人各 16 字；中文 TTS 约 4.5 字/秒），提交侧与预生成侧共用同一预算函数；缓存键带文本摘要，预算变化自然触发重生。
+- **涉及文件**：`app/video/service.py` · `tests/test_voice_casting.py`。
+
+### T-38 《劳山道士》音色与节奏试验版（2026-11-25，付费）
+
+- **假设**：先按角色台词生成音色样音、选角按年龄修正、提示词去掉拖长标点并加语速提示后，重出组 2（025-027）的声音与节奏会明显好于原版。
+- **过程**：选角改为老道士→磁性男声、妻子→甜美女性（原少女音）；用角色台词生成样音（王生约 6.2s、妻子约 2.6s，合计 8.8s ≤15s）；组 2 组提示词改 7 处（「哎哟……」→「哎哟！」+ 脱口而出、删「噗——」拖音、删「慢慢」类拖沓词、扶人改「一把扶」等）；只批准组 2 重新提交（新提示词 + 新参考音频 = 新意图，旧成功任务不误拦），无字幕合成为试验版。第一次提交因合计时长超限被拒（本节 5.108，¥0），修复后重跑成功。
+- **发现的问题**：参考音频合计时长限制；提示词去拖音对节奏的改善有限——每条 4 秒镜头、台词稀的镜头（组 2 中间整镜无台词）仍是慢的主因；组 1 的穿模问题与音色无关、这次没动。
+- **修改**：D-89（台词样音 + 年龄分池 + 时长预算）、5.108、`video-prompt-zh` 技能加「标点即语速」规则；本次试验版不落代码，只落产物。
+- **效果**：组 2 QA 通过；音量分析（silencedetect，-35dB/0.35s）：组 2 的 11 秒窗口内人声由约 2.4s 升至约 3.1s（+30%），停顿由 6 段降为 5 段；成片 7/27 镜 · 29.71s · 无字幕 · 17.3 MB，导出 `~/.wenju/workspace/劳山道士_样片/07_成片/劳山道士_样片_试验版.mp4`。
+- **费用**：成功 1 个 12 秒单元（768P Highspeed）≈ ¥4.8，usage 无参考视频附加；被拒的第一次 ¥0；TTS 样音数条可忽略。厂商账单待核对。
+- **遗留**：听感未做人工确认；4 秒一镜与无台词镜头仍是节奏天花板——要更快需缩镜头时长并重折组提示词；旧样音升级靠「删旧样音/换音色」触发，产品里还没有「重生成音色样音」入口；组 1/028 未重出（各约 ¥4.8/¥2.0，待用户决定）。

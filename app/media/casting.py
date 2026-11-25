@@ -270,6 +270,112 @@ _ROLE_PRIORITY = {
 }
 
 
+# ---- 年龄分池（2026-11-25） -------------------------------------------
+# 事故背景：《劳山道士》六十余岁的老道士拿到「青年大学生音色」，二十岁上下的
+# 妻子拿到「少女音色」——挑音色只看性别与戏份，完全没读角色年龄。这里补一条
+# 纯规则：能从外貌/设定里读出年龄，就把池子里「音色气质」更接近年龄段的挪到
+# 前面（只重排池内成员，不新增音色；读不出年龄时行为与以前完全一致）。
+_CN_DIGITS = {
+    "零": 0, "一": 1, "二": 2, "三": 3, "四": 4,
+    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+}
+
+# 没有阿拉伯数字时，这些词本身就是年龄信号（映射到该段位的代表年龄）。
+_AGE_WORDS = (
+    (("年迈", "老翁", "老者", "老太", "白发", "白须", "白眉", "花甲", "古稀", "晚年"), 65),
+    (("少年", "少女"), 15),
+)
+
+
+def _cn_number(text: str) -> int | None:
+    """解析「六十 / 二十 / 三十五 / 十八」这类中文数字；失败返回 None。"""
+    text = (text or "").strip()
+    if not text:
+        return None
+    if "十" in text:
+        left, _, right = text.partition("十")
+        tens = _CN_DIGITS.get(left, 1) if left else 1
+        ones = _CN_DIGITS.get(right, 0) if right else 0
+        return tens * 10 + ones
+    if len(text) == 1:
+        return _CN_DIGITS.get(text)
+    return None
+
+
+def age_from_text(text: str | None) -> int | None:
+    """从角色设定/外貌描述里读年龄（纯规则，读不到返回 None）。
+
+    认：阿拉伯数字（38 岁）、中文数字（六十余岁 / 二十上下 / 三十五岁）、
+    「年过六旬 / 七旬」与老者/白须/少年这类强年龄词。
+    """
+    raw = str(text or "")
+    if not raw:
+        return None
+    import re
+
+    m = re.search(r"(\d{1,2})\s*(?:岁|周岁)", raw)
+    if m:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            pass
+    m = re.search(r"([一二三四五六七八九十]{1,3})\s*(?:余|多|来)?\s*(?:岁|周岁)", raw)
+    if m:
+        age = _cn_number(m.group(1))
+        if age is not None:
+            return age
+    m = re.search(r"年过([一二三四五六七八九十]{1,2}|半)旬", raw)
+    if m:
+        if m.group(1) == "半":
+            return 55
+        age = _cn_number(m.group(1))
+        if age is not None:
+            return age * 10 if age <= 9 else age
+    m = re.search(r"半百", raw)
+    if m:
+        return 50
+    m = re.search(r"([一二三四五六七八九十]{1,2})旬", raw)
+    if m:
+        age = _cn_number(m.group(1))
+        if age is not None:
+            return age * 10 if age <= 9 else age
+    for words, age in _AGE_WORDS:
+        if any(w in raw for w in words):
+            return age
+    return None
+
+
+def _age_preferred_pool(
+    pool: tuple[str, ...], gender: str, age: int | None,
+) -> tuple[str, ...]:
+    """按年龄段把池子里气质更合适的音色挪到前面（只重排，不增删）。
+
+    男声：老年→磁性优先；中年→精英/磁性优先。
+    女声：老年→成熟女性优先；中年→御姐/成熟优先。
+    青年/少年段与读不出年龄时保持原顺序（漫剧少年主角要清亮，这是原设计）。
+    """
+    if age is None or not pool:
+        return pool
+    if gender == "female":
+        if age >= 50:
+            preferred = (VOICE_FEMALE_SOFT, VOICE_FEMALE_MATURE)
+        elif age >= 30:
+            preferred = (VOICE_FEMALE_MATURE, VOICE_FEMALE_SOFT)
+        else:
+            return pool
+    else:
+        if age >= 50:
+            preferred = (VOICE_MALE_MATURE, VOICE_MALE_ELITE)
+        elif age >= 35:
+            preferred = (VOICE_MALE_ELITE, VOICE_MALE_MATURE)
+        else:
+            return pool
+    head = [v for v in preferred if v in pool]
+    if not head:
+        return pool
+    return tuple(head + [v for v in pool if v not in head])
+
+
 def _cast_order(script: Script) -> list:
     """角色挑音色的顺序：主角 → 反派 → 配角 → 其余，同级按台词字数降序。
 
@@ -391,11 +497,24 @@ def cast_script(
             elif gender == "female":
                 used_female.add(voice_id)
         else:
+            age = age_from_text("；".join(
+                part for part in (
+                    look,
+                    str(getattr(c, "description", "") or ""),
+                    str(getattr(c, "personality", "") or ""),
+                ) if part
+            ))
             if gender == "female":
-                voice_id = _pick_from_pool(female_pool, used_female, VOICE_FEMALE_MATURE)
+                voice_id = _pick_from_pool(
+                    _age_preferred_pool(female_pool, "female", age),
+                    used_female, VOICE_FEMALE_MATURE,
+                )
                 used_female.add(voice_id)
             else:
-                voice_id = _pick_from_pool(male_pool, used_male, VOICE_MALE_MATURE)
+                voice_id = _pick_from_pool(
+                    _age_preferred_pool(male_pool, "male", age),
+                    used_male, VOICE_MALE_MATURE,
+                )
                 used_male.add(voice_id)
 
         result.members.append(CastMember(

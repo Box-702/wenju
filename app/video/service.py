@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -27,6 +28,24 @@ from .. import deps
 from .base import DEFAULT_ASPECT, default_resolution
 
 log = logging.getLogger(__name__)
+
+# 音色样音的兜底文本：角色没有台词时用它（中性句子，不带情绪）。
+NEUTRAL_VOICE_SAMPLE = "这是一段用于音色参考的样音。"
+
+# MiniMax/方舟参考音频的**总时长**上限 15 秒（2026-11-25 实测：单段限制之外
+# 还有合计限制，13s + 2.4s 直接被 2013 拒收）。中文 TTS 约 4.5 字/秒，
+# 按单元说话人数分预算，留余量。
+VOICE_SAMPLE_TOTAL_MS = 15000
+VOICE_SAMPLE_CHARS_BY_SPEAKERS = {1: 40, 2: 26}  # 3 人起用下限
+
+
+def _sample_char_budget(n_speakers: int) -> int:
+    """按单元说话人数给单条样音的字符预算（同单元合计不超过总时长上限）。"""
+    if n_speakers <= 1:
+        return VOICE_SAMPLE_CHARS_BY_SPEAKERS[1]
+    if n_speakers == 2:
+        return VOICE_SAMPLE_CHARS_BY_SPEAKERS[2]
+    return 16  # 3 人：每人约 3.5 秒，合计约 10.5 秒
 
 
 def _now() -> datetime:
@@ -642,6 +661,33 @@ def _shot_speakers(shot_plan: list[dict[str, Any]], shot_id: str, script: Any) -
     return out
 
 
+def _character_lines(script: Any, char_id: str, *, max_chars: int = 60) -> str:
+    """该角色在剧本里的台词（按顺序拼接，最多约 max_chars 字）。
+
+    音色样音要「像这个角色在说话」：用他/她自己的台词做克隆参考，语气、
+    停连、情绪都比中性占位句更像成片。60 字 ≈ 6-8 秒，落在参考音频
+    [2,15] 秒区间中部；抓不到台词返回空串（调用方回退中性句）。
+    """
+    if script is None or not char_id:
+        return ""
+    parts: list[str] = []
+    total = 0
+    for sc in (getattr(script, "scenes", None) or []):
+        for b in (getattr(sc, "beats", None) or []):
+            if getattr(b, "speaker", None) != char_id:
+                continue
+            line = str(getattr(b, "line", None) or "").strip()
+            if not line:
+                continue
+            if total + len(line) > max_chars and parts:
+                break
+            parts.append(line)
+            total += len(line)
+        if total >= max_chars:
+            break
+    return "。".join(p for p in parts if p)
+
+
 def _provider_supports_reference_audio(provider: str) -> bool:
     """该厂商是否接受参考音频：按 VideoProvider.supports_reference_audio 能力声明判断。
 
@@ -661,27 +707,36 @@ def _provider_supports_reference_audio(provider: str) -> bool:
 
 
 def _voice_sample(store: Any, project_id: str, char_id: str, voice_id: str,
-                  *, create: bool = True) -> str | None:
+                  *, text: str = "", create: bool = True) -> str | None:
     """角色音色样音的素材回放地址（有缓存则复用，没有则 TTS 合成一条入库）。
 
     音色规范（2026-11-20）：native 音画同生模式下，视频模型没有 voice_id 字段，
-    唯一能把「这个角色该用什么嗓子」传进去的通道是 reference_audio——传一段
-    该角色音色的样音，模型生成的台词人声会向它靠。样音按 (角色, 音色) 缓存，
-    一个角色一生只合成一次（MiniMax TTS 很便宜，但绝不逐镜重复合成）。
+    唯一能把「该角色用什么嗓子」传进去的通道是 reference_audio——传一段
+    该角色音色的样音，模型生成的台词人声会向它靠。样音按 (角色, 音色, 文本)
+    缓存，文本没变就绝不重复合成（MiniMax TTS 很便宜，但绝不逐镜重复合成）。
 
     create=False（比对侧）：只查缓存不合成不写库——幂等比对发生在每个成功任务
     上，绝不能在这里烧 TTS 或改选角表。
 
-    固定中性句子做样本：音色由 voice_id 决定，文本内容不进成片、只当声线参考。
-    句长 ~13 字 ≈ 3 秒，落在方舟 2.0 参考音频的 [2,15] 秒下限之上。
+    text 给角色自己的台词（2026-11-25 起）：带情绪与停连的台词样本比中性占位句
+    更像成片里的嗓子；为空才回退中性句。缓存键带文本摘要，换样本文本自然生成
+    新样音，旧样音保留（版本可回溯）。
     任何一步失败都返回 None（不阻断出片）。
     """
     if not voice_id:
         return None
-    tag = f"音色样音::{char_id}::{voice_id}"
-    for a in store.list_assets(project_id, kind="audio"):
-        if a.name == tag and a.url:
-            return a.url
+    sample_text = (text or "").strip() or NEUTRAL_VOICE_SAMPLE
+    digest = hashlib.sha1(sample_text.encode("utf-8")).hexdigest()[:8]
+    tag = f"音色样音::{char_id}::{voice_id}::{digest}"
+    legacy_tag = f"音色样音::{char_id}::{voice_id}"
+    existing = {a.name: a.url for a in store.list_assets(project_id, kind="audio") if a.url}
+    if tag in existing:
+        return existing[tag]
+    # 兼容：中性占位句时代的老样音继续沿用——不能静默升级，否则老项目重开
+    # 批次时「音色变了」会被判成新意图，把已成功的镜头整批重烧一遍。
+    # 想升级到台词样本：删掉该角色的旧样音资产，或换音色后重新出片。
+    if legacy_tag in existing:
+        return existing[legacy_tag]
     if not create:
         return None
     try:
@@ -690,7 +745,7 @@ def _voice_sample(store: Any, project_id: str, char_id: str, voice_id: str,
         tts = _resolve_tts(store)
         if tts is None:
             return None
-        audio = tts.synthesize("这是一段用于音色参考的样音。", voice_id=voice_id)
+        audio = tts.synthesize(sample_text, voice_id=voice_id)
     except Exception as e:  # noqa: BLE001
         log.warning("音色样音合成失败（忽略）：%s %s", char_id, str(e)[:80])
         return None
@@ -751,8 +806,11 @@ def voice_audios_for(
             cast = resolve_casting(store, project_id, script)
         casting_map = {m.char_id: m.voice_id for m in cast.members if m.char_id}
         audios: list[str] = []
-        for cid in _shot_speakers(shot_plan, shot_id, script):
+        speakers = _shot_speakers(shot_plan, shot_id, script)
+        budget = _sample_char_budget(len(speakers))
+        for cid in speakers:
             url = _voice_sample(store, project_id, cid, casting_map.get(cid, ""),
+                                text=_character_lines(script, cid, max_chars=budget),
                                 create=synthesize)
             if url and url not in audios:
                 audios.append(url)
@@ -1169,6 +1227,42 @@ def _batch_submit(
     return _submit
 
 
+def prepare_voice_samples(
+    project_id: str, shot_plan: list[dict[str, Any]], shot_ids: list[str],
+    script: Any, provider: str,
+) -> list[str]:
+    """批次提交前的音色预生成：把整批说话人的样音先合成好（只返回已就绪清单）。
+
+    用户 2026-11-25 的口径：能传参考音频就先出好声音、再提交视频生成。
+    这里一次把整批说话人的样音合成入库，提交阶段只做内联；TTS 失败只告警
+    返回缺项，绝不阻断出片。厂商不支持参考音频时直接返回空。
+    """
+    if not _provider_supports_reference_audio(provider) or script is None:
+        return []
+    try:
+        store = deps.store()
+        from ..media.casting import cast_and_persist
+
+        cast = cast_and_persist(store, project_id, script)
+        casting_map = {m.char_id: m.voice_id for m in cast.members if m.char_id}
+        ready: list[str] = []
+        for sid in shot_ids:
+            speakers = _shot_speakers(shot_plan, sid, script)
+            budget = _sample_char_budget(len(speakers))
+            for cid in speakers:
+                voice_id = casting_map.get(cid, "")
+                url = _voice_sample(
+                    store, project_id, cid, voice_id,
+                    text=_character_lines(script, cid, max_chars=budget),
+                )
+                if url:
+                    ready.append(f"{cid}::{voice_id or '未定'}")
+        return sorted(set(ready))
+    except Exception as e:  # noqa: BLE001
+        log.warning("音色预生成失败（不阻断出片）：%s", str(e)[:120])
+        return []
+
+
 def generate_batch(project_id: str, payload: BatchCreateRequest) -> dict[str, Any]:
     """按最新视频版本的镜头计划批量生成。串行推进，前镜成片自动作为后镜接力参考。"""
     store = deps.store()
@@ -1246,6 +1340,14 @@ def generate_batch(project_id: str, payload: BatchCreateRequest) -> dict[str, An
     shot_ids = [u["shot_id"] for u in units]
     if not shot_ids:
         raise HTTPException(400, "还没有批准任何视频 Prompt，请先逐镜编辑并批准")
+
+    # 音色先就绪、再提交视频（2026-11-25）：整批说话人的样音在批次启动前
+    # 一次合成完，提交时只内联不阻塞；TTS 失败只告警，不阻断出片。
+    ready_voices = prepare_voice_samples(
+        project_id, version.shots, shot_ids, script, provider,
+    )
+    if ready_voices:
+        log.info("音色样音已就绪：%s", "、".join(ready_voices))
 
     # 同一项目同时只能有一个批次在推进：两个批次会重复提交同一批镜头（重复计费），
     # 还会互相抢完成回调。要重出片先 abort 掉正在跑的那个。

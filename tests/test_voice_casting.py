@@ -229,3 +229,57 @@ def test_真换过音色判成新意图():
         {"duration_sec": 5, "reference_audios": ["/api/assets/file/old"]},
         {"duration_sec": 5, "reference_audios": ["/api/assets/file/new"]},
     )
+
+
+# ---------------------------------------------------------------- 台词样本（2026-11-25）
+
+
+def _fake_tts(monkeypatch, calls: list[dict]):
+    class TTS:
+        def synthesize(self, text, *, voice_id="", speed=1.0, timeout=120.0):
+            calls.append({"text": text, "voice_id": voice_id})
+            return b"ID3-fake-mp3-bytes" * 20
+
+    monkeypatch.setattr("app.video.finalize._resolve_tts", lambda store: TTS())
+
+
+def test_样音用角色台词且缓存键带文本摘要(monkeypatch):
+    """用户口径：先出好声音再提交——样音用角色自己的台词，换文本重新合成。"""
+    from app.video import service as svc
+
+    calls: list[dict] = []
+    _fake_tts(monkeypatch, calls)
+    st = FakeStore({})
+    url = svc._voice_sample(st, "p", "char_001", "male-qn-qingse",
+                            text="你来了。我等你很久了。")
+    assert calls and calls[0]["text"] == "你来了。我等你很久了。"
+    tag = st.assets[0].name
+    assert tag.startswith("音色样音::char_001::male-qn-qingse::")
+    assert len(tag.rsplit("::", 1)[-1]) == 8
+    # 同 (角色, 音色, 文本) 命中缓存不再烧 TTS
+    assert svc._voice_sample(st, "p", "char_001", "male-qn-qingse",
+                             text="你来了。我等你很久了。") == url
+    assert len(calls) == 1
+    # 换台词文本 → 新缓存键、重新合成
+    svc._voice_sample(st, "p", "char_001", "male-qn-qingse", text="另一句台词。")
+    assert len(calls) == 2 and len(st.assets) == 2
+
+
+def test_角色台词收集按顺序并截断():
+    from app.video.service import _character_lines
+
+    script = _script()
+    assert _character_lines(script, "char_001") == "你来了。"
+    assert _character_lines(script, "char_999") == ""
+
+
+def test_样音字符预算随说话人数收缩():
+    """MiniMax 参考音频合计 ≤15s（2026-11-25 实测 2013）；按人数分预算。"""
+    from app.video.service import _sample_char_budget
+
+    assert _sample_char_budget(1) == 40
+    assert _sample_char_budget(2) == 26
+    assert _sample_char_budget(3) == 16
+    # 粗估：中文 TTS 约 4.5 字/秒，两人单元合计不超过 15 秒
+    assert _sample_char_budget(2) * 2 / 4.5 <= 15
+    assert _sample_char_budget(3) * 3 / 4.5 <= 15

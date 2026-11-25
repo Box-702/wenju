@@ -143,6 +143,10 @@ def main() -> int:
     ap.add_argument("--out", default="", help="成片导出路径（默认 output/<title>_成片.mp4）")
     ap.add_argument("--shot-limit", type=int, default=0,
                     help="只出前 N 镜（分批试跑省预算；0=全部）")
+    ap.add_argument("--sample-scene", default="", metavar="SCENE_ID",
+                    help="样片只批准指定场次的镜头，与 --shot-limit 联用")
+    ap.add_argument("--stop-after-assets", action="store_true",
+                    help="生成角色/场景设定图后停下，先检查形象再继续出片")
     ap.add_argument("--resume", default="", metavar="PROJECT_ID",
                     help="续跑已有作品：跳过已完成的步骤，不重复烧钱")
     ap.add_argument("--audio-mode", default="native", choices=["native", "dub", "silent"],
@@ -345,6 +349,9 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
         st.merge_video_style(p.id, patch)
         registered = patch["reference_images"]
         _t(f"   完成（{time.time()-t0:.0f}s）：注册 {len(refs)} 张参考资产")
+    if args.stop_after_assets:
+        _t("已停在资产检查点：请先检查角色定妆图，再用 --resume 继续出片")
+        return p.id
 
     # ---- 6. 摄影提示词 + 7. 批准 ----
     # 找最新的「带 video_prompt」版本：有则 DP 已跑过，直接进批准。
@@ -406,6 +413,9 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
     n_appr = 0
     for s in shots:
         if not s.get("video_prompt"):
+            continue
+        if args.sample_scene and s.get("scene_id") != args.sample_scene:
+            s["prompt_status"] = "needs_review"
             continue
         if s.get("id") in busy_shots:
             # 已出片/在途的镜头不仅要跳过批准名额，还必须**撤回旧的 approved**：

@@ -1123,6 +1123,19 @@ def test_h3档位收敛分辨率与时长(monkeypatch):
     assert bodies[-1]["duration"] >= 5  # Max 下限 5s
 
 
+def test_minimax参考音频使用mp3_data_uri(monkeypatch):
+    from app.video.base import VideoJobParams
+    from app.video.providers import minimax as mm
+
+    bodies = _capture_bodies(monkeypatch, mm)
+    p = mm.MiniMaxProvider(api_key="k", model="MiniMax-H3-Highspeed")
+    asyncio.run(p.create_job("p", VideoJobParams(
+        duration_sec=5, resolution="768P", reference_audios=["data:audio/mpeg;base64,QUJD"],
+    )))
+    audio = next(item for item in bodies[-1]["content"] if item["type"] == "audio_url")
+    assert audio["audio_url"]["url"] == "data:audio/mp3;base64,QUJD"
+
+
 def test_首尾帧与参考素材互斥时参考优先(monkeypatch):
     """官方文档：first/last_frame 与 reference_* 不可混用。
     混了按参考优先提交（接力是我们链路的主用法），丢弃首尾帧并警告。"""

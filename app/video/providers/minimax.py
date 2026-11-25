@@ -315,6 +315,10 @@ class MiniMaxProvider(VideoProvider):
         for url in params.reference_videos[:3]:
             content.append({"type": "video_url", "video_url": self._media(url), "role": "reference_video"})
         for url in params.reference_audios[:3]:
+            # MiniMax V2 accepts audio/mp3 but rejects the equivalent audio/mpeg
+            # data URI as an unsupported .mpeg file (API error 2013).
+            if url.startswith("data:audio/mpeg;base64,"):
+                url = "data:audio/mp3;base64," + url.split(",", 1)[1]
             content.append({"type": "audio_url", "audio_url": self._media(url), "role": "reference_audio"})
 
         if not content:

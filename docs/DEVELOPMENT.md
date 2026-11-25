@@ -4109,3 +4109,10 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **费用**：预计 ¥0，实际 ¥0；隔离模型 key 仅为无效占位，未提交图片或对话模型请求。
 - **遗留**：本轮没有再做付费真图；实际 2K 与不同宽高比的厂商响应质量和账单需在明确预算后单张验证。旧的完整资产库页仍承担音色与演员库管理。
 
+### 5.105 MiniMax H3 拒绝自动音色样音的 MIME（2026-11-25）
+
+- **症状**：3D 样片第一组镜头成功后，续跑含角色台词的镜头在提交时返回 2013：`audio format ".mpeg" not allowed`。该组未开始生成视频。
+- **根因**：音色样音存为无后缀资产，通用内联器按 `audio/mpeg` 包装 MP3。MiniMax H3 V2 把这一 MIME 解释为 `.mpeg` 文件；官方 CLI 则把 `data:audio/mpeg` 改写为 `data:audio/mp3`。
+- **解法**：MiniMax 适配器仅在组装参考音频时把 MP3 data URI 的 MIME 改为 `audio/mp3`；保留通用内联器和其他供应商行为。增加适配器回归测试。已有失败任务可用同一作品续跑，不重烧成功组。
+- **涉及文件**：`app/video/providers/minimax.py` · `tests/test_crew_video.py`。
+

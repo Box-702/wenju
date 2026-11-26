@@ -116,6 +116,11 @@ def build_production_graph(
         if version is None:  # 状态图内不该发生（script 先行），防御一下
             raise ValueError("没有剧本版本，无法拆解")
         script = version.script
+        # 分集作品：把提案的集数/每集目标补进导演预算（D-90），
+        # 否则导演按内容量估，超提案预算还会多拆集。
+        from ..pipeline.story_plan import ensure_plan_budget
+
+        ensure_plan_budget(p, script)
         existing = store.get_version_breakdown(version.id)
         if existing:
             _report("director", f"已有镜头方案（{len(existing)} 场），直接复用")

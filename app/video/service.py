@@ -1358,6 +1358,21 @@ def generate_batch(project_id: str, payload: BatchCreateRequest) -> dict[str, An
     if not shot_ids:
         raise HTTPException(400, "还没有批准任何视频 Prompt，请先逐镜编辑并批准")
 
+    # 出片前体检（2026-11-26）：单元检查只查本批要提交的，内容检查看全部
+    # （OS/标题/地点是全局属性，只看待投子集会误报）。blocker（生成单元
+    # 超厂商单次上限）直接 400——否则提交后被厂商截断，组内台词断在半句，
+    # 钱花了还得重出。warn 不拦，留给用户判断。
+    from .preflight import plan_issues
+
+    _all_shots = [s for s in version.shots if isinstance(s, dict) and s.get("id")]
+    _blockers = [
+        i for i in plan_issues(script, _all_shots, units=units)
+        if i.level == "blocker"
+    ]
+    if _blockers:
+        raise HTTPException(
+            400, "出片前体检未通过：" + "；".join(i.message for i in _blockers[:3]))
+
     # 音色先就绪、再提交视频（2026-11-25）：整批说话人的样音在批次启动前
     # 一次合成完，提交时只内联不阻塞；TTS 失败只告警，不阻断出片。
     ready_voices = prepare_voice_samples(

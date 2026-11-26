@@ -315,7 +315,7 @@ def repair_dialogue_claims(script: Any, breakdowns: list[SceneBreakdown]) -> int
         if scene is None:
             continue
         lines = [b for b in scene.beats
-                 if b.type == "dialogue" and (b.line or "").strip()]
+                 if b.type in ("dialogue", "os") and (b.line or "").strip()]
         line_ids = {b.id for b in lines}
         shots = sorted(bd.shots, key=lambda s: s.order)
         for s in shots:
@@ -348,9 +348,13 @@ def repair_dialogue_claims(script: Any, breakdowns: list[SceneBreakdown]) -> int
         if scene is None or not bd.shots:
             continue
         lines = [b for b in scene.beats
-                 if b.type == "dialogue" and (b.line or "").strip()]
+                 if b.type in ("dialogue", "os") and (b.line or "").strip()]
         claimed_now = {s.dialogue_ref for s in bd.shots if s.dialogue_ref}
         for beat in [b for b in lines if b.id not in claimed_now]:
+            # OS 是画外音，不单独补录镜头（否则每句内心独白都多一拍硬切）；
+            # 优先挂在没台词的现有镜头上，挂不上就留给提示词体检报缺口。
+            if beat.type == "os":
+                continue
             name = char_name.get(beat.speaker or "", "")
             ordered = sorted(bd.shots, key=lambda s: s.order)
             template = next(
@@ -1473,8 +1477,9 @@ class DirectorAgent(CrewAgent):
                     f"场景 {bd.scene_id} 有 {len(scene_shots)} 个镜头但都没有 reference_group，"
                     "请给同场景镜头统一分组（硬切新地点可另起分组）以共享环境参考图"
                 )
-            # 6d) 每句台词都必须落在某个镜头的范围里，否则配音时无处安放
-            dialogue_lines = [b for b in scene_beats if b.type == "dialogue" and (b.line or "").strip()]
+            # 6d) 每句台词（含内心 OS）都必须落在某个镜头的范围里，否则配音时无处安放
+            dialogue_lines = [b for b in scene_beats
+                              if b.type in ("dialogue", "os") and (b.line or "").strip()]
             assigned = {b.id for beats in shots_dialogue.values() for b in beats}
             missing = [b for b in dialogue_lines if b.id not in assigned]
             if missing:
@@ -1641,6 +1646,11 @@ class DirectorAgent(CrewAgent):
                     name = char_map.get(b.speaker, b.speaker) if b.speaker else "?"
                     emo = f"（{b.emotion}）" if b.emotion else ""
                     parts.append(f"  [对白 {b.id}] {name}{emo}：{b.line}")
+                elif b.type == "os":
+                    # 内心独白也要能认领：不写出来，导演就永远不给它镜头（2026-11-26
+                    # 复查：6 条 OS 全丢）。画面可以是任意承载人物的镜头，声音走画外。
+                    name = char_map.get(b.speaker, b.speaker) if b.speaker else "?"
+                    parts.append(f"  [内心OS {b.id}] {name}：{b.line}")
                 elif b.type == "cue":
                     parts.append(f"  [提示 {b.id}] {b.text}")
 
@@ -1834,6 +1844,38 @@ def assign_episodes(breakdowns: list[SceneBreakdown], script: Script) -> None:
     for bd in breakdowns:
         scene_dur[bd.scene_id] = sum(
             max(0.0, s.duration_sec) for s in bd.shots)
+
+    # 分集提案（D-95）优先：场头已经写明第几集时，按提案分组，不再按 95 秒
+    # 二次装箱。2026-11-26 实测：4 集提案的实际时长 103.6/106 秒，被 95 秒
+    # 上限各拆成两集，用户看到 6 集、与确认过的大纲对不上。只有某集超过
+    # 上限 1.25 倍（导演失控）才退回按时长装箱。
+    plan = getattr(script, "adaptation_plan", None)
+    explicit: dict[int, list[str]] = {}
+    for sc in script.scenes:
+        idx = int(getattr(sc, "episode", 0) or 0)
+        if idx > 0:
+            explicit.setdefault(idx, []).append(sc.id)
+    if plan is not None and len(explicit) >= 2:
+        leftover = [sc.id for sc in script.scenes
+                    if int(getattr(sc, "episode", 0) or 0) <= 0]
+        if leftover:
+            explicit[max(explicit)].extend(leftover)
+        if all(
+            sum(scene_dur.get(sid, 0.0) for sid in ids)
+            <= EPISODE_MAX_SEC * 1.25
+            for ids in explicit.values()
+        ):
+            ep_of_scene: dict[str, tuple[str, int]] = {}
+            for ep_idx, (ep, ids) in enumerate(sorted(explicit.items())):
+                ep_id = scene_ch.get(ids[0], f"ep_{ep:03d}")
+                for sid in ids:
+                    ep_of_scene[sid] = (ep_id, ep_idx)
+            for bd in breakdowns:
+                ep_id, ep_idx = ep_of_scene.get(bd.scene_id, (bd.scene_id, 0))
+                for s in bd.shots:
+                    s.episode_id = ep_id
+                    s.episode_index = ep_idx
+            return
 
     # 按章分组（保持场次顺序），超一集的章拆成多集
     by_chapter: dict[str, list[str]] = {}

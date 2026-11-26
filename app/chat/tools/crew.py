@@ -52,6 +52,11 @@ def build(ctx: ToolContext) -> list:
         if version is None:
             return "还没有剧本版本，请先生成初稿。"
         script = version.script
+        # 分集作品：提案的集数与每集目标折进导演预算（D-90），
+        # 否则导演按内容量估，超提案预算还会多拆集。
+        from ...pipeline.story_plan import ensure_plan_budget
+
+        ensure_plan_budget(p, script)
         sids = [s.strip() for s in scene_ids.split(",") if s.strip()] or None
 
         def _run(task):

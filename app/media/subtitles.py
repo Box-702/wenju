@@ -88,7 +88,7 @@ def timeline_from_prompts(shots: list[Shot]) -> list[SubEntry]:
     import re
 
     line_re = re.compile(
-        r"(?:[\u4e00-\u9fffA-Za-z]{0,12}(?:说话|说道|说|念|喊|低语|呢喃|问道|回答))"
+        r"(?:[\u4e00-\u9fffA-Za-z]{0,12}(?:画外音|说话|说道|说|念|喊|低语|呢喃|问道|回答))"
         r"\s*[:：]\s*(?:[「“\"]([^」”\"]+)[」”\"]|\{([^}]+)\})")
 
     entries: list[SubEntry] = []

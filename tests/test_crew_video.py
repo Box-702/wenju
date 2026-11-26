@@ -819,7 +819,7 @@ def test_dp_apply_dialogue_backfill_ignores_signboard_quotes():
          "prompt_body": "掌柜的手提笔在粉板上写下「孔乙己，十九文」，笔尖一顿一顿。"},
     ]}]}
     out = _dp()._apply(shots, llm_out, script, "", None)[0].video_prompt
-    assert "不出一月，定然还清" in out and "角色说话：「不出一月" in out
+    assert "不出一月，定然还清" in out and "齐夏说话：「不出一月" in out
     assert "写下「孔乙己，十九文」" in out          # 招牌文字保留
 
     # 情形二：正文已有官方句式台词 → 不重复回填
@@ -1378,3 +1378,113 @@ def test_resolve_submission_references_组接力成员回落组头成片():
         completed_urls={"shot_a_0": "https://x/group.mp4"},
     )
     assert refs["reference_videos"] == ["https://x/group.mp4"]
+
+
+def test_dp_run_batches_scenes_so_full_film_does_not_truncate():
+    """4 集 17 场 72 镜一次输出必截断：DP 必须按场切批，逐批装配。
+
+    2026-11-26 实测：单次请求返回在第一个镜头中途断掉，整条链路报
+    「无法解析 JSON 响应」。这里锁住「3 场 → 2 次调用、所有镜头都有提示词」。
+    """
+    script = _script()
+    script.scenes = [
+        Scene(id=f"scene_{i:03d}", title=f"第{i}场", chapter_refs=["ch_001"],
+              location_id="loc_room", characters=["char_a"], purpose="p", conflict="c")
+        for i in (1, 2, 3)
+    ]
+    bds = [
+        SceneBreakdown(scene_id=sc.id, shots=[
+            Shot(id=f"shot_{sc.id}_000", scene_id=sc.id, order=0,
+                 camera=CameraMovement(), duration_sec=4, action="人物站立")
+        ])
+        for sc in script.scenes
+    ]
+    dp = DPAgent.__new__(DPAgent)
+    dp.llm = type("L", (), {"available": True})()
+    calls: list[str] = []
+
+    def fake_invoke(system: str, user: str) -> dict:
+        calls.append(user)
+        seen = sorted({sid for sid in
+                       ("scene_001", "scene_002", "scene_003") if sid in user})
+        return {"scenes": [
+            {"scene_id": sid, "environment": "密室", "characters": {},
+             "shots": [{"shot_id": f"shot_{sid}_000", "prompt_body": "镜头固定，人物站立。"}]}
+            for sid in seen
+        ]}
+
+    dp._invoke_json = fake_invoke  # type: ignore[method-assign]
+    res = dp.run(script, breakdowns=bds, target_provider="minimax")
+    assert res.success, res.summary
+    assert len(calls) == 2                       # 3 场按 2 场一批
+    assert len(res.data) == 3
+    assert all(s.video_prompt for s in res.data)
+
+
+def test_dp_把超上限的镜头组拆成多个生成单元():
+    """组总时长 17.6s > 厂商 15s 上限：必须拆成两个单元，否则提交被截断。"""
+    from app.crew.dp import _split_overlong_groups
+    from app.video.service import generation_units
+
+    shots = [
+        Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
+             camera=CameraMovement(), duration_sec=8.4, group_id="g_wood", group_index=0),
+        Shot(id="shot_scene_001_001", scene_id="scene_001", order=1,
+             camera=CameraMovement(), duration_sec=9.2, group_id="g_wood", group_index=1),
+    ]
+    notes = _split_overlong_groups(shots, 15.0)
+    assert notes
+    units = generation_units([s.model_dump() for s in shots])
+    assert len(units) == 2
+    assert all(u["duration_sec"] <= 15.0 for u in units)
+
+
+def test_dp_os走画外音_唱词不套两层引号():
+    from app.domain import ScriptBeat
+
+    script = _script()
+    sc = script.scenes[0]
+    sc.beats = [
+        ScriptBeat(id="beat_001", type="os", speaker="char_a",
+                   line="都说劳山多仙人，我王生若能学得一二，也不枉此行。"),
+        ScriptBeat(id="beat_002", type="os", speaker="char_a",
+                   line="「仙仙乎，而还乎，而幽我于广寒乎？」"),
+    ]
+    shots = [
+        Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
+             camera=CameraMovement(), duration_sec=5, dialogue_ref="beat_001"),
+        Shot(id="shot_scene_001_001", scene_id="scene_001", order=1,
+             camera=CameraMovement(), duration_sec=5, dialogue_ref="beat_002"),
+    ]
+    llm_out = {"scenes": [{"scene_id": "scene_001", "shots": [
+        {"shot_id": "shot_scene_001_000", "characters": ["齐夏"],
+         "prompt_body": "他立在石阶上，抬头望向远处。"},
+        {"shot_id": "shot_scene_001_001", "characters": ["齐夏"],
+         "prompt_body": "他停在原地，目光落在墙面的纸月上。"},
+    ]}]}
+    out = _dp()._apply(shots, llm_out, script, "", None)
+    assert "齐夏画外音：「都说劳山" in out[0].video_prompt
+    assert "「「" not in out[1].video_prompt and "仙仙乎" in out[1].video_prompt
+
+
+def test_dp_装配时删掉重复句():
+    from app.crew.dp import _dedupe_sentences
+
+    text = "他站在墙前，肩膀微微塌下去。他站在墙前，肩膀微微塌下去。最后一帧。"
+    out = _dedupe_sentences(text)
+    assert out.count("肩膀微微塌下去") == 1 and "最后一帧" in out
+
+
+def test_出片前体检拦超上限生成单元():
+    from app.video.preflight import plan_issues
+
+    shots = [
+        Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
+             camera=CameraMovement(), duration_sec=8.4, group_id="g_wood",
+             group_index=0, video_prompt="x"),
+        Shot(id="shot_scene_001_001", scene_id="scene_001", order=1,
+             camera=CameraMovement(), duration_sec=9.2, group_id="g_wood",
+             group_index=1, video_prompt="y"),
+    ]
+    issues = plan_issues(None, [s.model_dump() for s in shots], max_duration=15.0)
+    assert any(i.level == "blocker" and i.code == "unit_over_max" for i in issues)

@@ -121,3 +121,31 @@ def test_多章仍按章分集():
     ep_of = {bd.scene_id: bd.shots[0].episode_id for bd in bds}
     assert ep_of == {"scene_001": "ch_001", "scene_002": "ch_001",
                      "scene_003": "ch_002"}
+
+
+def test_分集提案优先_单集超过95秒也不拆():
+    """D-95：场头已写明第几集时按提案分组，95 秒上限不再二次拆集。
+
+    2026-11-26《劳山道士》实测：第 2/3 集 103.6/106.0 秒被各拆两集，
+    4 集提案变成 6 集。只在某集超过上限 1.25 倍（导演失控）时才退回装箱。
+    """
+    from app.domain import AdaptationPlan
+
+    scene_ids = ["scene_001", "scene_002", "scene_003"]
+    script = _script(scene_ids, chapter="ep_001")
+    script.source = Source(chapter_count=2, chapter_ids=["ep_001", "ep_002"])
+    for i, sc in enumerate(script.scenes):
+        sc.chapter_refs = ["ep_001" if i < 2 else "ep_002"]
+        sc.episode = 1 if i < 2 else 2
+    script.adaptation_plan = AdaptationPlan(target_sec=110.0, episode_count=2)
+    bds = [
+        SceneBreakdown(scene_id="scene_001",
+                       shots=[_shot(0, 30.0, "scene_001"), _shot(1, 30.0, "scene_001")]),
+        SceneBreakdown(scene_id="scene_002",
+                       shots=[_shot(2, 30.0, "scene_002"), _shot(3, 20.0, "scene_002")]),
+        SceneBreakdown(scene_id="scene_003", shots=[_shot(4, 20.0, "scene_003")]),
+    ]
+    assign_episodes(bds, script)
+    eps = {s.episode_id for bd in bds for s in bd.shots}
+    assert eps == {"ep_001", "ep_002"}, eps       # 110 秒仍是一集，不出现 #2
+    assert {s.episode_index for bd in bds for s in bd.shots} == {0, 1}

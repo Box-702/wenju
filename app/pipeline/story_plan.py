@@ -239,6 +239,25 @@ def _name_key(name: str) -> str:
     return s.replace("们", "")
 
 
+def _location_description_similarity(a: Any, b: Any) -> float:
+    """两条地点描述的重合度（0–1），用于跨集合并同义地点。
+
+    逐集生成会把同一座殿叫成「观宇」「劳山道观」，名字匹配认不出来；
+    但描述都是「山顶…蒲团、案几、油灯、墙壁」，重合度高。2026-11-26
+    实测：观宇 vs 劳山道观 0.414，其余地点对 ≤0.217——阈值取 0.35，
+    既能并掉同义殿宇，又不会把「观中偏房」并进大殿。
+    """
+    import difflib
+
+    def _norm(text: Any) -> str:
+        return re.sub(r"[，。；、：:（）()\s]", "", str(text or ""))
+
+    return difflib.SequenceMatcher(None, _norm(a), _norm(b)).ratio()
+
+
+LOCATION_MERGE_SIMILARITY = 0.35
+
+
 def _match_name_key(name: str, keys: Any) -> str | None:
     key = _name_key(name)
     if key in keys:
@@ -281,6 +300,7 @@ def _merge_episode_scripts(title: str, scripts: list[Any], plan: StoryPlan) -> A
     merged_chars: list[Any] = []
     merged_locs: list[Any] = []
     scenes: list[Any] = []
+    beat_seq = 0
 
     for script in scripts:
         cmap: dict[str, str] = {}
@@ -301,6 +321,18 @@ def _merge_episode_scripts(title: str, scripts: list[Any], plan: StoryPlan) -> A
             if loc.name in locs_by_name:
                 lmap[loc.id] = locs_by_name[loc.name].id
                 continue
+            # 同义地点按描述重合度归并（观宇 / 劳山道观）：不并的话 ep1 与
+            # ep2 会给同一座殿出两套锚和两张图，跨集布景必漂（2026-11-26 复查）。
+            same = next(
+                (x for x in merged_locs
+                 if _location_description_similarity(
+                     getattr(loc, "description", ""), getattr(x, "description", "")
+                 ) >= LOCATION_MERGE_SIMILARITY),
+                None,
+            )
+            if same is not None:
+                lmap[loc.id] = same.id
+                continue
             l2 = loc.model_copy(deep=True)
             used = {x.id for x in merged_locs}
             if l2.id in used:
@@ -309,9 +341,16 @@ def _merge_episode_scripts(title: str, scripts: list[Any], plan: StoryPlan) -> A
             locs_by_name[l2.name] = l2
             lmap[loc.id] = l2.id
 
+        # 场标题全局化：逐集生成都写「第 1 场」，合并后会出现 4 个「第 1 场」。
+        # 只改通用场号，保留模型起的描述性标题。
+        ep_scene_no: dict[int, int] = {}
         for sc in script.scenes:
             sc2 = sc.model_copy(deep=True)
             sc2.id = f"scene_{len(scenes) + 1:03d}"
+            ep = int(getattr(sc2, "episode", 1) or 1)
+            ep_scene_no[ep] = ep_scene_no.get(ep, 0) + 1
+            if re.fullmatch(r"第\s*\d+\s*场", str(sc2.title or "").strip()):
+                sc2.title = f"第{ep}集·第{ep_scene_no[ep]}场"
             sc2.action = [_strip_char_ids(x) for x in sc2.action]
             sc2.characters = [cmap.get(cid, cid) for cid in sc2.characters]
             sc2.location_id = lmap.get(sc2.location_id, sc2.location_id)
@@ -328,6 +367,11 @@ def _merge_episode_scripts(title: str, scripts: list[Any], plan: StoryPlan) -> A
                 kept_beats.append(b)
             sc2.beats = kept_beats
             for b in sc2.beats:
+                # beat id 全局重排：逐集生成都从 beat_001 开始，合并后 158 个
+                # beat 只有 13 个不重复 id（2026-11-26 复查）。导演一批拆 2 场时
+                # 两场会出现同名 beat，dialogue_ref 指哪一场全靠猜。
+                beat_seq += 1
+                b.id = f"beat_{beat_seq:03d}"
                 if b.speaker:
                     b.speaker = cmap.get(b.speaker, b.speaker)
                 if b.type not in ("dialogue", "os") and b.text:
@@ -344,8 +388,78 @@ def _merge_episode_scripts(title: str, scripts: list[Any], plan: StoryPlan) -> A
     base.characters = merged_chars or base.characters
     base.locations = merged_locs or base.locations
     base.logline = plan.understanding.logline or base.logline
-    base.adaptation_plan = None
+    # 集数与每集目标必须随剧本一起交给导演（D-90）。按集扩写的剧本没有
+    # 段落级决策，但揣着提案的 4 集 × 75/90/90/60 秒——不折成 AdaptationPlan，
+    # 导演只能按内容量估（《劳山道士》实测 421 秒/5 集），既超提案预算，
+    # 又会在 assign_episodes 里按 95 秒/集再拆成 6–7 集（2026-11-26）。
+    base.adaptation_plan = adaptation_plan_for(plan, base)
     return base
+
+
+def adaptation_plan_for(plan: StoryPlan, script: Any) -> Any:
+    """把已确认的分集提案折成导演预算（D-90 的 AdaptationPlan）。
+
+    按集扩写不产段落决策，segments 留空；scene_targets 按「该场内容量」
+    把本集 target_sec 分到各场（与闸门的分配口径一致）。集数取剧本里
+    实际出现的集号，避免提案与实际场次对不上时预算按空集算。
+    """
+    from ..domain import AdaptationPlan
+    from ..video.rhythm import EPISODE_TARGET_SEC, speech_need_seconds
+
+    targets_by_ep = {
+        int(ep.index): max(0.0, float(ep.target_sec or 0.0)) for ep in plan.episodes
+    }
+    scenes_by_ep: dict[int, list[Any]] = {}
+    for sc in script.scenes:
+        idx = int(getattr(sc, "episode", 1) or 1)
+        scenes_by_ep.setdefault(idx, []).append(sc)
+
+    def _scene_seconds(sc: Any) -> float:
+        dialogue = "".join(
+            (b.line or "") for b in sc.beats if getattr(b, "type", "") == "dialogue")
+        speech = speech_need_seconds(dialogue) if dialogue.strip() else 0.0
+        actions = sum(1 for b in sc.beats if getattr(b, "type", "") == "action")
+        return speech + 2.5 * actions
+
+    scene_targets: dict[str, float] = {}
+    total_target = 0.0
+    for idx in sorted(scenes_by_ep):
+        scenes = scenes_by_ep[idx]
+        target = targets_by_ep.get(idx) or EPISODE_TARGET_SEC
+        total_target += target
+        weights = {sc.id: max(0.1, _scene_seconds(sc)) for sc in scenes}
+        weight_sum = sum(weights.values()) or 1.0
+        for sid, weight in weights.items():
+            scene_targets[sid] = target * weight / weight_sum
+
+    return AdaptationPlan(
+        segments=[],
+        target_sec=total_target or EPISODE_TARGET_SEC,
+        episode_count=max(1, len(scenes_by_ep)),
+        hook=plan.episodes[0].hook if plan.episodes else "",
+        rationale=plan.rationale,
+        scene_targets=scene_targets,
+    )
+
+
+def ensure_plan_budget(project: Any, script: Any) -> bool:
+    """给「按集扩写」的旧版本补导演预算，返回是否补过（就地改 script）。
+
+    generate_from_plan 之前不写 AdaptationPlan，2026-11-26 之前落库的
+    分集作品都没有；续跑/重新拆镜时从 projects.story_plan_json 重建，
+    不要求重新生成剧本。
+    """
+    if getattr(script, "adaptation_plan", None) is not None:
+        return False
+    raw = getattr(project, "story_plan", None) or {}
+    if not isinstance(raw, dict) or not raw.get("episodes"):
+        return False
+    try:
+        plan = StoryPlan.model_validate(raw)
+    except Exception:  # noqa: BLE001
+        return False
+    script.adaptation_plan = adaptation_plan_for(plan, script)
+    return True
 
 
 def generate_from_plan(

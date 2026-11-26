@@ -49,6 +49,10 @@ _ZH_PROVIDERS = {"minimax", "seedance"}
 # 视觉风格兜底（未提供风格指南时使用）。
 _DEFAULT_STYLE = "写实电影质感，色调统一，轻微胶片颗粒，画面稳定。"
 
+# 一次摄影调用的场景上限：整片 72 镜一次输出会截断（2026-11-26 实测，
+# 4 集 17 场在第一个镜头就断了）。与导演拆镜同口径，按场切批。
+MAX_SCENES_PER_DP_CALL = 2
+
 # 每个镜头 prompt_body 的写作铁律。
 #
 # 这些规则解决的是同一类问题：视频模型只能照字面理解文本，凡是没写出来的，
@@ -139,6 +143,81 @@ def _light_phrase(env: str) -> str:
     return m.group(1).strip("，。, ") if m else ""
 
 
+_DEDUPE_KEY_RE = re.compile(r"[\s，。！？!?…；;：:\"'“”]+")
+
+
+def _dedupe_sentences(text: str, *, min_len: int = 8) -> str:
+    """删掉同一段提示词里被写了两遍的句子（保留第一处）。
+
+    2026-11-26 复查：72 镜里 10 处重复，多是 final_frame / 台词兜底追加后
+    与原句撞车。视频模型会把重复句当成两个连续动作；审计能发现，但装配时
+    直接删更省一次重跑。含引号的台词句不参与去重（台词本身可能就是重复句）。
+    """
+    parts = [p for p in re.split(r"(?<=[。！？!?])", text or "") if p.strip()]
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in parts:
+        key = _DEDUPE_KEY_RE.sub("", part)
+        if len(key) >= min_len and "「" not in part:
+            if key in seen:
+                continue
+            seen.add(key)
+        out.append(part)
+    return "".join(out)
+
+
+def _split_overlong_groups(shots: list[Shot], max_duration: float) -> list[str]:
+    """把总时长超过一次生成上限的镜头组拆成多个生成单元（就地改 group_id）。
+
+    组是一条视频，组内机位共用同一条时长预算。MiniMax/Seedance 单次上限
+    15 秒，`minimax.py` 提交时会把更长的 duration 直接截到 15 秒——组提示词
+    里第二个机位的台词就会少掉一截（2026-11-26 复查：g_wood 8.4+9.2=17.6s，
+    第二句 9.2 秒只剩 6.6 秒）。这里按顺序贪心切块：每块 ≤ 上限；
+    单成员块清掉 group_id（退回单镜，用 video_prompt），多成员块保留原组号、
+    后续块加 `#2`/`#3` 后缀——`generation_units` 按 (scene, group) 分桶，
+    新组号天然各成一个单元。
+
+    必须在 `stretch_for_dialogue` 之前调用：台词拉长要在拆完的小组里算，
+    否则超限组没有余量，台词永远抬不到「念得完」。
+    """
+    notes: list[str] = []
+    groups: dict[tuple[str, str], list[Shot]] = {}
+    for s in shots:
+        if s.group_id:
+            groups.setdefault((s.scene_id, s.group_id), []).append(s)
+    for (_scene_id, gid), members in groups.items():
+        members.sort(key=lambda s: (s.group_index, s.order))
+        total = sum(max(0.0, s.duration_sec) for s in members)
+        if total <= max_duration:
+            continue
+        chunks: list[list[Shot]] = []
+        run: list[Shot] = []
+        acc = 0.0
+        for s in members:
+            dur = max(0.0, s.duration_sec)
+            if run and acc + dur > max_duration:
+                chunks.append(run)
+                run, acc = [], 0.0
+            run.append(s)
+            acc += dur
+        if run:
+            chunks.append(run)
+        for i, chunk in enumerate(chunks):
+            if len(chunk) == 1:
+                chunk[0].group_id = ""
+                chunk[0].group_index = 0
+                notes.append(
+                    f"组 {gid} 超 {max_duration:.0f} 秒，{chunk[0].id} 退回单镜")
+                continue
+            new_gid = gid if i == 0 else f"{gid}#{i + 1}"
+            for s in chunk:
+                s.group_id = new_gid
+            if i > 0:
+                notes.append(f"组 {gid} 超 {max_duration:.0f} 秒，拆出 {new_gid}")
+    return notes
+
+
+
 _SENT_SPLIT_RE = re.compile(r"([^。！？!?\n]+[。！？!?]?)")
 
 
@@ -177,6 +256,7 @@ def _insert_dialogue(body: str, line: str, shot: Shot, language: str) -> str:
 
 def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
                         *, language: str, provider: str = "",
+                        max_duration: float = 15.0,
                         spatial_anchors: dict[str, str] | None = None) -> None:
     """把同 group 的机位折叠成一条组提示词（就地写 group_prompt 到组头镜头）。
 
@@ -199,6 +279,9 @@ def _fold_group_prompts(shots: list[Shot], parts: dict[str, dict[str, str]],
     # 2.5 认时间戳（官方文档）；只有 2.0 走镜头N 方言。模型名拿不到时
     # 按 2.0 处理——DB 现行 seedance 配置就是 2.0 标准档。
     seedance_20 = prov == "seedance"
+    # 兜底再拆一次：直接调用本函数的测试/工具不会先走 _apply 的拆分。
+    for _note in _split_overlong_groups(shots, max_duration):
+        log.info("组折叠：%s", _note)
     # 组键按 (scene_id, group_id) 认：与归一化/生成单元折叠同口径——
     # 两个场景复用同名组键时绝不拼进同一条组提示词。
     by_gid: dict[tuple[str, str], list[Shot]] = {}
@@ -458,21 +541,39 @@ class DPAgent(CrewAgent):
         if not self.llm.available:
             return self._fallback(all_shots, script, style, language, style_guide)
 
-        user_prompt = self._build_prompt(script, breakdowns, style_guide, language, has_anchors)
+        # 厂商没给上限时按 15 秒（MiniMax/Seedance 现行硬边界）兜底。
+        max_duration = max_duration or 15.0
         system = dp_system(
             language=language, provider_label=label,
             max_duration=max_duration, has_anchors=has_anchors,
         )
+        # 整片一次输出会截断：4 集 17 场 72 镜实测，响应在第一个镜头就断了
+        # （2026-11-26，deepseek-flash 单次输出上限）。按场切批，每批 2 场——
+        # 与导演拆镜同口径；单集 6-7 场的老作品会多 2-3 次调用，成本可忽略。
+        batches = [breakdowns[i:i + MAX_SCENES_PER_DP_CALL]
+                   for i in range(0, len(breakdowns), MAX_SCENES_PER_DP_CALL)]
+        updated: list[Shot] = []
+        stretched: list[str] = []
         try:
-            raw = self._invoke_json(system, user_prompt)
-            updated = self._apply(all_shots, raw, script, style, style_guide,
-                                  language, provider=target_provider)
+            for batch in batches:
+                batch_shots = [s for bd in batch for s in bd.shots]
+                user_prompt = self._build_prompt(
+                    script, batch, style_guide, language, has_anchors)
+                raw = self._invoke_json(system, user_prompt)
+                batch_updated = self._apply(
+                    batch_shots, raw, script, style, style_guide,
+                    language, provider=target_provider,
+                    max_duration=max_duration)
 
-            # 否定句有界修复（只修 1 轮）：装配完仍有否定描述时，让模型只把那些句子
-            # 改写成正向，再重新装配。规则层已经尽力，这里是确定性兜底。
-            if self._repair_negations(updated, raw):
-                updated = self._apply(all_shots, raw, script, style, style_guide,
-                                      language, provider=target_provider)
+                # 否定句有界修复（只修 1 轮）：装配完仍有否定描述时，让模型只把那些句子
+                # 改写成正向，再重新装配。规则层已经尽力，这里是确定性兜底。
+                if self._repair_negations(batch_updated, raw):
+                    batch_updated = self._apply(
+                        batch_shots, raw, script, style, style_guide,
+                        language, provider=target_provider,
+                        max_duration=max_duration)
+                updated.extend(batch_updated)
+                stretched.extend(getattr(self, "_last_stretch", None) or [])
 
             n = sum(1 for s in updated if s.video_prompt)
             flagged = sum(1 for s in updated if s.prompt_audit)
@@ -481,7 +582,6 @@ class DPAgent(CrewAgent):
                 if flagged
                 else "，全部通过质量检查"
             ) if n else ""
-            stretched = getattr(self, "_last_stretch", None) or []
             stretch_note = (
                 f"；{len(stretched)} 个镜头台词念不完，已加长（{'、'.join(stretched[:4])}）"
                 if stretched else ""
@@ -680,6 +780,7 @@ class DPAgent(CrewAgent):
         style_guide: StyleGuide | None,
         language: str = "zh",
         provider: str = "",
+        max_duration: float = 15.0,
     ) -> list[Shot]:
         """组装最终 video_prompt。
 
@@ -792,26 +893,46 @@ class DPAgent(CrewAgent):
             # 用「有任意引号」判会把招牌引用（粉板写下「孔乙己，十九文」）误当
             # 台词，把认领的对白顶掉，掌柜该说话的画面变哑剧（002_015 实测）。
             ref = str(shot.dialogue_ref or "").strip()
-            if ref and not _OFFICIAL_DLG_RE.search(body):
-                sc_obj = scene_map.get(shot.scene_id)
-                for b in (sc_obj.beats if sc_obj else []):
-                    if b.id == ref and (b.line or "").strip():
-                        speaker = char_map.get(b.speaker or "", b.speaker or "")
-                        verb = "角色说话" if language == "zh" else "says"
-                        line = f"{speaker}{verb}：「{b.line.strip()}」" if language == "zh" \
-                            else f"{speaker} {verb}: \u201c{b.line.strip()}\u201d"
-                        # 台词插在动作链中段，不拼句尾（2026-11-20《替身v2》实测：
-                        # 台词在 770 字提示词的末尾，4 个台词镜只有 2 个真出了人声，
-                        # −33dB 的镜就是「有字幕没声音」那类——尾部指令最容易被忽略）。
-                        # 插入点：dialogue_at 落在第几句之后；没给就插第一句后。
-                        body = _insert_dialogue(body, line, shot, language)
-                        break
+            sc_obj = scene_map.get(shot.scene_id)
+            beat = next(
+                (b for b in (sc_obj.beats if sc_obj else [])
+                 if b.id == ref and (b.line or "").strip()), None)
+            # 判据从「body 里有没有任意冒号挂引号」收紧成「这句台词本身写没写」：
+            # 招牌引用（「孔乙己，十九文」）会让旧的任意引号判据误判，把认领的
+            # 对白顶掉，画面变哑剧（2026-11-14 002_015 实测）。比较前统一去标点，
+            # 模型少写个句号不该被当成「没写」再插一遍。
+            line_key = _DEDUPE_KEY_RE.sub("", beat.line) if beat is not None else ""
+            body_key = _DEDUPE_KEY_RE.sub("", body)
+            already = len(line_key) >= 4 and line_key in body_key
+            if beat is not None and not already:
+                speaker = char_map.get(beat.speaker or "", beat.speaker or "")
+                # OS 是画外音，不是张嘴说话：用「画外音」句式，避免模型给
+                # 内心独白配口型；普通对白用「说话」（此前误写成「角色说话」，
+                # 生成「王生角色说话」这种叠词，字幕说话人解析也会带脏字）。
+                if language == "zh":
+                    verb = "画外音" if beat.type == "os" else "说话"
+                    text = beat.line.strip()
+                    if text.startswith("「") and text.endswith("」"):
+                        text = text[1:-1].strip()  # 唱词自带的引号别套两层
+                    line = f"{speaker}{verb}：「{text}」"
+                else:
+                    verb = "voice-over" if beat.type == "os" else "says"
+                    line = f"{speaker} {verb}: \u201c{beat.line.strip()}\u201d"
+                # 台词插在动作链中段，不拼句尾（2026-11-20《替身v2》实测：
+                # 台词在 770 字提示词的末尾，4 个台词镜只有 2 个真出了人声，
+                # −33dB 的镜就是「有字幕没声音」那类——尾部指令最容易被忽略）。
+                # 插入点：dialogue_at 落在第几句之后；没给就插第一句后。
+                body = _insert_dialogue(body, line, shot, language)
 
             # 最终画面兜底（U11）：模型把最后一帧当情绪目的地，body 必须以
             # final_frame 收尾；LLM 漏写时把导演方案里的结束帧补成最后一句。
             ff = str(shot.final_frame or "").strip()
             if ff and not _covers(ff, body):
                 body = f"{body.strip().rstrip('。')}。{ff}".strip("。")
+            # 同一句写两遍（2026-11-26 复查：10 处）：兜底追加 final_frame /
+            # 台词后常与原句重复，模型会当成两个连续动作。装配阶段直接删重复，
+            # 不等审计提醒——句内含引号的台词句不参与去重。
+            body = _dedupe_sentences(body)
 
             # 风格段按本镜 body 重算（填空不覆盖）：body 已经交代了光影/运镜的，            # 就不再贴全片风格段的同类描述，避免两套指令打架。
             # 没有风格指南时退回调用方传入的 style 字符串。
@@ -858,13 +979,18 @@ class DPAgent(CrewAgent):
                 "style": eff_style.strip().rstrip("。") if eff_style else "",
             }
             updated.append(shot)
+        # 组超一次生成上限（15 秒）必须先拆：否则提交时被截到 15 秒，
+        # 组里第二个机位的台词会断在半句（2026-11-26 复查 g_wood 17.6s）。
+        for note in _split_overlong_groups(updated, max_duration):
+            log.info("摄影装配：%s", note)
         # 花钱前最后一道：台词念得完吗？念不完就把这一镜拉长（组内不顶破 15 秒）。
         # 必须发生在 _fold_group_prompts 之前——组提示词里写着「镜头N（X秒）」，
         # 时钟不先改对，提示词里的秒数就是错的。
         self._last_stretch = stretch_for_dialogue(updated, script)
         _fold_group_prompts(
             updated, parts_by_shot, language=language, provider=provider,
-            # 空间锚（白模施工单产出的确定性文字，D-56）：有就拼，没有不占预算
+            max_duration=max_duration,
+            # 空间锚（白模施工单出的确定性文字，D-56）：有就拼，没有不占预算
             spatial_anchors=(style_guide.spatial_anchors if style_guide else None),
         )
         return updated

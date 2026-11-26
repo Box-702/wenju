@@ -31,7 +31,7 @@ def _script(lines: list[tuple[str, str]]) -> Script:
              for i, (_, t) in enumerate(lines, 1)]
     refs = [b.id for b in beats]
     scenes = []
-    for i, (prompt_line, _) in enumerate(lines, 1):
+    for i, (_prompt_line, _) in enumerate(lines, 1):
         scenes.append(Scene(
             id=f"scene_{i:03d}", title=f"第{i}场", chapter_refs=["ch_001"],
             location_id="loc_001", characters=["char_001"], purpose="p", conflict="c",

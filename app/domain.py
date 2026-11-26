@@ -72,7 +72,8 @@ def assign_dialogue_ranges(shots: list, beats: list) -> dict[str, list]:
     「一镜多说话人」，配音也会把台词塞到画面里另一个人身上（2026-10-31 实测：
     观众完全不知道是谁在说）。返回 ``{shot_id: [beat, ...]}``，没有台词的镜头不出现。
     """
-    lines = [b for b in (beats or []) if b.type == "dialogue" and (b.line or "").strip()]
+    lines = [b for b in (beats or [])
+             if b.type in ("dialogue", "os") and (b.line or "").strip()]
     pos = {b.id: i for i, b in enumerate(lines)}
     cuts: list[tuple[int, object]] = []
     seen: set[int] = set()

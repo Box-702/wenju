@@ -365,7 +365,7 @@ def finalize_film(
             # dub 模式下模型原生音轨是含混"叽喳声"（台词没进提示词的旧产物），
             # 配音又没成功——静片 + 字幕远好于假语音（2026-11-12 v2 反馈）。
             has_dialogue = any(
-                (b.type == "dialogue" and (b.line or "").strip())
+                (b.type in ("dialogue", "os") and (b.line or "").strip())
                 for sc in (script.scenes if script else []) for b in sc.beats
             )
             if has_dialogue:

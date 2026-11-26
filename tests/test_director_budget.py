@@ -378,3 +378,30 @@ def test_组删除不绕过保底() -> None:
     assert len(gated[0].shots) >= 1, "组一刀两镜把整场删空了"
     assert sum(s.duration_sec for s in gated[0].shots) > 5.0 or notes, \
         "保不住保底时必须在 notes 里说明"
+
+
+def test_OS内心独白挂到空闲镜头() -> None:
+    script = _script(("scene_001", [
+        ScriptBeat(id="beat_001", type="os", speaker="char_a",
+                   line="都说劳山多仙人，我王生若能学得一二，也不枉此行。"),
+    ]))
+    bd = SceneBreakdown(scene_id="scene_001", shots=[
+        _shot("shot_scene_001_000", 0, 4.0),
+    ])
+    fixed = repair_dialogue_claims(script, [bd])
+    assert fixed >= 1
+    assert bd.shots[0].dialogue_ref == "beat_001"
+    assert len(bd.shots) == 1
+
+
+def test_OS没有空闲镜头时不补录新镜() -> None:
+    """OS 是画外音，不该为了它多切一个镜头；缺口留给提示词体检查。"""
+    script = _script(("scene_001", [
+        _beat("beat_001", line="甲说一句。"),
+        ScriptBeat(id="beat_002", type="os", speaker="char_a", line="他心里发怵。"),
+    ]))
+    bd = SceneBreakdown(scene_id="scene_001", shots=[
+        _shot("shot_scene_001_000", 0, 4.0, ref="beat_001"),
+    ])
+    repair_dialogue_claims(script, [bd])
+    assert len(bd.shots) == 1

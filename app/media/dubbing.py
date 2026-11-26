@@ -134,7 +134,7 @@ def plan_dubbing(
 
     for scene_id, scene_shots in by_scene.items():
         beats = beat_map.get(scene_id) or []
-        dialogue_beats = [b for b in beats if b.type == "dialogue" and (b.line or "").strip()]
+        dialogue_beats = [b for b in beats if b.type in ("dialogue", "os") and (b.line or "").strip()]
         if not dialogue_beats or not scene_shots:
             continue
 
@@ -193,7 +193,7 @@ def plan_dubbing(
         segments = _segment_beats(beats)
         n = len(scene_shots)
         for si, seg in enumerate(segments):
-            if seg[0].type != "dialogue":
+            if seg[0].type not in ("dialogue", "os"):
                 continue
             shot = scene_shots[min(n - 1, si * n // len(segments))]
             for b in seg:

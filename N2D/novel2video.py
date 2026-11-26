@@ -149,6 +149,8 @@ def main() -> int:
                     help="生成角色/场景设定图后停下，先检查形象再继续出片")
     ap.add_argument("--stop-after-script", action="store_true",
                     help="只跑到「分集大纲 + 剧本」就停，用于验证文本链路（不出图/片）")
+    ap.add_argument("--stop-after-prompts", action="store_true",
+                    help="跑到摄影提示词就停（含定妆图，不出视频）——先检查分镜与提示词")
     ap.add_argument("--resume", default="", metavar="PROJECT_ID",
                     help="续跑已有作品：跳过已完成的步骤，不重复烧钱")
     ap.add_argument("--audio-mode", default="native", choices=["native", "dub", "silent"],
@@ -301,8 +303,17 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
     # ---- 2. 剧本（已有则复用） ----
     if version is not None:
         script = version.script
+        # 旧的分集作品没有导演预算（生成时还没接线）：续跑时从提案补上，
+        # 否则导演按内容量估（421 秒/5 集），超提案预算还会多拆集。
+        from app.pipeline.story_plan import ensure_plan_budget
+
+        budget_note = ""
+        if ensure_plan_budget(p, script):
+            plan_now = script.adaptation_plan
+            budget_note = (f" · 已补分集预算 {plan_now.episode_count} 集/"
+                           f"{plan_now.target_sec:.0f} 秒")
         _t(f"① 剧本已有，跳过：{len(script.scenes)} 场 · {len(script.characters)} 角色"
-           f"（版本 {version.id}）")
+           f"（版本 {version.id}）{budget_note}")
     else:
         from app.pipeline.generation import generate_script as run_generation
 
@@ -432,6 +443,7 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
         if j.shot_id and j.status in ("succeeded", "pending", "queued", "generating")
     }
 
+    max_dur = 0.0
     if prompt_version is None:
         from app.crew.dp import run_dp
         from app.video import get_registry
@@ -460,6 +472,29 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
         _t(f"   完成：{len(shots_draft)} 镜提示词已出草稿")
     else:
         _t(f"⑤ 提示词已有（版本 {prompt_version.id}），跳过摄影指导")
+
+    # 出片前体检（2026-11-26）：把「组单元超厂商上限 / OS 丢失 / 场标题重复 /
+    # 集数与提案不符 / 提示词超预算」这几类做成每次必查。blocker 在批准前
+    # 直接停下——否则提交时会被厂商截断，台词断在半句。
+    from app.video.preflight import plan_issues
+
+    shot_rows = [s for s in prompt_version.shots if isinstance(s, dict)]
+    issues = plan_issues(script, shot_rows, max_duration=max_dur or 15.0)
+    _t(f"⑤b 出片前体检：{len(issues)} 条")
+    for issue in issues:
+        mark = "✗" if issue.level == "blocker" else "⚠"
+        _t(f"   {mark} {issue.message}")
+    blockers = [i for i in issues if i.level == "blocker"]
+
+    if args.stop_after_prompts:
+        _dump_shots(title, shot_rows, with_prompt=True)
+        _t(f"已停在提示词阶段（--stop-after-prompts）：{len(prompt_version.shots)} 镜 · "
+           f"版本 {prompt_version.id}（尚未批准、未出片）")
+        return p.id
+
+    if blockers:
+        _t("!! 体检有阻断项，已停止（未批准、未出片）；修完后用 --resume 续跑")
+        return p.id
 
     # ⑥ 批准：续跑时**总是重新生成批准版本**——批次的提交名单来自这里，
     # 必须把已出片的镜头剔出去；若沿用旧批准版本，批次会把成功的镜头

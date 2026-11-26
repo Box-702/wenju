@@ -14,6 +14,8 @@ from app.pipeline.story_plan import (
     StoryEvent,
     StoryPlan,
     StoryUnderstanding,
+    adaptation_plan_for,
+    ensure_plan_budget,
     episode_brief,
     generate_from_plan,
     plan_story,
@@ -119,6 +121,75 @@ def test_generate_from_plan_逐集扩写并合并(monkeypatch):
     assert len(merged.characters) == 1 and len(merged.locations) == 1
     assert "char_" not in merged.scenes[0].beats[0].text
     assert art["episodes"] == 3 and art["scenes"] == 3
+    all_ids = [b.id for sc in merged.scenes for b in sc.beats]
+    assert len(all_ids) == len(set(all_ids))   # beat id 合并后必须全局唯一
+    # 提案的集数/目标秒数必须随剧本交给导演（D-90）；否则导演按内容量估，
+    # 421 秒/5 集的分集剧本会被拆成 6–7 集（2026-11-26 实测）。
+    assert merged.adaptation_plan is not None
+    assert merged.adaptation_plan.episode_count == 3
+    assert merged.adaptation_plan.target_sec == 225.0
+    assert set(merged.adaptation_plan.scene_targets) == {"scene_001", "scene_002", "scene_003"}
+
+
+def test_adaptation_plan_for_按集目标分到各场():
+    """每集 target_sec 按场内内容量分给各场，集数取实际出现的集号。"""
+    script = Script(
+        title="t", logline="l",
+        source=Source(chapter_count=2, chapter_ids=["ep_001", "ep_002"]),
+        characters=[Character(id="char_001", name="甲")],
+        locations=[Location(id="loc_001", name="屋")],
+        scenes=[
+            _scene(1, 1, actions=1),
+            _scene(2, 1, actions=3),
+            _scene(3, 2, actions=2),
+        ],
+    )
+    plan = StoryPlan(
+        understanding=StoryUnderstanding(logline="l"),
+        episodes=[
+            EpisodeArc(index=1, title="一", target_sec=60),
+            EpisodeArc(index=2, title="二", target_sec=90),
+        ],
+        status="confirmed",
+    )
+    budget = adaptation_plan_for(plan, script)
+    assert budget.episode_count == 2
+    assert budget.target_sec == 150.0
+    # 第 1 集 60 秒按 1:3 分给两场；第 2 集 90 秒全给唯一的场
+    assert round(budget.scene_targets["scene_001"], 1) == 15.0
+    assert round(budget.scene_targets["scene_002"], 1) == 45.0
+    assert round(budget.scene_targets["scene_003"], 1) == 90.0
+
+
+def test_ensure_plan_budget_给旧版本补预算且幂等():
+    """2026-11-26 之前落库的分集剧本没有 adaptation_plan：从作品提案补。"""
+
+    class _P:
+        story_plan = _plan(n_eps=3, status="confirmed").model_dump()
+
+    script = Script(
+        title="t", logline="l",
+        source=Source(chapter_count=3, chapter_ids=["ep_001", "ep_002", "ep_003"]),
+        characters=[Character(id="char_001", name="甲")],
+        locations=[Location(id="loc_001", name="屋")],
+        scenes=[_scene(1, 1), _scene(2, 2), _scene(3, 3)],
+    )
+    assert script.adaptation_plan is None
+    assert ensure_plan_budget(_P(), script) is True
+    assert script.adaptation_plan.episode_count == 3
+    assert ensure_plan_budget(_P(), script) is False  # 已有预算不重复覆盖
+
+
+def _scene(i: int, episode: int, *, actions: int = 1) -> Scene:
+    beats = [
+        ScriptBeat(id=f"beat_{i:03d}{k:02d}", type="action", text="动作。")
+        for k in range(1, actions + 1)
+    ]
+    return Scene(
+        id=f"scene_{i:03d}", title=f"场{i}", chapter_refs=[f"ep_{episode:03d}"],
+        location_id="loc_001", characters=["char_001"], purpose="p", conflict="c",
+        episode=episode, beats=beats,
+    )
 
 
 def test_generate_from_plan_跨集别名人物合并(monkeypatch):
@@ -394,3 +465,44 @@ def test_工具层_集数参数非法要人话拒绝(store, sample_text):
     pid = collector["project_id"]
     r = tools["plan_story"].invoke({"project_id": pid, "episodes": "三"})
     assert "数字" in r
+
+
+def test_合并时同义地点归并_场标题带集号(monkeypatch):
+    """ep1 的「观宇」与 ep2 的「劳山道观」是同一座殿：描述重合度 0.414
+    必须并成一个地点，否则跨集给同一座殿出两套锚；通用场号也要带集号，
+    否则 17 场里会出现 4 个「第 1 场」。"""
+    import app.pipeline.generation as generation
+
+    calls = {"n": 0}
+
+    def fake_generate(llm, settings, **kwargs):
+        calls["n"] += 1
+        first = calls["n"] == 1
+        return Script(
+            title=kwargs["title"], logline="l",
+            source=Source(chapter_count=1, chapter_ids=["ch_001"]),
+            characters=[Character(id="char_001", name="王生")],
+            locations=[Location(
+                id="loc_001",
+                name="观宇" if first else "劳山道观",
+                description=("位于劳山顶，甚幽；内有蒲团、案几、墙壁，道士坐蒲团上，"
+                             "门人薄暮毕集" if first else
+                             "劳山顶上的幽静观宇，松柏环绕，内光线幽暗，有蒲团、案几、"
+                             "油灯，墙壁可粘纸月。"),
+            )],
+            scenes=[Scene(
+                id="scene_001", title="第 1 场", chapter_refs=["ch_001"],
+                location_id="loc_001", characters=["char_001"],
+                purpose="p", conflict="c",
+                beats=[ScriptBeat(id="beat_001", type="action", text="王生推门。")],
+            )],
+        ), {}
+
+    monkeypatch.setattr(generation, "generate_script", fake_generate)
+    merged, _ = generate_from_plan(
+        _FakeLLM(None), None, title="劳山道士", raw_text="原文",
+        plan=_plan(n_eps=2, status="confirmed"), adaptation_type="short_drama",
+        language="zh-CN", dialogue_style="vernacular",
+    )
+    assert len(merged.locations) == 1, [l.name for l in merged.locations]
+    assert [sc.title for sc in merged.scenes] == ["第1集·第1场", "第2集·第1场"]

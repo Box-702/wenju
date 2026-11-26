@@ -36,7 +36,9 @@ const VIEWS = [
       <AppIcon :name="v.icon" />
       <span class="rail-label">{{ v.label }}</span>
     </button>
-    <!-- 剧本页专用：脚本修改历史的开合（收起后仍留一个入口，不另起浮层） -->
+    <!-- 剧本页专用：脚本修改历史的开合（收起后仍留一个入口，不另起浮层）。
+         与上面的视图导航分隔开——它是「面板开关」，不是第四个视图。 -->
+    <div v-if="store.wbView === 'script'" class="rail-sep" />
     <button
       v-if="store.wbView === 'script'"
       class="rail-item" :class="{ active: store.ctxOpen }"
@@ -77,7 +79,7 @@ const VIEWS = [
   background: var(--surface);
   height: 100%;
 }
-.rail-sep { width: 24px; height: 1px; background: var(--line); margin: 4px 0 8px; }
+.rail-sep { width: 32px; height: 1px; background: var(--line-strong); margin: 7px 0 9px; }
 .rail-item {
   position: relative;
   display: flex; flex-direction: column; align-items: center; gap: 3px;

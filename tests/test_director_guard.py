@@ -322,15 +322,15 @@ def test_闸门_超长镜头先封顶():
 
 
 def test_闸门_删镜优先壁纸与无台词():
-    # 10 镜 × 6s = 60s… 不超。构造超支：20 镜 6s=120s 再塞 10 镜 → 必须删
+    # 25 镜 × 6s = 150s；闸门先压到 4s = 100s，仍超 80s → 必须删壁纸
     shots = []
     for i in range(15):
         shots.append(_shot(i, dur=6, fn="action", dlg=f"beat_{i:03d}"))   # 有台词正镜
     for i in range(15, 25):
         shots.append(_shot(i, dur=6, fn=""))                               # 壁纸无台词
-    out, notes = enforce_duration_budget([_bd("scene_001", shots)], 120)
+    out, notes = enforce_duration_budget([_bd("scene_001", shots)], 80)
     kept = [s for b in out for s in b.shots]
-    assert sum(s.duration_sec for s in kept) <= 120
+    assert sum(s.duration_sec for s in kept) <= 80
     # 先删的应该是壁纸（后 10 个 order 更大）
     assert all(s.order < 15 or s.function for s in kept) or \
         sum(1 for s in kept if not s.function) < 10

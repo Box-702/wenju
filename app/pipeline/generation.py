@@ -50,6 +50,12 @@ class _CharacterIn(BaseModel):
     motivation: str | None = None
     description: str | None = None
     arc: str | None = None
+    visual: str | None = None
+    tags: str | None = None
+    background: str | None = None
+    history: str | None = None
+    personality: str | None = None
+    relationships: str | None = None
 
 
 class _LocationIn(BaseModel):
@@ -144,9 +150,32 @@ class _SceneIn(BaseModel):
     exit_state: str | None = None
     time: str | None = None
     time_of_day: str | None = None
+    episode: int | None = None
+    interior_exterior: str | None = None
     beats: list[_BeatIn] = Field(default_factory=list)
+
+    @field_validator("episode", mode="before")
+    @classmethod
+    def _coerce_episode(cls, v: object) -> object:
+        if v is None or isinstance(v, int):
+            return v
+        m = re.search(r"\d+", str(v))
+        return int(m.group()) if m else None
     action: list[str] = Field(default_factory=list)
     dialogue: list[Any] = Field(default_factory=list)
+    #: 段落改编决策（D-90）：本场覆盖的 seg id 与目标秒数。
+    source_segments: list[str] = Field(default_factory=list)
+    target_sec: float | None = None
+
+    @field_validator("source_segments", mode="before")
+    @classmethod
+    def _coerce_source_segments(cls, v: object) -> object:
+        # deepseek 偶尔把数组写成「seg_001、seg_002」的字符串。
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [x.strip() for x in re.split(r"[,，、\s]+", v) if x.strip()]
+        return v
 
     @field_validator("action", mode="before")
     @classmethod
@@ -313,7 +342,7 @@ def _prior_block(prior_context: str) -> str:
     )
 
 
-def _stage_bible(llm: LLM, settings: Settings, *, title: str, excerpts: list[str], prof: dict[str, Any], language: str, prior_context: str = "", critique: str = "") -> Bible:
+def _stage_bible(llm: LLM, settings: Settings, *, title: str, excerpts: list[str], prof: dict[str, Any], language: str, prior_context: str = "", critique: str = "", bible_scope: str = "") -> Bible:
     """第一阶段：生成故事圣经（标题、梗概、主题、人物、地点）。"""
     from .profiles import profile_prompt
 
@@ -325,7 +354,10 @@ def _stage_bible(llm: LLM, settings: Settings, *, title: str, excerpts: list[str
         '{"title":"…","logline":"…","themes":["…"],'
         '"characters":[{"id":"char_001","name":"人物名","role":"protagonist|supporting|antagonist",'
         '"goal":"这个人物想要什么","motivation":"为什么",'
-        '"description":"原文给出的全部设定：年龄、身份、性格、外貌线索"}],'
+        '"description":"原文给出的全部设定：年龄、身份、性格、外貌线索",'
+        '"visual":"视觉形象（年龄/外形/服装）","tags":"一句话核心标签",'
+        '"background":"身份背景","history":"成长经历","personality":"性格特点",'
+        '"relationships":"与其他人物的关系","arc":"人物弧线"}],'
         '"locations":[{"id":"loc_001","name":"地点名",'
         '"description":"这个地点的环境、光线、道具（按原文写，没有就写场景里能看见的东西）"}]}\n'
         "【命名硬规矩】人物与地点的 name 必须用原著中出现的称呼原文"
@@ -344,6 +376,8 @@ def _stage_bible(llm: LLM, settings: Settings, *, title: str, excerpts: list[str
     )
     if critique:
         prompt += f"\n\n上一版存在以下问题，请修正后重新输出：\n{critique}"
+    if bible_scope:
+        prompt += f"\n\n{bible_scope}"
     return llm.structured(Bible).invoke(
         [{"role": "system", "content": llm.system_prompt()}, {"role": "user", "content": prompt}]
     )
@@ -377,6 +411,15 @@ def _stage_scenes(llm: LLM, settings: Settings, *, bible: Bible, excerpts: list[
         "- 动作节拍要写「看得见的画面」：谁、在什么位置、做了什么物理动作、周围有什么道具与光源。\n"
         "  不要只写「他说」「他想了想」这类拍不出来的内容——下游会直接把动作节拍变成视频提示词。\n"
         "- 对白节拍之间与前后，要有可见的动作或空间信息，方便转成画面。\n"
+        "\n【分集剧本格式（硬要求）】\n"
+        "- 每场填 episode（第几集，默认 1）、time（日/夜/晨/傍晚）、"
+        "interior_exterior（内景/外景）；characters 必须列全动作和对白里出现的每一个人；\n"
+        "- beats 的 type：action / dialogue / os（内心独白）/ flashback（闪回）/ "
+        "sound（音效）/ subtitle（字幕）/ card（卡点或钩子）；\n"
+        "- os 用 speaker+line（谁的内心的声音），flashback/sound/subtitle/card 用 text；\n"
+        "- 每集最后一场留一个 card（结尾钩子），开场可用 card 标「开场卡点」；\n"
+        "- 台词用口语，人物情绪写进 emotion；动作里禁止「心想/意识到/声音软下来」这类"
+        "拍不出来的心理或听觉描写，改成可见的身体动作。\n"
     )
     if scope_note:
         prompt += f"\n{scope_note}\n"
@@ -411,6 +454,182 @@ def _resolve_char(token: str, alias_to_id: dict[str, str]) -> str | None:
     return None
 
 
+# 近义场景词 → 地点名字里的关键字。标题命中权重 2、正文命中 1：
+# 「夜宴」在标题里比「道士」在动作里更能说明主场景。
+# 家去掉了裸「家」「院」（现代对白/院墙会误伤），观保留「观内/堂内/蒲团」。
+_LOCATION_CUES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("宴", "酒", "客", "席"), ("宴",)),
+    (("妻", "堂屋", "家门", "家院"), ("家",)),
+    (("观", "观内", "观中", "殿", "蒲团", "师父", "道士", "门人", "堂内"), ("观",)),
+    (("登山", "山道", "山顶", "砍柴", "峰"), ("山",)),
+)
+
+
+def _best_full_name(
+    title: str, text: str, alias_to_id: dict[str, str],
+) -> str | None:
+    """地点全名命中：名字越长越具体；同长取出现位置更靠后的（主场景更具体）。"""
+    hits: list[tuple[int, int, str]] = []
+    title = title or ""
+    text = text or ""
+    for name, lid in alias_to_id.items():
+        if len(name) < 2 or name.startswith("loc_"):
+            continue
+        pos = -1
+        if name in title:
+            pos = 1000 + title.rfind(name)
+        elif name in text:
+            pos = text.rfind(name)
+        if pos >= 0:
+            hits.append((len(name), pos, lid))
+    if not hits:
+        return None
+    hits.sort(reverse=True)
+    return hits[0][2]
+
+
+def _location_scores(
+    title: str, text: str, alias_to_id: dict[str, str],
+) -> dict[str, int]:
+    """给每个地点打近义场景词分：标题 2 / 正文 1。
+
+    同一组里「观」和「观中」会同时命中，只算最具体的一条，否则重复计分
+    （实测「观中」+「道士」+「堂内」被算成 4，和标题「宴」打平）。
+    """
+    scores: dict[str, int] = {}
+    title = title or ""
+    text = text or ""
+    for name, lid in alias_to_id.items():
+        if len(name) < 2 or name.startswith("loc_"):
+            continue
+        score = 0
+        for cues, name_chars in _LOCATION_CUES:
+            if not any(ch in name for ch in name_chars):
+                continue
+            matched = [cue for cue in cues if cue in title or cue in text]
+            matched = [
+                cue for cue in matched
+                if not any(cue != other and cue in other for other in matched)
+            ]
+            for cue in matched:
+                score += 2 if cue in title else 1
+        if score:
+            scores[lid] = scores.get(lid, 0) + score
+    return scores
+
+
+def resolve_location(
+    raw: object, alias_to_id: dict[str, str], fallback: str,
+    scene_text: str = "", scene_title: str = "",
+) -> str:
+    """把模型给的地点（id / 名字 / 场景文字线索）解析成 loc id。
+
+    三级：模型显式 id/名字 → 标题/动作里的全名 → 近义场景词打分。
+    2026-11-26 v3 实测：模型把「夜宴/辞行/传术」三场都填了 loc_003（王生家），
+    但标题/动作里全是「观内/堂内/道士/蒲团」；所以非 fallback 的显式 id
+    也会被高置信的场景文字覆盖（全名 10 分，或近义词 >=2 分且明显高于原地点）。
+    """
+    t = str(raw or "").strip()
+    raw_id: str | None = None
+    if t:
+        raw_id = alias_to_id.get(t)
+        if raw_id is None:
+            raw_id = alias_to_id.get(normalize_id(t, "loc", fallback=""))
+        if raw_id is None:
+            for name, lid in alias_to_id.items():
+                if len(name) >= 2 and (name in t or t in name):
+                    raw_id = lid
+                    break
+    full = _best_full_name(scene_title, scene_text, alias_to_id)
+    if full:
+        # 父地点（劳山）vs 子场景（观宇）：动作里出现道观/殿/蒲团/门人时，
+        # 取观宇，不把「劳山山顶道观门前」整场带成山道（v5 实测）。
+        full_name = next(
+            (n for n, lid in alias_to_id.items() if lid == full and not n.startswith("loc_")),
+            "",
+        )
+        temple = next(
+            (lid for n, lid in alias_to_id.items()
+             if not n.startswith("loc_") and "观" in n),
+            None,
+        )
+        # 父地点山、幻境月宫都不如「观宇」具体：动作里有道观/殿/蒲团/门人/
+        # 道士时，取观宇；家（王生家）优先保留。
+        if temple and "家" not in full_name and "观" not in full_name and any(
+                k in (scene_text or "") for k in ("道观", "殿", "蒲团", "门人", "道士")):
+            return temple
+        if raw_id is None or raw_id == fallback or full != raw_id:
+            return full
+        return raw_id
+    scores = _location_scores(scene_title, scene_text, alias_to_id)
+    inferred, inferred_score = (None, 0)
+    if scores:
+        inferred = max(scores, key=scores.get)
+        inferred_score = scores[inferred]
+    raw_score = scores.get(raw_id, 0) if raw_id else 0
+    if inferred:
+        if raw_id is None or raw_id == fallback:
+            return inferred
+        if inferred != raw_id and inferred_score >= 2 and inferred_score > raw_score + 1:
+            return inferred
+    return raw_id or inferred or fallback
+
+
+def infer_scene_time(text: str) -> str | None:
+    """从场景动作里推断昼夜（场头 time 缺失时用）。"""
+    blob = text or ""
+    if any(k in blob for k in ("深夜", "夜里", "夜色", "月光", "月下", "夜")):
+        return "夜"
+    if any(k in blob for k in ("清晨", "凌晨", "拂晓", "晨")):
+        return "晨"
+    if any(k in blob for k in ("傍晚", "黄昏", "日暮", "薄暮")):
+        return "傍晚"
+    if any(k in blob for k in ("午后", "白天", "日间", "日")):
+        return "日"
+    return None
+
+
+def infer_interior_exterior(title: str, location_name: str, text: str) -> str:
+    """推断内景/外景（场头缺失时用）。默认内景。"""
+    blob = f"{title or ''} {location_name or ''} {text or ''}"
+    if "外景" in blob:
+        return "外景"
+    if "内景" in blob:
+        return "内景"
+    outdoor = ("山道", "山顶", "山路", "门外", "院门", "街道", "院外", "院中",
+               "庭院", "院墙", "墙前", "田野", "河边", "崖", "林中")
+    if any(k in blob for k in outdoor):
+        return "外景"
+    return "内景"
+
+
+def _episode_from_refs(refs: list[str] | None) -> int:
+    """chapter_refs 里的 ep_00N → 集号；没有就第 1 集。"""
+    for ref in refs or []:
+        m = re.search(r"ep_(\d+)", str(ref))
+        if m:
+            return max(1, int(m.group(1)))
+    return 1
+
+
+_TEMPLE_CUES = ("道士", "师父", "蒲团", "堂内", "观", "殿", "门人")
+
+
+def inherit_previous_location(
+    scene_loc: str, prev_loc: str | None, strong: bool, scene_text: str,
+) -> str:
+    """弱线索场景沿用上一场地点（同一连续空间里的辞行/传术）。
+
+    2026-11-26 v3 实测：辞行/传术两场的动作只有「道士」，地点线索分数 1，
+    模型又都填了王生家；前一场夜宴已经认到观宇，这两场应沿用观宇。
+    只在没有全名/高分线索、且文本里出现道观人物/空间词时继承，避免把
+    家里的戏也带过去。
+    """
+    if not strong and prev_loc and any(cue in (scene_text or "") for cue in _TEMPLE_CUES):
+        return prev_loc
+    return scene_loc
+
+
 def _norm_beat_id(value: object, index: int, used: set[str]) -> str:
     """把模型给的节拍 id 规整为 ``beat_数字``（非纯数字则回退序号，并保证唯一）。"""
     raw = str(value or "").strip()
@@ -435,6 +654,10 @@ def generate_script(
     language: str,
     prior_context: str = "",
     story_plan: Any = None,
+    dialogue_style: str = "",
+    extra_scope: str = "",
+    bible_scope: str = "",
+    skip_adaptation: bool = False,
 ) -> tuple[Script, dict[str, Any]]:
     """生成剧本。返回 (Script, artifacts)。失败时回退最小剧本。
 
@@ -458,6 +681,49 @@ def generate_script(
             "\n【归集】每场的 chapter_refs 填它承载的那一集（如 [\"ep_002\"]）；"
             "一场的节拍跨集时按主要冲突归集。"
         )
+    # 按集扩写：一次只带本集任务书，由 story_plan.generate_from_plan 循环调用。
+    if extra_scope:
+        scope_note = (scope_note + "\n\n" + extra_scope).strip()
+
+    # ---- 台词语言口径（文言原文必须由用户拍板白话/文言/混合）----
+    from .source_style import (
+        dialogue_style_note,
+        is_classical_chinese,
+        normalize_dialogue_style,
+    )
+
+    style = normalize_dialogue_style(dialogue_style)
+    source_style = "classical" if is_classical_chinese(raw_text or "") else ""
+    if style:
+        scope_note = (scope_note + "\n\n" + dialogue_style_note(style)).strip()
+        artifacts["dialogue_style"] = style
+    elif source_style == "classical":
+        artifacts["source_style"] = source_style
+        log.info("原文是文言文；未指定台词语言（白话/文言/混合），沿用原文风格")
+
+    # ---- 段落改编决策（D-90）----
+    # 只在「短篇/无已确认故事提案」的路径跑：长篇的 D-71 事件清单已经是底线，
+    # 再跑一次逐段分析会多花一次调用、两套口径还可能打架。
+    adaptation_plan = None
+    if llm.available and story_plan is None and not skip_adaptation:
+        from .adaptation import (
+            adaptation_summary,
+            analyze_adaptation,
+            is_narrative_source,
+            plan_brief,
+        )
+
+        if is_narrative_source(raw_text or ""):
+            adaptation_plan = analyze_adaptation(
+                llm, title=title, raw_text=raw_text,
+                adaptation_type=adaptation_type, language=language,
+            )
+            if adaptation_plan is not None:
+                scope_note = (scope_note + "\n\n" + plan_brief(adaptation_plan)).strip()
+                artifacts["adaptation_plan"] = adaptation_plan.model_dump()
+                log.info("段落决策：%s", adaptation_summary(adaptation_plan))
+            else:
+                log.info("段落决策不可用（模型失败），走旧逻辑")
 
     if llm.available:
         try:
@@ -465,7 +731,7 @@ def generate_script(
             if not chunks:
                 chunks = [raw_text or ""]
             excerpts = chunks[:12]
-            bible = _stage_bible(llm, settings, title=title, excerpts=excerpts, prof=prof, language=language, prior_context=prior_context)
+            bible = _stage_bible(llm, settings, title=title, excerpts=excerpts, prof=prof, language=language, prior_context=prior_context, bible_scope=bible_scope)
             # 护栏：名层退化（拼音 slug）/ 结构缺失（没有人物、没有地点）时，
             # 带反馈重跑一次故事圣经（有界：只一次）。两种问题可能同时出现，
             # 合成一段 critique 一次问清，别让模型分两轮试错。
@@ -475,6 +741,7 @@ def generate_script(
                 retry = _stage_bible(
                     llm, settings, title=title, excerpts=excerpts, prof=prof,
                     language=language, prior_context=prior_context, critique=critique,
+                    bible_scope=bible_scope,
                 )
                 if _bible_issue(retry, language) is None:
                     bible = retry
@@ -496,9 +763,35 @@ def generate_script(
                     prior_context=prior_context,
                     scope_note=scope_note,
                 )
+            # 段落决策一致性：段落没落场、cut 段混进来、目标秒数偏差过大时，
+            # 带反馈重拆一次（有界：只一次；仍不合格就交给下面的绑定做兜底修复）。
+            if adaptation_plan is not None and plan.scenes:
+                from .adaptation import scene_plan_issues
+
+                issues = [x for x in scene_plan_issues(adaptation_plan, plan)
+                          if x.startswith("错误")]
+                if issues:
+                    log.warning("场景规划与段落决策不一致，带反馈重拆一次：%s",
+                                "；".join(issues)[:160])
+                    retry = _stage_scenes(
+                        llm, settings, bible=bible, excerpts=excerpts, prof=prof,
+                        language=language, chunks=chunks, prior_context=prior_context,
+                        scope_note=scope_note, critique="\n".join(issues),
+                    )
+                    if retry.scenes:
+                        plan = retry
             if not plan.scenes:
-                # 思考模型输出不稳定：场景为空时重试一次。
-                plan = _stage_scenes(llm, settings, bible=bible, excerpts=excerpts, prof=prof, language=language, chunks=chunks, prior_context=prior_context, scope_note=scope_note)
+                # 思考模型输出不稳定：空场景带反馈重试一次（只说「重试」它还会空）。
+                plan = _stage_scenes(
+                    llm, settings, bible=bible, excerpts=excerpts, prof=prof,
+                    language=language, chunks=chunks, prior_context=prior_context,
+                    scope_note=scope_note,
+                    critique=(
+                        "上一版 scenes 为空数组。请只返回 scenes 数组：每场 2–5 个节拍、"
+                        "每场填 episode/time/interior_exterior/characters，不要输出空数组"
+                        "或其它顶层结构。"
+                    ),
+                )
             if not plan.scenes:
                 raise ValueError("场景生成为空")
 
@@ -522,7 +815,11 @@ def generate_script(
                                        # 人物设定（年龄/身份/性格）必须带到下游：
                                        # 美术阶段只读人物描述来写角色造型，
                                        # 丢在这里就等于让美术自己编外貌。
-                                       description=c.description, arc=c.arc))
+                                       description=c.description, arc=c.arc,
+                                       visual=c.visual, tags=c.tags,
+                                       background=c.background, history=c.history,
+                                       personality=c.personality,
+                                       relationships=c.relationships))
                 for key in (c.name, c.id):
                     k = str(key or "").strip()
                     if k and k not in alias_to_id:
@@ -559,11 +856,21 @@ def generate_script(
             if not locs:
                 locs = [Location(id="loc_main", name="主要场景")]
 
+            # 地点别名索引：名字与 id 都认，供 resolve_location 把模型给的中文
+            # 地名/带修饰的地名解析回 loc id（否则全部回退到第一个地点）。
+            loc_alias_to_id: dict[str, str] = {}
+            for loc in locs:
+                for key in (loc.name, loc.id):
+                    k = str(key or "").strip()
+                    if k and k not in loc_alias_to_id:
+                        loc_alias_to_id[k] = loc.id
+
             char_id_set = {c.id for c in chars}
             char_list = [c.id for c in chars]
             loc_id = locs[0].id
             scenes: list[Scene] = []
             used_scene_ids: set[str] = set()
+            prev_scene_loc: str | None = None
             for i, s in enumerate(plan.scenes or []):
                 sid = normalize_id(s.scene_id or s.id, "scene", fallback=f"scene_{i + 1:03d}")
                 # 模型常给出带后缀的场景 id（如 scene_01_wake_up），而 Scene.id
@@ -581,39 +888,99 @@ def generate_script(
                 sc_chars = [_resolve_char(str(x).strip(), alias_to_id)
                             or normalize_id(x, "char", fallback=x) for x in s.characters]
                 sc_chars = [c for c in sc_chars if c in char_id_set]
-                for b in s.beats or []:
-                    spk = str(b.speaker or "").strip()
-                    sid2 = _resolve_char(spk, alias_to_id)
-                    if sid2 and sid2 not in sc_chars:
-                        sc_chars.append(sid2)
-                sc_chars = sc_chars or [char_list[0]]
                 beats: list[ScriptBeat] = []
                 used_beat_ids: set[str] = set()
                 # beats 为空时用 action/dialogue 兼容层合成，避免整场戏没有节拍。
                 raw_beats = s.beats or _synth_beats(s)
+                _beat_aliases = {
+                    "os": "os", "内心": "os", "内心os": "os", "monologue": "os",
+                    "flashback": "flashback", "闪回": "flashback",
+                    "sound": "sound", "音效": "sound",
+                    "subtitle": "subtitle", "字幕": "subtitle",
+                    "card": "card", "hook": "card", "卡点": "card", "钩子": "card",
+                }
                 for bi, b in enumerate(raw_beats):
-                    kind = str(b.type or "action")
-                    if kind not in {"action", "dialogue", "cue"}:
+                    raw_kind = str(b.type or "action").strip().lower()
+                    kind = _beat_aliases.get(raw_kind, raw_kind)
+                    if kind not in {"action", "dialogue", "cue", "os",
+                                    "flashback", "sound", "subtitle", "card"}:
                         kind = "dialogue" if (b.speaker or b.line or b.dialogue) else "action"
+                    beat_text = str(b.text or b.action or b.line or "").strip()
+                    # 模型常把「三天前/从此」也标 card；前者是闪回、后者是过渡旁白，
+                    # 不是钩子。按内容纠正，别让 UI 全打成【卡点】。
+                    if kind == "card" and beat_text:
+                        if any(k in beat_text for k in
+                               ("三天前", "三年前", "几年前", "此前", "原来", "当初", "那一年")):
+                            kind = "flashback"
+                        elif any(k in beat_text for k in
+                                 ("从此", "后来", "就这样", "于是", "接下来")):
+                            kind = "subtitle"
                     bid = _norm_beat_id(b.id, bi + 1, used_beat_ids)
-                    if kind == "dialogue":
-                        speaker = _resolve_char(str(b.speaker or "").strip(), alias_to_id) or sc_chars[0]
+                    if kind in ("dialogue", "os"):
+                        speaker = _resolve_char(str(b.speaker or "").strip(), alias_to_id) or (
+                            sc_chars[0] if sc_chars else char_list[0])
                         line = str(b.line or b.dialogue or b.text or "").strip()
                         if not line:
                             continue
-                        beats.append(ScriptBeat(id=bid, type="dialogue", speaker=speaker, line=line))
+                        beats.append(ScriptBeat(
+                            id=bid, type=kind, speaker=speaker, line=line,
+                            emotion=str(b.emotion or "").strip() or None,
+                        ))
                     else:
                         text = str(b.text or b.action or b.line or "").strip()
                         if not text:
                             continue
                         beats.append(ScriptBeat(id=bid, type=kind, text=text))  # type: ignore[arg-type]
+                # 动作里提到但 characters 没列的人物补上（选角/锚点会漏）。
+                # 只扫动作/画面节拍：对白里「老道士骗我」不代表道士在场。
+                corpus = " ".join(
+                    [str(x) for x in (s.action or [])]
+                    + [(b.text or "") for b in (s.beats or [])
+                       if str(getattr(b, "type", "action") or "action").strip().lower()
+                       in ("action", "cue")]
+                )
+                for c in chars:
+                    if c.name and c.name in corpus and c.id not in sc_chars:
+                        sc_chars.append(c.id)
+                sc_chars = sc_chars or [char_list[0]]
+                # 地点推断只看标题/目的/动作，**不看对白**——「我在家哪受过这种苦」
+                # 会把观宇的戏带成王生家（2026-11-26 v3 实测）。
+                # 地点推断只看动作/画面节拍；card（「三天前从劳山归来」）和
+                # 闪回/音效/字幕是时间跳转或声音，不是当前空间（v5 实测）。
+                scene_text = " ".join([
+                    s.purpose or "", s.conflict or "",
+                    " ".join(str(x) for x in (s.action or [])),
+                    " ".join((b.text or "") for b in (s.beats or [])
+                             if str(getattr(b, "type", "action") or "action").strip().lower()
+                             in ("action", "cue")),
+                ])
+                full_name = _best_full_name(s_title or "", scene_text, loc_alias_to_id)
+                cue_scores = _location_scores(s_title or "", scene_text, loc_alias_to_id)
+                strong = bool(full_name) or max(cue_scores.values(), default=0) >= 2
+                scene_loc = resolve_location(
+                    s_loc, loc_alias_to_id, loc_id, scene_text, s_title or "")
+                scene_loc = inherit_previous_location(
+                    scene_loc, prev_scene_loc, strong, scene_text)
+                prev_scene_loc = scene_loc
+                loc_name = next((l.name for l in locs if l.id == scene_loc), "")
+                raw_ie = str(s.interior_exterior or "").strip()
+                if raw_ie in ("内景", "内", "INT", "int"):
+                    int_ext = "内景"
+                elif raw_ie in ("外景", "外", "EXT", "ext"):
+                    int_ext = "外景"
+                else:
+                    int_ext = infer_interior_exterior(s_title or "", loc_name, scene_text)
+                time_value = s.time or s.time_of_day or infer_scene_time(scene_text)
+                scene_episode = s.episode or _episode_from_refs(s.chapter_refs)
                 scenes.append(
                     Scene(
                         id=sid,
                         title=s_title or f"第 {i + 1} 场",
                         chapter_refs=s.chapter_refs or ["ch_001"],
-                        location_id=normalize_id(s_loc, "loc", fallback=loc_id),
-                        time=s.time,
+                        location_id=scene_loc,
+                        time=time_value,
+                        episode=scene_episode,
+                        interior_exterior=int_ext,
                         characters=sc_chars,
                         purpose=s.purpose,
                         conflict=s.conflict,
@@ -640,6 +1007,18 @@ def generate_script(
             n_title, n_time = backfill_scenes_from_source(scenes, loc_names, raw_text or "")
             if n_title or n_time:
                 log.info("按原文回填：场次标题 %d 场、昼夜 %d 场", n_title, n_time)
+            # 非剧本型原文没有场次抬头，推断不出就落到「日」，别留空场头。
+            for sc in scenes:
+                if not (sc.time or "").strip():
+                    sc.time = "日"
+
+            if adaptation_plan is not None:
+                from .adaptation import bind_scene_targets
+
+                bind_notes = bind_scene_targets(adaptation_plan, plan, scenes)
+                for note in bind_notes:
+                    log.info("段落绑定：%s", note)
+                artifacts["adaptation_plan"] = adaptation_plan.model_dump()
 
             script = Script(
                 title=bible.title or title,
@@ -652,7 +1031,36 @@ def generate_script(
                 characters=chars,
                 locations=locs,
                 scenes=scenes,
+                adaptation_plan=adaptation_plan,
+                dialogue_style=style,
+                genre=prof.get("label"),
+                synopsis="\n".join(sc.purpose or "" for sc in scenes if sc.purpose) or None,
             )
+            adaptation_issues: list[str] = []
+            from .script_text import audit_script_text, ensure_hook_card
+
+            cards_added = ensure_hook_card(script, adaptation_plan)
+            artifacts["hook_cards"] = cards_added
+            text_issues = audit_script_text(script)
+            rewritten = 0
+            if style == "vernacular":
+                from .script_rewrite import rewrite_vernacular
+
+                script, rewritten = rewrite_vernacular(llm, script)
+                artifacts["text_rewrite"] = rewritten
+                if rewritten:
+                    text_issues = audit_script_text(script)
+            artifacts["text_audit"] = text_issues
+            for issue in text_issues:
+                log.warning("剧本文本：%s", issue)
+
+            if adaptation_plan is not None:
+                from .adaptation import coverage_issues
+
+                adaptation_issues = coverage_issues(script, adaptation_plan)
+                artifacts["adaptation_issues"] = adaptation_issues
+                for issue in adaptation_issues:
+                    log.warning("段落改编体检：%s", issue)
             artifacts = {
                 "mode": "llm",
                 "bible": bible.model_dump(),
@@ -662,12 +1070,25 @@ def generate_script(
                 "story_plan": (
                     {"episodes": len(story_plan.episodes),
                      "events": len(story_plan.understanding.events)}
-                    if scope_note else None
+                    if story_plan is not None else None
                 ),
+                "adaptation_plan": (
+                    adaptation_plan.model_dump() if adaptation_plan is not None else None
+                ),
+                "adaptation_issues": adaptation_issues if adaptation_plan is not None else [],
+                "dialogue_style": style,
+                "source_style": source_style,
+                "text_audit": text_issues,
+                "text_rewrite": rewritten,
+                "hook_cards": cards_added,
             }
             return script, artifacts
         except Exception as e:  # noqa: BLE001
             log.warning("LLM 生成失败，回退本地规则剧本：%s", e)
+            # 文言原文 + 已确认白话时，本地回退会把文言原文整段塞进 action 节拍
+            # （v6 实测），那比失败更糟：宁可显式失败，让上游重试/报错。
+            if source_style == "classical" and style:
+                raise
             artifacts = {"mode": "local-fallback", "error": str(e)}
 
     script = make_source_script(title, raw_text, adaptation_type=adaptation_type, language=language)

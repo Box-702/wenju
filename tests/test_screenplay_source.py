@@ -80,14 +80,17 @@ def test_说话人用id指代时不再凭空多出假角色(monkeypatch):
     assert [c.id for c in script.characters] == ["char_001", "char_002"]
     assert [c.name for c in script.characters] == ["林远", "林远-β"]
     # 第一场说话的应该是林远本人，不是新冒出来的「char_001_1」
-    assert script.scenes[0].beats[0].speaker == "char_001"
+    # （首拍可能是后补的开场卡点，跳过 card 再看台词）
+    first_line = next(b for b in script.scenes[0].beats if b.type != "card")
+    assert first_line.speaker == "char_001"
     assert script.scenes[0].characters == ["char_001"]
 
 
 def test_说话人带尾号id也能认回本人(monkeypatch):
     script, _ = _run(monkeypatch, _plan("char_001_1"))
     assert [c.id for c in script.characters] == ["char_001", "char_002"]
-    assert script.scenes[0].beats[0].speaker == "char_001"
+    first_line = next(b for b in script.scenes[0].beats if b.type != "card")
+    assert first_line.speaker == "char_001"
 
 
 def test_原著里真没出现过的人仍然补上(monkeypatch):
@@ -99,7 +102,8 @@ def test_原著里真没出现过的人仍然补上(monkeypatch):
     script, _ = _run(monkeypatch, plan)
     names = [c.name for c in script.characters]
     assert "收银员" in names
-    assert script.scenes[0].beats[0].speaker == script.characters[-1].id
+    first_line = next(b for b in script.scenes[0].beats if b.type != "card")
+    assert first_line.speaker == script.characters[-1].id
 
 
 def test_剧本型原文回填场次标题与昼夜(monkeypatch):

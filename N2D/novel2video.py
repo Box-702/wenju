@@ -147,6 +147,8 @@ def main() -> int:
                     help="样片只批准指定场次的镜头，与 --shot-limit 联用")
     ap.add_argument("--stop-after-assets", action="store_true",
                     help="生成角色/场景设定图后停下，先检查形象再继续出片")
+    ap.add_argument("--stop-after-script", action="store_true",
+                    help="只跑到「分集大纲 + 剧本」就停，用于验证文本链路（不出图/片）")
     ap.add_argument("--resume", default="", metavar="PROJECT_ID",
                     help="续跑已有作品：跳过已完成的步骤，不重复烧钱")
     ap.add_argument("--audio-mode", default="native", choices=["native", "dub", "silent"],
@@ -155,6 +157,9 @@ def main() -> int:
                     help="（旧参数，等价 --audio-mode silent 的前身）不再使用 dub 默认")
     ap.add_argument("--subtitles", action="store_true",
                     help="成片烧台词字幕（默认不烧，D-88）")
+    ap.add_argument("--dialogue-style", default="", choices=["", "vernacular", "classical", "mixed"],
+                    help="台词语言：vernacular=全部白话 classical=文言 mixed=混合；"
+                         "默认空=沿用原文语体（文言原文建议显式传 vernacular，D-91）")
     args = ap.parse_args()
     if args.no_dubbing and args.audio_mode == "native":
         args.audio_mode = "silent"   # 旧参数：不配音=静片
@@ -256,8 +261,44 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
     title = title or p.title
     state["project_id"] = p.id  # 断点登记：之后任何一步炸了都能报续跑命令
 
-    # ---- 2. 剧本（已有则复用） ----
+    # ---- 1b. 分集大纲（D-71）：先理解 + 提案，再按集写剧本 ----
+    # 非交互直跑没有「用户确认」这一步，提案生成后自动置 confirmed 继续；
+    # 但大纲本身必须真实产生并落库，不能跳过（2026-11-26 用户反馈：
+    # 全流程跑完分集大纲永远是空的——N2D 以前直接 generate_script，从未提案）。
+    story_plan = None
     version = st.latest_version(p)
+    if version is None:
+        from app.pipeline.story_plan import StoryPlan, plan_story
+
+        raw_plan = p.story_plan or {}
+        if raw_plan.get("episodes"):
+            try:
+                story_plan = StoryPlan.model_validate(raw_plan)
+            except Exception:  # noqa: BLE001
+                story_plan = None
+            if story_plan is not None:
+                if story_plan.status != "confirmed":
+                    story_plan.status = "confirmed"
+                    st.set_story_plan(p.id, story_plan.model_dump())
+                _t(f"⓪ 分集大纲已有：{len(story_plan.episodes)} 集 · "
+                   f"{len(story_plan.understanding.events)} 件关键事件")
+                _dump(title, "分集大纲.md", story_plan.to_card() + "\n")
+
+        if story_plan is None and llm.available:
+            _t("⓪ 分集大纲：理解卡 + 分集提案 …")
+            t0 = time.time()
+            story_plan = plan_story(llm, title=p.title, raw_text=p.raw_text or "",
+                                    dialogue_style=args.dialogue_style)
+            if story_plan is None:
+                _t("!! 分集大纲生成失败，退回直跑剧本（本次没有分集大纲）")
+            else:
+                story_plan.status = "confirmed"   # CLI 非交互：自动确认后继续
+                st.set_story_plan(p.id, story_plan.model_dump())
+                _dump(title, "分集大纲.md", story_plan.to_card() + "\n")
+                _t(f"   完成（{time.time()-t0:.0f}s）：{len(story_plan.episodes)} 集 · "
+                   f"{len(story_plan.understanding.events)} 件关键事件（自动确认）")
+
+    # ---- 2. 剧本（已有则复用） ----
     if version is not None:
         script = version.script
         _t(f"① 剧本已有，跳过：{len(script.scenes)} 场 · {len(script.characters)} 角色"
@@ -267,17 +308,34 @@ def run_pipeline(llm, st, args, title: str, state: dict) -> str:
 
         _t("① 剧本生成：故事圣经 → 场景/节拍 …")
         t0 = time.time()
-        script, artifacts = run_generation(
-            llm, get_settings(), title=p.title, raw_text=p.raw_text or "",
-            adaptation_type=p.adaptation_type, language=p.language,
-        )
+        if story_plan is not None:
+            from app.pipeline.story_plan import generate_from_plan
+
+            script, artifacts = generate_from_plan(
+                llm, get_settings(), title=p.title, raw_text=p.raw_text or "",
+                plan=story_plan, adaptation_type=p.adaptation_type,
+                language=p.language, dialogue_style=args.dialogue_style,
+            )
+        else:
+            script, artifacts = run_generation(
+                llm, get_settings(), title=p.title, raw_text=p.raw_text or "",
+                adaptation_type=p.adaptation_type, language=p.language,
+            )
         version = st.create_version(
-            p, script, source_type="generation", label="脚本直跑初稿",
-            notes=f"生成模式：{artifacts.get('mode', 'n/a')}", set_current=True,
+            p, script, source_type="generation",
+            label=(f"按提案扩写（{len(story_plan.episodes)} 集）" if story_plan is not None
+                   else "脚本直跑初稿"),
+            notes=f"生成模式：{artifacts.get('mode', 'n/a')}"
+                  + (f"；分集提案：{len(story_plan.episodes)} 集" if story_plan is not None else ""),
+            set_current=True,
         )
         _t(f"   完成（{time.time()-t0:.0f}s）：{len(script.scenes)} 场 · "
            f"{len(script.characters)} 角色 · 模式 {artifacts.get('mode')}")
     _dump_script(title, script)
+
+    if args.stop_after_script:
+        _t("已停在剧本阶段（--stop-after-script）：分集大纲与剧本已落库")
+        return p.id
 
     # ---- 3. 导演拆镜（breakdown 已落版本则复用） ----
     breakdown_data = st.get_version_breakdown(version.id)

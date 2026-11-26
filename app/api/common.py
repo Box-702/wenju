@@ -158,6 +158,9 @@ def project_overview(project: Any) -> dict[str, Any]:
 
     # 集-镜两级结构（D-63）：集 = 小说的一章（场景的 chapter_refs）。
     episodes = sorted({str(s.get("episode_id") or "") for s in shots if s.get("episode_id")})
+    if not episodes and script is not None:
+        # 只有剧本、还没拆镜时，集数按剧本场头算——总览不能显示「0 集」。
+        episodes = sorted({str(sc.episode or 1) for sc in script.scenes})
 
     # 生产进度：四段各占 25%——剧本 / 拆镜 / 提示词批准 / 出片。
     # 每段都能从已落库的数据判定，不猜、不估算。

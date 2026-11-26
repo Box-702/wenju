@@ -21,16 +21,15 @@ import PromptEditor from './components/video/PromptEditor.vue'
 import AssetPreview from './components/AssetPreview.vue'
 import Toast from './components/Toast.vue'
 import IconRail from './components/workbench/IconRail.vue'
-import AssetTree from './components/workbench/AssetTree.vue'
 import ScriptHistoryPanel from './components/workbench/ScriptHistoryPanel.vue'
 import WorkbenchView from './components/workbench/WorkbenchView.vue'
 import AgentPanel from './components/workbench/AgentPanel.vue'
-import { store, loadTree, loadWorkspace, loadProjectFiles, restorePanelPrefs, toggleAgentPanel, notify, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, loadAssetRefs, closePromptEditor, saveShotPrompt, loadStoryPlan, closeVideo } from './stores/app'
+import { store, loadTree, loadWorkspace, loadProjectFiles, restorePanelPrefs, toggleAgentPanel, setCtxOpen, notify, pollVideoBatch, ensureBatchPolling, loadModelStatus, loadAssetIndex, loadAssetRefs, closePromptEditor, saveShotPrompt, loadStoryPlan, closeVideo } from './stores/app'
 import { initNav, pushNav } from './nav'
 import { importProject } from './api'
 
 // ---- 事件驱动的视图引导（即梦式布局改版） ----
-// 第二列现在是资产树（AssetTree），没有 tab 体系了：
+// 第二列现在只在剧本页出现（修改历史），资产/分镜页全宽；
 // 「出片/改编发生时把用户带到该看的东西」改成了「把主区切到对应工作台视图」。
 // 规矩：**只在用户还没主动选视图（wbView=null）时引导**——
 // 用户已经停在剧本页时，批次跑完不能把他劫持到分镜页。
@@ -108,7 +107,7 @@ async function onDrop(e) {
 
 // ---- 响应式：≤1023px 面板抽屉化 ----
 // 桌面（≥1024px）：左/中/右三栏；上下文侧栏常驻（不再支持关闭），
-// 拖右缘调宽（240–480px，见下方拖拽逻辑）。
+// 拖右缘调宽（220–480px，见下方拖拽逻辑）。
 // 平板/移动（≤1023px）：左右面板变成覆盖式抽屉（fixed + 遮罩），
 // 选中项目 / 对话后自动收起，任何视口不出现横向溢出。
 const isNarrow = ref(window.innerWidth < 1024)
@@ -132,12 +131,12 @@ watch(() => [store.pid, store.convId], () => {
   store.agentOpen = false
 })
 
-// ---- 上下文侧栏宽度：拖右缘调宽（2026-11-21 用户要求：不可关闭、可拉动、有上限）----
-// 240px 起（再窄资产树缩略图挤爆），480px 封顶（再宽主区就没内容了）。
-// 记忆在 localStorage；窄屏抽屉走媒体查询的 !important 宽度，不吃这份内联样式。
-const CTX_MIN = 240
+// ---- 上下文侧栏宽度：拖右缘调宽；可收起；记忆开合与宽度 ----
+// 220px 起（再窄内容挤爆），480px 封顶（再宽主区就没内容了）。
+// 默认 260px；记忆在 localStorage；窄屏抽屉走媒体查询的 !important 宽度，不吃这份内联样式。
+const CTX_MIN = 220
 const CTX_MAX = 480
-const ctxW = ref(Math.min(CTX_MAX, Math.max(CTX_MIN, Number(localStorage.getItem('sw-ctx-w')) || 300)))
+const ctxW = ref(Math.min(CTX_MAX, Math.max(CTX_MIN, Number(localStorage.getItem('sw-ctx-w2')) || 260)))
 const ctxDragging = ref(false)
 let ctxDrag = null
 function onCtxHandleDown(e) {
@@ -157,7 +156,7 @@ function onCtxHandleUp() {
   ctxDragging.value = false
   window.removeEventListener('pointermove', onCtxHandleMove)
   window.removeEventListener('pointerup', onCtxHandleUp)
-  localStorage.setItem('sw-ctx-w', String(ctxW.value))
+  localStorage.setItem('sw-ctx-w2', String(ctxW.value))
 }
 
 // ---- 左栏：作品 + 资产库（工作区化：对话收敛为每作品一个）----
@@ -212,25 +211,24 @@ onUnmounted(() => {
       </div>
     </Transition>
     <!-- 即梦式四区（D-73 布局修正）：
-         最左细图标栏 ｜ 上下文栏（大纲/镜头/资产/白模）｜ 主内容区 ｜ 右侧常驻 Agent 对话面板。
-         对话仍是完整的 Agent（42 个工具），只是位置从主栏搬进右栏——即梦把 Agent 放右边，
-         我们照做；收起后右下角浮标能再打开。 -->
+         最左细图标栏 ｜ 上下文栏（仅剧本页：修改历史）｜ 主内容区 ｜ 右侧常驻 Agent 对话面板。
+         资产库/分镜页不再常驻资产树——即梦参考里没有这条固定左栏，且资产页自己有
+         类型 tab 与大卡网格，常驻树只会重复占宽（2026-11-26 用户截图反馈）。 -->
     <div class="stage-wrap">
       <IconRail />
-      <!-- 上下文侧栏：常驻不可关（2026-11-21 用户要求），桌面拖右缘调宽
-           （240–480px，记忆在 localStorage）；窄屏仍走抽屉媒体查询。 -->
+      <!-- 上下文侧栏：只在剧本页放修改历史。桌面拖右缘调宽（220–480px，
+           记忆在 localStorage）；窄屏仍走抽屉媒体查询。 -->
       <div
+        v-if="store.wbView === 'script' && store.ctxOpen"
         class="ctx-wrap" :class="{ closed: isNarrow && !store.rightOpen, resizing: ctxDragging }"
         :style="isNarrow ? null : { width: ctxW + 'px' }"
       >
-        <!-- 即梦式：左栏随视图切换——剧本页看修改历史，其余页看资产树 -->
-        <ScriptHistoryPanel v-if="store.wbView === 'script'" />
-        <AssetTree v-else />
+        <ScriptHistoryPanel @collapse="setCtxOpen(false)" />
       </div>
       <div
-        v-if="!isNarrow"
+        v-if="!isNarrow && store.wbView === 'script' && store.ctxOpen"
         class="ctx-handle" :class="{ on: ctxDragging }"
-        title="拖动调宽（240–480px）"
+        title="拖动调宽（220–480px）"
         @pointerdown="onCtxHandleDown"
       />
       <main class="stage">
@@ -328,14 +326,14 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-/* 第二列上下文栏（IconRail 右边）：常驻不可关，宽度由拖拽手柄决定
-   （240–480px，默认 300px，记忆在 localStorage）。
+/* 第二列上下文栏（IconRail 右边，仅剧本页）：宽度由拖拽手柄决定
+   （220–480px，默认 260px，记忆在 localStorage）。
    position:relative 必给：.aurora 是 fixed z:0 的光斑层，static 的列会被
    整个盖黑（2026-11-20 截图验收抓到：图标栏/上下文栏整列发黑，内容其实都在）。 */
 .ctx-wrap {
   position: relative;
   flex: none;
-  width: 300px; /* 兜底值；实际宽度走内联样式（拖拽记忆） */
+  width: 260px; /* 兜底值；实际宽度走内联样式（拖拽记忆） */
   min-height: 0;
   animation: ctx-slide-in 240ms var(--ease) backwards;
   transition: width 160ms var(--ease), opacity 200ms var(--ease);

@@ -29,6 +29,8 @@
 
 from __future__ import annotations
 
+import math
+
 # 单镜可行区间：与导演侧校验（4–15 秒）保持一致，改一处就要改两处。
 MIN_SHOT_SEC = 4.0
 MAX_SHOT_SEC = 15.0
@@ -68,49 +70,69 @@ DEFAULT_PACING_BY_FORMAT: dict[str, str] = {
 # 7 场戏拆出 60 镜、295 秒——那是 5 分钟的片子，不是短剧；单这一项的生成
 # 成本就是三倍，观众也早划走了。给了预算，模型才知道该合并多少镜。
 DURATION_BUDGET_SEC: dict[str, float] = {
-    "short_drama": 120.0,
+    "short_drama": 95.0,   # 单集上限（D-90：55–95 秒/集，默认 75）
     "film": 6000.0,
     "series": 1500.0,   # 单集
     "stage": 5400.0,
     "other": 120.0,
 }
 
-# 超出预算多少倍才判为问题。给 1.5 倍余量：拆镜时镜头数取整、情绪镜头放长
-# 都合理，卡太死会把合格方案反复打回。
+# ---- 短剧单集目标带（D-90）----
+#
+# 2026-11-25 起，短剧时长口径从「120 秒 + 每场 24 秒保底」改为
+# 「55–95 秒/集，默认 75」。后者是即梦实操口径，也是 story_plan 一直在用的；
+# 前者会让一部 4 场的短片必然 96–108 秒起步——337 字《劳山道士》实测
+# 27 镜 / 108.5 秒，就是卡在这个下限式预算上。
+EPISODE_MIN_SEC = 55.0
+EPISODE_TARGET_SEC = 75.0
+EPISODE_MAX_SEC = 95.0
+
+# 超出预算多少倍才判为问题（旧口径，保留给非短剧/兜底调用）。
 BUDGET_TOLERANCE = 1.5
 
-# ---- 内容比例预算（2026-11-20《替身v2》复盘新增）----
+# ---- 兜底场均值（无段落决策时用）----
 #
-# 固定 120 秒预算不看内容量，等于逼导演删事件：《替身v2》10 场 52 个节拍，
-# 120 秒 = 每场 12 秒都不到，闸门实测「删掉 16 个镜头」，苏晴的核心台词
-# （「而且我觉得那个β怪怪的」）整句消失——被删的事件恰恰是视频模型最需要
-# 独立镜头的那种，一个镜塞两个事件就是漂移之源（人物挤出画外、动作不发生）。
-# 即梦的路线是反的：同一篇原文拆成 5 集 × 60–95 秒，一集一个戏剧单元，
-# 事件不删、按集摊开。
-#
-# 于是预算改为「内容决定」：每场至少 MIN_SCENE_BUDGET_SEC 秒（≈5 个分镜
-# × 4–5 秒，够把该场的节拍全部拍完），全片预算 = max(类型预算, 场数 × 保底)。
-# 预算超过单集上限时按 120 秒/集自动分集（director.plan_episodes），
-# 一集一次生成批次，钱花在「拍全」而不是「拍删」上。
-MIN_SCENE_BUDGET_SEC = 24.0
-# 单集目标时长（秒）：短剧一集 1–2 分钟；预算超出它就分成多集。
-EPISODE_TARGET_SEC = 120.0
+# 有段落决策（D-90）时，每场目标由「该场覆盖的段落 target_sec 之和」决定；
+# 没有决策（分析失败/旧数据）时用这个均值兜底：4 场 ≈ 72 秒，6 场 ≈ 108 秒
+# （两集），不再用 24 秒/场把 4 场硬抬到 96 秒。
+MIN_SCENE_BUDGET_SEC = 18.0
 
 
 def duration_budget(format: str | None = None) -> float:
-    """该类型的成片目标时长（秒）。短剧默认 120 秒。"""
+    """该类型的成片目标时长（秒）。短剧默认 95 秒（单集上限）。"""
     return DURATION_BUDGET_SEC[normalize_format(format)]
 
 
 def content_duration_budget(format: str | None, scene_count: int) -> float:
-    """按内容量定的全片预算（秒）：max(类型预算, 场数 × 每场保底)。
+    """按场数估的全片预算上限（秒）：max(类型预算, 场数 × 兜底场均值)。
 
-    场数取不到（0）时退回类型预算——行为与改造前逐字节一致。
+    注意：这是**上限**，不是导演要照着写的目标。短剧的目标带请走
+    ``runtime_band()``；有段落决策时以 plan.target_sec 为准。
     """
     base = duration_budget(format)
     if scene_count <= 0:
         return base
     return max(base, scene_count * MIN_SCENE_BUDGET_SEC)
+
+
+def runtime_band(estimate_sec: float, format: str | None = None) -> tuple[float, float, float]:
+    """按内容量给 (下限, 目标, 上限) 秒。
+
+    短剧：每集 55–95，集数 = ceil(估算 / 95)，至少 1 集；目标 = 估算夹进带内。
+    其他类型：沿用类型预算的 0.5–1.5 倍宽区间。
+
+    为什么用 95 而不是 75 算集数：90 秒的片子应该是一集（90 ≤ 95），
+    用 75 会强行拆成两集。
+    """
+    fmt = normalize_format(format)
+    est = max(0.0, float(estimate_sec))
+    if fmt != "short_drama":
+        base = duration_budget(fmt)
+        return base * 0.5, base, base * 1.5
+    episodes = max(1, math.ceil(est / EPISODE_MAX_SEC))
+    lo = episodes * EPISODE_MIN_SEC
+    hi = episodes * EPISODE_MAX_SEC
+    return lo, min(max(est, lo), hi), hi
 
 VALID_PACINGS = ("slow", "medium", "fast", "variable")
 

@@ -232,9 +232,56 @@ def test_review_prompt_组头保存写回组提示词字段(client, sample_text)
 
     # 保存会生成新版本（可回滚），要看新版本里的内容。
     saved = client.get(f"/api/video-versions/{resp.json()['version_id']}").json()
-    head = next(s for s in saved["shots"] if s["id"] == "shot_a_000")
-    assert head["group_prompt"] == edited, "编辑结果应落在组提示词字段"
-    assert head["video_prompt"] == "P0 单镜提示词", "单镜提示词不该被组提示词覆盖"
+    wanted = next(s for s in saved["shots"] if s["id"] == "shot_a_000")
+    assert wanted["group_prompt"] == edited, "编辑结果应落在组提示词字段"
+    assert wanted["video_prompt"] == "P0 单镜提示词", "单镜提示词不该被组提示词覆盖"
+
+
+# ---------- 分集批量 ----------
+
+
+def test_batch_filter_by_episode(client, sample_text, monkeypatch):
+    """带 episode_id 的批量只投本集镜头（分集总览的「批量出片」）。"""
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
+    project = _project(client, sample_text)
+    shots = [
+        {"id": "shot_e1_000", "scene_id": "scene_001", "order": 0,
+         "duration_sec": 2, "video_prompt": "第一集镜头。",
+         "prompt_status": "approved", "episode_id": "ep_001"},
+        {"id": "shot_e2_000", "scene_id": "scene_002", "order": 1,
+         "duration_sec": 2, "video_prompt": "第二集镜头。",
+         "prompt_status": "approved", "episode_id": "ep_002"},
+    ]
+    _version(client, project["id"], shots)
+
+    resp = client.post(
+        f"/api/projects/{project['id']}/video/generate-batch",
+        json={"mode": "auto", "provider": "minimax", "model": "default",
+              "episode_id": "ep_002"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["shot_ids"] == ["shot_e2_000"]
+
+
+def test_batch_legacy_without_episode_ids_ignores_filter(client, sample_text, monkeypatch):
+    """老作品没有 episode_id：分集批量不能把整部作品挡掉。"""
+    monkeypatch.setattr(video_service, "_submit_video_job", lambda job: None)
+    project = _project(client, sample_text)
+    shots = [
+        {"id": "shot_old_000", "scene_id": "scene_001", "order": 0,
+         "duration_sec": 2, "video_prompt": "老镜头一。", "prompt_status": "approved"},
+        {"id": "shot_old_001", "scene_id": "scene_002", "order": 1,
+         "duration_sec": 2, "video_prompt": "老镜头二。", "prompt_status": "approved"},
+    ]
+    _version(client, project["id"], shots)
+
+    resp = client.post(
+        f"/api/projects/{project['id']}/video/generate-batch",
+        json={"mode": "auto", "provider": "minimax", "model": "default",
+              "episode_id": "ep_1"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert set(resp.json()["shot_ids"]) == {"shot_old_000", "shot_old_001"}
 
 
 def test_review_prompt_单镜保存写回单镜字段(client, sample_text):

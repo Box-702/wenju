@@ -157,12 +157,14 @@ def build(ctx: ToolContext) -> list:
         )
 
     @tool
-    def plan_story(project_id: str, episodes: str = "", notes: str = "") -> str:
+    def plan_story(project_id: str, episodes: str = "", notes: str = "",
+                   dialogue_style: str = "") -> str:
         """读原文产出「理解卡 + 分集提案」（D-71 扩写流，生成剧本前先做这一步）。
         理解卡：故事内核/人物/核心冲突/关键事件全清单（扩写底线，之后一集都不删事件）；
         分集提案：做几集、每集讲什么事件、结尾钩子——由用户确认后才开始写剧本。
         参数：project_id=项目 id；episodes=用户已指定集数时填数字（可选，默认由提案决定）；
-        notes=用户的额外要求（如「结尾留白」「压缩到 60 秒」，可选）。"""
+        notes=用户的额外要求（如「结尾留白」「压缩到 60 秒」，可选）；
+        dialogue_style=台词语体（vernacular/classical/mixed，可选；文言原文问过用户后带上）。"""
         from ...pipeline.story_plan import StoryPlan, plan_story as _plan
 
         p = ctx.project(project_id)
@@ -175,7 +177,8 @@ def build(ctx: ToolContext) -> list:
             except ValueError:
                 return "episodes 需要是集数数字（如 3）。"
         sp = _plan(llm, title=p.title, raw_text=p.raw_text or "",
-                   episodes_hint=hint, notes=notes.strip())
+                   episodes_hint=hint, notes=notes.strip(),
+                   dialogue_style=dialogue_style.strip())
         if sp is None:
             return "这次没能形成故事提案（模型输出不合格），可以让我再试一次，或直接告诉我你想做几集。"
         store.set_story_plan(p.id, sp.model_dump())
@@ -207,13 +210,16 @@ def build(ctx: ToolContext) -> list:
         )
 
     @tool
-    def generate_script(project_id: str, from_chapter: str = "", to_chapter: str = "") -> str:
+    def generate_script(project_id: str, from_chapter: str = "", to_chapter: str = "",
+                        dialogue_style: str = "") -> str:
         """为指定项目生成剧本初稿（生成流水线：故事圣经 -> 场景/节拍）。
 
         长篇建议配合章节地图按章选段：from_chapter/to_chapter=章号（1 起，含两端）。
         有章节地图时不传 to_chapter 会按一次生成的容量（约 1.2 万字）自动续接；
         用户说「继续改编下一段」时直接调用本工具、章节参数留空即可，从进度接续并自动带前情提要。
-        参数：project_id=项目 id。
+        参数：project_id=项目 id；
+        dialogue_style=台词语言（vernacular 白话 / classical 文言 / mixed 混合）。
+        **原文是文言文/半文言时必须先问用户**，确认后再传；不传会被工具拒绝。
         """
         from ...config import get_settings
         from ...pipeline.generation import generate_script as run_generation
@@ -242,6 +248,19 @@ def build(ctx: ToolContext) -> list:
             if a > 1:
                 prior_context = previous_context(p.novel_map, a - 1)
 
+        # 文言文/半文言：台词语言必须由用户拍板（白话/文言/混合）。
+        # 这不是默认值能替用户做的决定——2026-11-25 用户反馈：聊斋改编时
+        # Agent 没问，剧本里一半现代口语、一半「俛首骤入，勿逡巡」。
+        from ...pipeline.source_style import is_classical_chinese, normalize_dialogue_style
+
+        style = normalize_dialogue_style(dialogue_style)
+        if is_classical_chinese(text) and not style:
+            return (
+                "这篇原文是文言文/半文言。生成前先问用户：台词要 ① 全部改成现代白话、"
+                "② 保留文言，还是 ③ 混合（旁白/日常白话，仪式/唱词保留古句）？"
+                "确认后用 dialogue_style=vernacular / classical / mixed 再调用我。"
+            )
+
         # 已确认的故事提案（D-71 扩写流）：带进生成，事件底线注入场景阶段，
         # 场次按提案归集（chapter_refs=ep_00N → D-63 集-镜直接认账）。
         story_plan = None
@@ -252,16 +271,32 @@ def build(ctx: ToolContext) -> list:
                 story_plan = StoryPlan.model_validate(p.story_plan)
             except Exception:  # noqa: BLE001
                 story_plan = None
-        script, artifacts = run_generation(
-            llm,
-            get_settings(),
-            title=p.title,
-            raw_text=text,
-            adaptation_type=p.adaptation_type,
-            language=p.language,
-            prior_context=prior_context,
-            story_plan=story_plan,
-        )
+        if story_plan is not None and not span_label:
+            from ...pipeline.story_plan import generate_from_plan
+
+            script, artifacts = generate_from_plan(
+                llm,
+                get_settings(),
+                title=p.title,
+                raw_text=text,
+                plan=story_plan,
+                adaptation_type=p.adaptation_type,
+                language=p.language,
+                prior_context=prior_context,
+                dialogue_style=style,
+            )
+        else:
+            script, artifacts = run_generation(
+                llm,
+                get_settings(),
+                title=p.title,
+                raw_text=text,
+                adaptation_type=p.adaptation_type,
+                language=p.language,
+                prior_context=prior_context,
+                story_plan=story_plan,
+                dialogue_style=style,
+            )
         version_label = f"初始生成（{span_label}）" if span_label else "初始生成"
         if story_plan is not None:
             version_label = f"按提案扩写（{len(story_plan.episodes)} 集）"
@@ -271,7 +306,8 @@ def build(ctx: ToolContext) -> list:
             source_type="generation",
             label=version_label,
             notes=f"生成模式：{artifacts.get('mode', 'n/a')}"
-                  + (f"；故事提案：{artifacts.get('story_plan')}" if artifacts.get("story_plan") else ""),
+                  + (f"；故事提案：{artifacts.get('story_plan')}" if artifacts.get("story_plan") else "")
+                  + (f"；台词语言：{style}" if style else ""),
             parent_version_id=p.current_version_id,
             set_current=True,
         )

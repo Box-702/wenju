@@ -67,7 +67,9 @@ class DoctorReport:
         lines.append(
             f"- 评估范围：{s.get('scenes', 0)} 场 / {s.get('beats', 0)} 节拍 / "
             f"{s.get('dialogue', 0)} 句台词"
-            + (f" / 对照事件清单 {s.get('events', 0)} 件" if s.get("events") else ""))
+            + (f" / 对照事件清单 {s.get('events', 0)} 件" if s.get("events") else "")
+            + (f" / 段落决策 {s.get('segments', 0)} 段 · 目标 {s.get('target_sec', 0):.0f} 秒"
+               if s.get("segments") else ""))
         for sev, head in (("error", "## 必须修"), ("warn", "## 建议修"), ("info", "## 参考")):
             items = [i for i in self.issues if i.severity == sev]
             if not items:
@@ -161,7 +163,51 @@ def _check_safety(script: Script, out: list[DoctorIssue]) -> int:
     return hits
 
 
-def doctor_script(script: Script, plan: Any = None) -> DoctorReport:
+def _check_adaptation(script: Script, plan: Any, out: list[DoctorIssue]) -> int:
+    """段落级改编决策的落地检查（D-90）。
+
+    must_keep 覆盖 / cut 清理 / 时长带 / 人物焦点复用
+    pipeline.adaptation.coverage_issues 的同一套判据；节拍预算在这里补一刀。
+    """
+    if plan is None:
+        return 0
+    from ..pipeline.adaptation import coverage_issues
+
+    for text in coverage_issues(script, plan):
+        if text.startswith("错误："):
+            sev, msg = "error", text.removeprefix("错误：")
+        elif text.startswith("建议："):
+            sev, msg = "warn", text.removeprefix("建议：")
+        else:
+            sev, msg = "info", text
+        out.append(DoctorIssue(sev, "改编", msg))
+
+    for sc in script.scenes:
+        seg_ids = (getattr(plan, "scene_segments", {}) or {}).get(sc.id, [])
+        if not seg_ids:
+            continue
+        expected = 0
+        for sid in seg_ids:
+            seg = plan.segment(sid) if hasattr(plan, "segment") else None
+            if seg is not None:
+                expected += int(getattr(seg, "target_beats", 0) or 0)
+        if expected and abs(len(sc.beats) - expected) > max(2, expected * 0.5):
+            out.append(DoctorIssue(
+                "warn", "改编",
+                f"{sc.id} 写了 {len(sc.beats)} 拍，段落决策给的是 {expected} 拍："
+                "多出来的多是反应/过场，检查是否注水；少了的可能漏拍"))
+    return len(getattr(plan, "segments", []) or [])
+
+
+def _check_text(script: Script, out: list[DoctorIssue]) -> None:
+    """剧本文本层体检（2026-11-26）：场头/人物/英文/文言/不可拍/重复/卡点。"""
+    from ..pipeline.script_text import audit_script_text
+
+    for text in audit_script_text(script):
+        out.append(DoctorIssue("warn", "文本", text))
+
+
+def doctor_script(script: Script, plan: Any = None, adaptation_plan: Any = None) -> DoctorReport:
     """跑一遍确定性体检，返回带分数/等级/建议的报告。"""
     issues: list[DoctorIssue] = []
     _check_structure(script, issues)
@@ -169,6 +215,11 @@ def doctor_script(script: Script, plan: Any = None) -> DoctorReport:
     n_dlg = _check_dialogue(script, issues)
     _check_hook(script, issues)
     n_safety = _check_safety(script, issues)
+    n_seg = _check_adaptation(script, adaptation_plan, issues)
+    # 旧剧本没有语体/场头字段，不拿新格式判据去打它们。
+    if getattr(script, "dialogue_style", "") or any(
+            sc.interior_exterior for sc in script.scenes):
+        _check_text(script, issues)
 
     n_err = sum(1 for i in issues if i.severity == "error")
     n_warn = sum(1 for i in issues if i.severity == "warn")
@@ -192,5 +243,7 @@ def doctor_script(script: Script, plan: Any = None) -> DoctorReport:
         submission=submission,
         stats={"scenes": len(script.scenes),
                "beats": sum(len(sc.beats) for sc in script.scenes),
-               "dialogue": n_dlg, "events": n_events},
+               "dialogue": n_dlg, "events": n_events,
+               "segments": n_seg,
+               "target_sec": float(getattr(adaptation_plan, "target_sec", 0) or 0)},
     )

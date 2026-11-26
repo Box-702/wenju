@@ -7,7 +7,7 @@
 // 对话不在这里——对话是右侧常驻面板（AgentPanel），会话功能自持在那张卡片右上角。
 // =====================================================================
 import AppIcon from '../AppIcon.vue'
-import { store, toggleAgentPanel } from '../../stores/app'
+import { store, toggleAgentPanel, setCtxOpen } from '../../stores/app'
 
 // 视图组顺序照即梦：剧本 → 资产（角色）→ 分镜垫底；没有独立「分集」视图
 // ——分集切换在分镜页顶栏面包屑里，合成全片在闸门条上（2026-11-21 回查截图修正）。
@@ -35,6 +35,15 @@ const VIEWS = [
     >
       <AppIcon :name="v.icon" />
       <span class="rail-label">{{ v.label }}</span>
+    </button>
+    <!-- 剧本页专用：脚本修改历史的开合（收起后仍留一个入口，不另起浮层） -->
+    <button
+      v-if="store.wbView === 'script'"
+      class="rail-item" :class="{ active: store.ctxOpen }"
+      title="脚本修改历史" @click="setCtxOpen(!store.ctxOpen)"
+    >
+      <AppIcon name="panel" />
+      <span class="rail-label">历史</span>
     </button>
     <div class="rail-spacer" />
     <button class="rail-item" :class="{ active: store.agentOpen }"

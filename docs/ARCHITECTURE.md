@@ -65,7 +65,7 @@ app/
 │
 ├── skills/     技能（长指令）—— SKILL.md 按需加载，代码只留装配
 ├── llm/        模型接入层   —— 对上提供能力，对下屏蔽厂商
-├── pipeline/   内容生产线   —— 纯逻辑，不依赖 LangGraph / HTTP
+├── pipeline/   内容生产线   —— 纯逻辑，不依赖 LangGraph / HTTP（含 adaptation 段落决策、source_style 文言识别、script_text 文本审计、script_rewrite 白话收口）
 ├── agent/      改编智能体   —— LangGraph 状态图（固定流程 + interrupt 人机协同）+ 后台任务运行器
 ├── chat/       对话编排层   —— 手写工具循环（loop.py）+ 会话消息队列（turn_queue.py）+ 工具实现（chat/tools/，含 generation_models.py）
 ├── crew/       剧组 Agent   —— 导演 / 美术指导 / 摄影指导
@@ -74,6 +74,7 @@ app/
 
 N2D/                          小说→成片直跑工作流（体检/批处理用，与产品共用同一套 app/* 函数）
 ├── novel2video.py            十步流水线 + --resume 断点续跑 + --shot-limit 分批；产物落 ~/.wenju/runs/
+├── rhythm_probe.py           只跑剧本+分镜的节奏探针（不建项目、不出图/片；量场/拍/镜/时长）
 ├── regen_prompts.py          对已有作品重跑导演+摄影（零出片费用）→ 新版本 + 对照 md
 ├── orchard_relay.py          果园对白 A/B 轮（import_storyboard→批准→批次→合成，验证接力）
 └── probe_seedance.py         Seedance 适配器校准探针（真 key 打最小任务对字段）
@@ -365,8 +366,9 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
 
 ### 3.6 技能（Skill）—— `app/skills/`
 
-长指令外置成 `SKILL.md`，代码只留装配逻辑。剧组三个角色的系统提示词
-（合计约 2.2 万字符）和主 Agent 的四套工作流细则都在这里，不再硬编码在 `.py` 里。
+长指令外置成 `SKILL.md`，代码只留装配逻辑。剧组三个角色的系统提示词、
+一个流水线内部使用的段落改编技能，以及主 Agent 的各套工作流细则都在这里，
+不再硬编码在 `.py` 里。
 
 按 **`audience`** 分两组（frontmatter 字段，写错会直接报错跳过）：
 
@@ -376,6 +378,7 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
 | `video-prompt-zh/SKILL.md` | crew | 摄影指导写作规则（中文，十三条） | `crew/dp.py` |
 | `video-prompt-en/SKILL.md` | crew | 同上（英文，目标模型方言） | `crew/dp.py` |
 | `style-guide/SKILL.md` | crew | 美术指导方法论（视觉锚的唯一来源） | `crew/art_director.py` |
+| `adaptation-plan/SKILL.md` | crew | 段落级改编决策（扩写/压缩/删除、must_keep、人物焦点、目标秒数） | `pipeline/adaptation.py`（流水线内部加载，不进主 Agent 目录） |
 | `novel-serial/SKILL.md` | main | 长篇小说分段改编：建图 → 提弧 → 选段 → 连载续接 | 主 Agent 按需 |
 | `script-generation/SKILL.md` | main | 初稿前置确认、原文检查、生成与结果汇报 | 主 Agent 按需 |
 | `crew-pipeline/SKILL.md` | main | 剧组四件事的依赖顺序与人工审阅边界 | 主 Agent 按需 |
@@ -424,8 +427,8 @@ render_skill() 取 SKILL.md 全文 → 拼进 system prompt → llm.chat() 一�
   pipeline/importer.py    编码容错解析 → 原文 + 章节结构
 
 ② 生成初稿          pipeline/generation.py（两阶段，防退化）
-  前置（可选）  pipeline/story_plan.py   理解卡 + 分集提案（D-71）：
-                plan_story 提案 → 用户确认 → generate_script(story_plan=) 按集扩写
+  前置（默认）  pipeline/story_plan.py   理解卡 + 分集提案（D-71/D-95）：
+                plan_story 提案 → 用户确认 → generate_from_plan 逐集扩写合并
   Stage 1  _stage_bible    故事圣经：人物 / 地点 / 主题 / 梗概
   Stage 2  _stage_scenes   按戏剧单元拆场（一地 + 连续时间 + 一个目标 + 一场冲突）
                            → Script：scenes（目的/冲突/入出状态）+ beats（动作/对白）

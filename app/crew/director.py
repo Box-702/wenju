@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from typing import Any
 
@@ -101,16 +102,54 @@ def _default_pacing(adaptation_type: str | None) -> str:
     return default_pacing(adaptation_type)
 
 
-def _budget_for(adaptation_type: str | None, scene_count: int = 0) -> float:
-    """成片目标时长（秒）：内容比例预算。
+def _runtime_targets(
+    script: Script, adaptation_type: str | None,
+) -> tuple[float, float, float, int, dict[str, float]]:
+    """(下限, 目标, 上限, 集数, 每场目标秒数)。
 
-    2026-11-20《替身v2》复盘改的口径：旧版固定 120 秒不看内容量，10 场 52 个
-    节拍被闸门「删掉 16 个镜头」——被删的事件恰恰是最需要独立镜头的，一个镜
-    塞两个事件就是漂移之源（人物挤出画外、动作不发生）。现在每场保底
-    MIN_SCENE_BUDGET_SEC 秒（≈5 个分镜），预算 = max(类型预算, 场数 × 保底)；
-    超出一集时长的部分由分集摊开（见 assign_episodes 的按时长拆集），
-    不再由删镜摊开。即梦对同一篇原文的路线就是这样（5 集 × 60–95 秒）。
+    有段落决策（D-90）时以 plan.target_sec 与 plan.scene_targets 为准；
+    没有时用剧本估算（台词口播 + 动作拍）夹进 55–95/集 的带里。
     """
+    from ..pipeline.adaptation import estimate_script_seconds
+    from ..video.rhythm import EPISODE_MAX_SEC, EPISODE_MIN_SEC, runtime_band
+
+    plan = getattr(script, "adaptation_plan", None)
+    if plan is not None and float(getattr(plan, "target_sec", 0) or 0) > 0:
+        episodes = max(1, int(getattr(plan, "episode_count", 1) or 1))
+        lo, hi = episodes * EPISODE_MIN_SEC, episodes * EPISODE_MAX_SEC
+        target = min(max(float(plan.target_sec), lo), hi)
+        raw = {
+            sc.id: max(0.0, float((plan.scene_targets or {}).get(sc.id) or 0.0))
+            for sc in script.scenes
+        }
+        total = sum(raw.values())
+        if total <= 0:
+            weights = scene_content_weights(script)
+            tb = sum(weights.values()) or 1.0
+            raw = {sc.id: target * weights.get(sc.id, 0.0) / tb for sc in script.scenes}
+            total = sum(raw.values())
+        if total > 0:
+            raw = {sid: v * target / total for sid, v in raw.items()}
+        return lo, target, hi, episodes, raw
+
+    est = estimate_script_seconds(script)
+    lo, target, hi = runtime_band(est, adaptation_type)
+    episodes = max(1, math.ceil(est / EPISODE_MAX_SEC)) if est > 0 else 1
+    weights = scene_content_weights(script)
+    tb = sum(weights.values()) or 1.0
+    raw = {sc.id: max(4.0, target * weights.get(sc.id, 0.0) / tb) for sc in script.scenes}
+    total = sum(raw.values())
+    if total > 0:
+        raw = {sid: v * target / total for sid, v in raw.items()}
+    return lo, target, hi, episodes, raw
+
+
+def _budget_for(
+    adaptation_type: str | None, scene_count: int = 0, script: Script | None = None,
+) -> float:
+    """成片目标时长（秒）。给了 script 就走目标带，否则退回旧的内容预算。"""
+    if script is not None:
+        return _runtime_targets(script, adaptation_type)[1]
     from ..video.rhythm import content_duration_budget
     return content_duration_budget(adaptation_type, scene_count)
 
@@ -122,6 +161,10 @@ def _budget_for(adaptation_type: str | None, scene_count: int = 0) -> float:
 # 「第一镜话说不完」）。
 CAP_SHOT_SEC = 6.0
 
+# 软压缩目标：短剧多数镜头 3–4 秒。超预算时先把 4 秒以上的镜头压回 4 秒，
+# 压不动了才删镜——先压时长能保住节拍与重点场（2026-11-25 D-90 收口）。
+SOFT_SHOT_SEC = 4.0
+
 # 单镜时长硬上限：目标视频模型一次生成的可行区间上界（4–15 秒）。
 # 台词再长也不能超过它——超了模型直接拒单。
 MAX_GENERATABLE_SEC = 15.0
@@ -130,6 +173,15 @@ MAX_GENERATABLE_SEC = 15.0
 # 会被按「无台词优先删」连根拔掉——2026-11-19 实测《替身》：整场《偷偷的甜》
 # 6 个镜全被删光，观众看到的是「β 尝到甜味 → 直接和妻子喝咖啡」，故事断裂）。
 MIN_SHOTS_PER_SCENE = 2
+
+# 不可逆剧情动作：撞墙、穿墙、变形、掷物化人……删掉这些镜头，观众只看到
+# 「准备」和「后果」，事件本身没发生（2026-11-26 v10 实测：冷开场撞墙镜、
+# 穿墙成功镜、掷筷化嫦娥镜都被当普通动作删掉）。闸门删镜时保护命中这些
+# 动作的镜头；提示词侧同样要求单独成镜（director-breakdown SKILL.md）。
+_KEY_ACTION_RE = re.compile(
+    r"撞(?:上|在|到|墙|击)?|穿墙|穿了过去|穿过墙|化作|化成|变回|"
+    r"掷|剪纸|跃上|跃起|砸|摔|刺|砍|杀|死|流血|夺下|撕|烧"
+)
 
 # 静态机位占比上限：超过即「躺平」，与 DIR-11 的批评阈值同源。
 MAX_STATIC_RATIO = 0.75
@@ -243,6 +295,113 @@ def dialogue_map_for(script: Any, breakdowns: list[SceneBreakdown]) -> dict[str,
     return out
 
 
+def repair_dialogue_claims(script: Any, breakdowns: list[SceneBreakdown]) -> int:
+    """把无效/悬空的 dialogue_ref 修到本场未认领的对白节拍上。返回修了几处。
+
+    为什么放在闸门前：模型常把 dialogue_ref 指向 action beat，或干脆不认领。
+    校验层能发现，但回喂三轮它也可能不改；进闸门后 `dialogue_map_for` 认不到
+    这句台词，`_stretch_dialogue_shots` 就不会把镜头拉长——成片里就是半句话。
+    这里做确定性兜底：
+      1. ref 不在本场对白 beat 里 → 清空；
+      2. 本场还没被认领的对白 beat → 优先挂到「主体/动作里出现说话人名字」的
+         空闲镜头，没有就挂第一个空闲镜头。
+    只修无效/漏认领，不改模型已经挂对的镜头。
+    """
+    scene_of = {sc.id: sc for sc in (script.scenes if script else [])}
+    char_name = {c.id: c.name for c in (script.characters if script else [])}
+    fixed = 0
+    for bd in breakdowns:
+        scene = scene_of.get(bd.scene_id)
+        if scene is None:
+            continue
+        lines = [b for b in scene.beats
+                 if b.type == "dialogue" and (b.line or "").strip()]
+        line_ids = {b.id for b in lines}
+        shots = sorted(bd.shots, key=lambda s: s.order)
+        for s in shots:
+            if s.dialogue_ref and s.dialogue_ref not in line_ids:
+                s.dialogue_ref = None
+                fixed += 1
+        claimed = {s.dialogue_ref for s in shots if s.dialogue_ref in line_ids}
+        free = [s for s in shots if s.dialogue_ref not in line_ids]
+        for beat in [b for b in lines if b.id not in claimed]:
+            if not free:
+                break
+            name = char_name.get(beat.speaker or "", "")
+            pick = next(
+                (s for s in free
+                 if name and name in f"{s.subject or ''}{s.action or ''}"),
+                None,
+            ) or free[0]
+            pick.dialogue_ref = beat.id
+            free.remove(pick)
+            fixed += 1
+
+    # 3) 仍然没有空闲镜头可挂的台词 → 补录镜（每个 beat 至少一镜）。
+    #    2026-11-26 v2 实测：第 4 场 6 句台词只拆 4 镜，长请求和「我早说你
+    #    吃不了苦」整句消失。不能只靠模型重拆——多台词场它经常少拆。
+    scene_index = {bd.scene_id: i for i, bd in enumerate(breakdowns)}
+    next_order = max((s.order for bd in breakdowns for s in bd.shots), default=-1) + 1
+    added = 0
+    for bd in breakdowns:
+        scene = scene_of.get(bd.scene_id)
+        if scene is None or not bd.shots:
+            continue
+        lines = [b for b in scene.beats
+                 if b.type == "dialogue" and (b.line or "").strip()]
+        claimed_now = {s.dialogue_ref for s in bd.shots if s.dialogue_ref}
+        for beat in [b for b in lines if b.id not in claimed_now]:
+            name = char_name.get(beat.speaker or "", "")
+            ordered = sorted(bd.shots, key=lambda s: s.order)
+            template = next(
+                (s for s in ordered
+                 if name and name in f"{s.subject or ''}{s.action or ''}"),
+                ordered[-1],
+            )
+            new = template.model_copy(deep=True)
+            new.id = f"shot_{bd.scene_id}_{next_order:03d}"
+            new.order = next_order
+            new.group_id = ""
+            new.group_index = 0
+            new.chain_from = None
+            new.dialogue_ref = beat.id
+            new.dialogue_at = 0.5
+            new.subject = f"{name or '角色'}说话"
+            new.action = f"{name or '角色'}抬头开口，说完停住"
+            new.duration_sec = max(4.0, min(MAX_GENERATABLE_SEC, dialogue_need_sec([beat])))
+            new.cut_reason = "补录台词：原分镜未认领"
+            new.function = "action"
+            new.shot_type = "medium"
+            new.camera.type = "static"
+            new.camera.direction = None
+            new.camera.path = ""
+            new.final_frame = None
+            new.video_prompt = ""
+            new.group_prompt = None
+            new.prompt_audit = []
+            bd.shots.append(new)
+            next_order += 1
+            added += 1
+            log.info("台词补录：%s 为 %s 补 1 镜", beat.id, bd.scene_id)
+
+    if not added:
+        return fixed
+
+    # 补录后全局重排 order/id，保证场序与接力引用仍然正确。
+    all_shots = [s for bd in breakdowns for s in bd.shots]
+    all_shots.sort(key=lambda s: (scene_index.get(s.scene_id, 0), s.order))
+    old_to_new: dict[int, int] = {}
+    for new_order, s in enumerate(all_shots):
+        old_to_new.setdefault(s.order, new_order)
+    for new_order, s in enumerate(all_shots):
+        old_chain = s.chain_from
+        s.order = new_order
+        s.id = f"shot_{s.scene_id}_{new_order:03d}"
+        if old_chain is not None:
+            s.chain_from = old_to_new.get(old_chain)
+    return fixed
+
+
 def scene_content_weights(script: Any) -> dict[str, float]:
     """每场戏的「内容量」权重 = 台本里该场的节拍数。
 
@@ -266,11 +425,26 @@ def _stretch_dialogue_shots(shots: list[Shot], dlg: dict[str, list]) -> int:
     return stretched
 
 
+def stretch_dialogue_after_gate(script: Any, breakdowns: list[SceneBreakdown]) -> tuple[int, float]:
+    """删镜后重算台词范围再抬一次，返回 (改了几镜, 增加秒数)。
+
+    为什么需要：`assign_dialogue_ranges` 用「有 ref 的镜头」切段；被删掉的
+    镜头不再切段，后面一个镜头可能突然要念两句。闸门在删镜前算的台词映射
+    已经过期，不重算就会留下「4 秒念两句」的残局（2026-11-25 实测）。
+    """
+    shots = [s for bd in breakdowns for s in bd.shots]
+    dlg = dialogue_map_for(script, breakdowns)
+    before = sum(s.duration_sec for s in shots)
+    n = _stretch_dialogue_shots(shots, dlg)
+    return n, round(sum(s.duration_sec for s in shots) - before, 2)
+
+
 def enforce_duration_budget(
     breakdowns: list[SceneBreakdown], budget_sec: float,
     *,
     shots_dialogue: dict[str, list] | None = None,
     scene_weights: dict[str, float] | None = None,
+    max_sec: float | None = None,
 ) -> tuple[list[SceneBreakdown], list[str]]:
     """确定性片长闸门：导演回喂多轮仍超预算时，代码直接砍。
 
@@ -333,6 +507,28 @@ def enforce_duration_budget(
     if stretched:
         notes.append(f"闸门：{stretched} 个台词镜的时长已抬到「念得完」的下限")
 
+    # 1c) 仍超预算：先把 4 秒以上的镜头压回节奏基线，再考虑删。
+    #     2026-11-25 真实项目实测：预检 97 秒 / 23 镜，闸门直接按组删 9 镜
+    #     压到 60.6 秒（过冲 16 秒），仙术奇观从 28 秒被削到 16.4 秒。
+    #     先压时长能保住节拍与重点场；压完还不进预算才动删镜。
+    trimmed = 0
+    total = sum(max(0.0, s.duration_sec) for s in all_shots)
+    if total > budget_sec:
+        for s in all_shots:
+            if s.duration_sec <= SOFT_SHOT_SEC:
+                continue
+            need = dialogue_need_sec(dlg.get(s.id))
+            floor = max(SOFT_SHOT_SEC, min(need, MAX_GENERATABLE_SEC)) if need else SOFT_SHOT_SEC
+            if s.duration_sec > floor:
+                s.duration_sec = floor
+                trimmed += 1
+        if trimmed:
+            total = sum(max(0.0, s.duration_sec) for s in all_shots)
+            notes.append(
+                f"闸门：{trimmed} 个 {SOFT_SHOT_SEC:.0f} 秒以上镜头先压到 "
+                f"{SOFT_SHOT_SEC:.0f} 秒（保节拍，不删事件）"
+            )
+
     total = sum(max(0.0, s.duration_sec) for s in all_shots)
     if total <= budget_sec:
         kept_all = list(all_shots)
@@ -365,6 +561,23 @@ def enforce_duration_budget(
         units.setdefault(unit_of(s), []).append(s)
     kept_units: list[list[Shot]] = list(units.values())
 
+    # 2-0) 保护镜：台词镜（对白的唯一载体）+ 每场最后一镜（场尾动作/收束）+
+    #      第一场第一镜（钩子）。删镜不能先把这些删掉——2026-11-25 实测：
+    #      冷开场两句台词和「穿墙成功/归宜洁持」都被按组删了，成片只剩画面。
+    protected: set[str] = set()
+    for bi, bd in enumerate(breakdowns):
+        ordered = sorted(bd.shots, key=lambda s: s.order)
+        if not ordered:
+            continue
+        protected.add(ordered[-1].id)
+        if bi == 0:
+            protected.add(ordered[0].id)
+        for s in ordered:
+            # 台词镜 + 不可逆动作镜都不能被当「可删动作」清掉：前者是台词的
+            # 唯一载体，后者是剧情事件本身（撞墙/穿墙/变形/掷物化人）。
+            if s.dialogue_ref or _KEY_ACTION_RE.search(f"{s.subject or ''} {s.action or ''}"):
+                protected.add(s.id)
+
     # 2a) 按场分配预算：场权重 = 台本里该场的节拍数（内容多的场多给时长）。
     #     没有权重就退回按镜头数平摊。
     scene_of_unit = {id(u): u[0].scene_id for u in kept_units}
@@ -378,6 +591,9 @@ def enforce_duration_budget(
 
     def scene_duration(sc: str) -> float:
         return sum(s.duration_sec for u in kept_units for s in u if s.scene_id == sc)
+
+    def total_duration() -> float:
+        return sum(s.duration_sec for u in kept_units for s in u)
 
     def scene_shot_count(sc: str) -> int:
         # ⚠️ 别写成 sum(len(u) ... for s in u if ...)——那会给组内每个成员
@@ -396,13 +612,51 @@ def enforce_duration_budget(
 
     # 2b) 逐场削到配额：先削「配额最紧的场」（相对超得最多的），每场保底留
     #     MIN_SHOTS_PER_SCENE 镜，绝不把整场戏删空。
+    #
+    #     **别削过冲**：一刀删 8–12 秒，可能把 80 秒的片子直接砍到 60 秒。
+    #     如果删掉这一组会跌破总时长地板（max(55, 目标×0.85)），就不删它，
+    #     换更小的组；除非现在远超目标（>1.2×），那还是得先保总时长。
+    from ..video.rhythm import EPISODE_MIN_SEC
+
+    floor_total = max(EPISODE_MIN_SEC, budget_sec * 0.85)
+
+    def floor_ok(unit: list[Shot]) -> bool:
+        now = total_duration()
+        return (now - sum(s.duration_sec for s in unit) >= floor_total
+                or now > budget_sec * 1.2)
+
+    def abs_floor_ok(unit: list[Shot]) -> bool:
+        now = total_duration()
+        return (now - sum(s.duration_sec for s in unit) >= EPISODE_MIN_SEC
+                or now > budget_sec * 1.2)
+
+    def has_protected(unit: list[Shot]) -> bool:
+        return any(s.id in protected for s in unit)
+
+    # 单场地板：任何一场都不许被削到目标的 75% 以下（至少 8 秒）。
+    # 2026-11-25 实测：保护台词镜后，闸门转去削仙术场，28 秒的奇观只剩 13.9 秒。
+    scene_floor = {sc: max(8.0, quota[sc] * 0.75) for sc in scene_ids}
+
     order_scenes = sorted(scene_ids, key=lambda sc: -(scene_duration(sc) - quota[sc]))
     for sc in order_scenes:
         while scene_duration(sc) > quota[sc]:
             cands = [u for u in kept_units if u[0].scene_id == sc]
             if not cands:
                 break
-            victim = min(cands, key=unit_priority)
+            safe = [
+                u for u in cands
+                if floor_ok(u) and not has_protected(u)
+                and scene_duration(sc) - sum(s.duration_sec for s in u) >= scene_floor[sc]
+            ]
+            if not safe:
+                # 只剩台词/场尾等保护镜，或再删本场就跌破 75% 目标：
+                # 总量还在单集上限内就停；超过上限才允许动保护镜/场地板。
+                if max_sec is None or total_duration() <= max_sec:
+                    break
+                safe = [u for u in cands if floor_ok(u)]
+            if not safe:
+                break  # 再删就过冲到地板以下：这场到此为止
+            victim = min(safe, key=unit_priority)
             if remaining_after(sc, victim) < MIN_SHOTS_PER_SCENE:
                 break  # 再删就跌破保底：这场到此为止
             kept_units.remove(victim)
@@ -414,11 +668,19 @@ def enforce_duration_budget(
         max(0.0, s.duration_sec) for u in kept_units for s in u) > budget_sec
     if over_again:
         for sc in order_scenes:
-            while sum(max(0.0, s.duration_sec) for u in kept_units for s in u) > budget_sec:
+            while total_duration() > budget_sec:
                 cands = [u for u in kept_units if u[0].scene_id == sc]
                 if not cands:
                     break
-                victim = min(cands, key=unit_priority)
+                safe = [u for u in cands if abs_floor_ok(u) and not has_protected(u)]
+                if not safe:
+                    if max_sec is not None and total_duration() > max_sec:
+                        safe = [u for u in cands if abs_floor_ok(u)]
+                    else:
+                        break
+                if not safe:
+                    break  # 再删就跌破单集下限 55 秒：宁可超时，不把片子删没
+                victim = min(safe, key=unit_priority)
                 if remaining_after(sc, victim) < 1:
                     break
                 kept_units.remove(victim)
@@ -435,8 +697,9 @@ def enforce_duration_budget(
     final_total = sum(s.duration_sec for s in kept)
     if final_total > budget_sec:
         notes.append(
-            f"闸门：各场都到保底镜数仍超预算（{final_total:.0f} 秒 > {budget_sec:.0f} 秒）"
-            "——宁可超时，也不删空叙事"
+            f"闸门：台词镜/场尾镜不删，各场到保底仍超预算"
+            f"（{final_total:.0f} 秒 > {budget_sec:.0f} 秒）"
+            "——宁可超目标，也不丢对白与收尾"
         )
 
     kept_orders = sorted({s.order for s in kept})
@@ -470,51 +733,56 @@ def _format_constraints(
     *,
     batch_scenes: int = 1,
     total_scenes: int = 1,
+    script: Script | None = None,
+    scene_ids: list[str] | None = None,
 ) -> list[str]:
     """把「类型节奏」与「画风」写成给导演的硬约束（拼在 user prompt 里）。
 
-    为什么这两件事要进 prompt 而不是只留代码默认值：分镜时长是导演自己写的
-    duration_sec，代码里的默认值只在它没写时才生效。不把节奏基线讲清楚，
-    模型就会按「电影感」给 8–10 秒镜头——短剧观众早就划走了。
+    2026-11-25（D-90）口径：短剧按「本集目标 55–95 秒 + 每场目标」写，
+    不再用「每场 24 秒保底、宁多勿删」——后者会让 4 场的短片必然 96 秒起步。
     """
     from ..pipeline.visual_styles import get_visual_style
-    from ..video.rhythm import (
-        MIN_SCENE_BUDGET_SEC,
-        content_duration_budget,
-        normalize_format,
-        rhythm_table,
-    )
+    from ..video.rhythm import normalize_format, rhythm_table
 
     fmt = normalize_format(adaptation_type)
     table = rhythm_table(fmt)
     spec = get_visual_style(visual_style)
-    budget = content_duration_budget(fmt, total_scenes)
 
     lines = [""]
     if fmt == "short_drama":
-        # 分批拆解时，模型只看得到自己这一批的戏，所以预算按场数折算成
-        # 「这一批有多少秒」。2026-11-20 起口径翻转：旧版是固定 120 秒摊到
-        # 每场（10 场 = 每场 12 秒），逼模型「该删就删」——实测闸门删掉 16 个
-        # 镜头、苏晴的核心台词整句消失，而被删的恰恰是最需要独立镜头的事件
-        # （一个镜塞两个事件 = 人物挤出画外、动作不发生 = 漂移之源）。
-        # 现在每场保底 MIN_SCENE_BUDGET_SEC 秒（≈5 个分镜，够拍完该场全部节拍），
-        # 预算超一集时长的部分由分集摊开，不由删镜摊开。
-        share = max(batch_scenes, 1) * MIN_SCENE_BUDGET_SEC
-        lines += [
-            "【类型约束】短剧：横屏 16:9（默认，工作台可切竖屏）、每集 1–2 分钟、前 3 秒必须抓住注意力。",
-            f"【本批预算】这次要拆 {batch_scenes} 场，合计约 **{share:.0f} 秒、"
-            f"{max(1, int(share / table['medium']))}–{max(1, int(share / table['fast']))} 个镜头**"
-            f"（全片 {total_scenes} 场共约 {budget:.0f} 秒，超一集会自动分集）。"
-            "这是**下限式预算**：把本场的节拍全部拍完，宁多勿删。",
-            "【覆盖律（硬规则）】本场每个节拍都要有镜头承载：动作节拍给画面，"
-            "对白节拍给说话人镜头。**禁止删事件**——删事件不是省时长，是把两个事件"
-            "挤进一个镜头，视频模型做不完就会把人物挤出画外、让动作不发生。"
-            "时长超了由分集解决，不由你解决。",
-            f"【节奏基线】短剧单镜 {table['fast']:.0f}–{table['slow']:.0f} 秒：多数镜头写 "
-            f"{table['fast']:.0f}–{table['medium']:.0f} 秒，只有情绪转折或重大信息才给 "
-            f"{table['slow']:.0f} 秒。不要写 8 秒以上的镜头——那是电影节奏。",
-            "【pacing 取值】没有明确理由一律写 fast；只有整场需要压抑或沉淀时才用 medium/slow。",
-        ]
+        if script is not None:
+            _lo, target, _hi, episodes, targets = _runtime_targets(script, adaptation_type)
+            ids = scene_ids or [sc.id for sc in script.scenes]
+            batch_target = sum(targets.get(sid, 0.0) for sid in ids)
+            beats = {sc.id: len(sc.beats) for sc in script.scenes}
+            per_scene = "；".join(
+                f"{sid} 约 {targets.get(sid, 0.0):.0f} 秒（{beats.get(sid, 0)} 拍）"
+                for sid in ids
+            )
+            shot_lo = max(1, int(round(batch_target / table["medium"])))
+            shot_hi = max(shot_lo, math.ceil(batch_target / table["fast"]))
+            lines += [
+                "【类型约束】短剧：横屏 16:9（默认，工作台可切竖屏）、每集 55–95 秒、前 3 秒必须抓住注意力。",
+                f"【本集目标】{target:.0f} 秒 / {episodes} 集。"
+                f"本批 {len(ids)} 场合计约 {batch_target:.0f} 秒：{per_scene}。",
+                f"【镜头数】本批约 {shot_lo}–{shot_hi} 个镜头；单场不超过 ceil(本场目标÷3)+1。"
+                "**目标不是下限**：把节拍拍完即可，不要为同一动作加第二个机位，不要用反应空镜凑时长。",
+                "【覆盖律】每个节拍都要有镜头承载：动作给画面，对白给说话人。"
+                "省时长靠合并重复机位/跳过过场，**不靠删 must_keep 事件**——删事件会把"
+                "两个事件挤进一个镜头，视频模型做不完就会人物出画、动作不发生。",
+                f"【节奏基线】短剧单镜 {table['fast']:.0f}–{table['slow']:.0f} 秒；多数 3–4 秒，"
+                f"只有情绪转折或台词才给 {table['slow']:.0f} 秒。不要写 8 秒以上的镜头。",
+                "【pacing 取值】没有明确理由一律写 fast；只有整场需要压抑或沉淀时才用 medium/slow。",
+            ]
+        else:
+            share = max(batch_scenes, 1) * 18.0
+            lines += [
+                "【类型约束】短剧：横屏 16:9（默认，工作台可切竖屏）、每集 55–95 秒、前 3 秒必须抓住注意力。",
+                f"【本批目标】这次要拆 {batch_scenes} 场，合计约 {share:.0f} 秒、"
+                f"{max(1, int(share / 4))}–{max(1, int(share / 3))} 个镜头（全片 {total_scenes} 场）。",
+                "【覆盖律】每个节拍都要有镜头承载；同一事件的重复机位要合并。",
+                f"【节奏基线】短剧单镜 {table['fast']:.0f}–{table['slow']:.0f} 秒；多数 3–4 秒。",
+            ]
     else:
         lines.append(f"【节奏基线】单镜建议 {table['fast']:.0f}–{table['slow']:.0f} 秒。")
 
@@ -925,6 +1193,9 @@ class DirectorAgent(CrewAgent):
             return CrewTaskResult(success=False, summary="没有找到目标场景")
 
         default_pacing = _default_pacing(adaptation_type)
+        # D-90：目标带与每场目标一次算清；校验/闸门/分集都用同一把尺子。
+        band_lo, band_target, band_hi, episodes, scene_targets = _runtime_targets(
+            script, adaptation_type)
 
         # 分批拆解：一次输出整部戏的分镜 JSON 会超模型单次输出上限，被截断后
         # JSON 不闭合、解析必失败（2026-11-01 实测：7 场戏整拆时截断在 scene_001
@@ -953,21 +1224,34 @@ class DirectorAgent(CrewAgent):
                     )
                 breakdowns.extend(bds)
             last = breakdowns
+            # 台词认领先做确定性兜底：无效 ref 指向 action beat / 没认领的台词，
+            # 校验层回喂三轮也可能不改；不修的话闸门认不到这句，镜头就不会被拉长。
+            fixed = repair_dialogue_claims(script, breakdowns)
+            if fixed:
+                log.info("导演拆解：闸门前修复 %d 处台词认领", fixed)
             critique = self._validate_continuity(
                 breakdowns, script,
-                budget_sec=_budget_for(adaptation_type, len(script.scenes)),
+                budget_sec=band_target, min_sec=band_lo, max_sec=band_hi,
+                scene_targets=scene_targets,
             )
             if not critique:
-                # 校验通过（在 1.5x 上限内）也要过确定性闸门：
-                # 闸门按「预算」而不是「上限」收——超预算的秒数就是超预算的钱。
-                budget = _budget_for(adaptation_type, len(script.scenes))
+                # 校验通过也要过确定性闸门：闸门按「目标」而不是「上限」收——
+                # 多出来的秒数就是多出来的成本与拖沓。
                 gated, notes = enforce_duration_budget(
-                    breakdowns, budget,
+                    breakdowns, band_target,
                     shots_dialogue=dialogue_map_for(script, breakdowns),
-                    scene_weights=scene_content_weights(script),
+                    scene_weights=scene_targets, max_sec=band_hi,
                 )
                 gated, motion_notes = enforce_motion_ratio(gated)
                 notes.extend(motion_notes)
+                # 闸门可能把漏认领的台词镜删掉；删完再补一次，保证每句都有镜头。
+                patched = repair_dialogue_claims(script, gated)
+                if patched:
+                    notes.append(f"闸门后补录/修复 {patched} 处台词认领")
+                restretched, added = stretch_dialogue_after_gate(script, gated)
+                if restretched:
+                    notes.append(
+                        f"闸门：删镜后 {restretched} 个台词镜再抬到念得完（+{added:.1f} 秒）")
                 summary = (
                     f"导演完成 {len(gated)} 个场景的镜头拆解，"
                     f"共 {sum(len(b.shots) for b in gated)} 个镜头"
@@ -978,15 +1262,21 @@ class DirectorAgent(CrewAgent):
                 return CrewTaskResult(data=gated, summary=summary)
 
         # 迭代用完仍不合格：批评可以不理，预算不能不理——钱是硬约束。
-        budget = _budget_for(adaptation_type, len(script.scenes))
         gated, notes = enforce_duration_budget(
-            last, budget,
+            last, band_target,
             shots_dialogue=dialogue_map_for(script, last),
-            scene_weights=scene_content_weights(script),
+            scene_weights=scene_targets, max_sec=band_hi,
         )
         # 运镜是导演语言不是可选项：批评回喂不理的，代码兜底（5.44 同款纪律）。
         gated, motion_notes = enforce_motion_ratio(gated)
         notes.extend(motion_notes)
+        patched = repair_dialogue_claims(script, gated)
+        if patched:
+            notes.append(f"闸门后补录/修复 {patched} 处台词认领")
+        restretched, added = stretch_dialogue_after_gate(script, gated)
+        if restretched:
+            notes.append(
+                f"闸门：删镜后 {restretched} 个台词镜再抬到念得完（+{added:.1f} 秒）")
         total = sum(len(b.shots) for b in gated) if gated else 0
         summary = f"导演完成拆解（共 {total} 镜）"
         if notes:
@@ -1052,7 +1342,8 @@ class DirectorAgent(CrewAgent):
 
     def _validate_continuity(
         self, breakdowns: list[SceneBreakdown], script: Script | None = None,
-        *, budget_sec: float | None = None,
+        *, budget_sec: float | None = None, min_sec: float | None = None,
+        max_sec: float | None = None, scene_targets: dict[str, float] | None = None,
     ) -> list[str]:
         """确定性校验分镜（不靠固定镜头数，只查结构自洽、生成器可行性与戏剧结构）。
 
@@ -1074,22 +1365,47 @@ class DirectorAgent(CrewAgent):
         scene_of = {sc.id: sc for sc in (script.scenes if script else [])}
         char_of = {c.id: c.name for c in (script.characters if script else [])}
 
-        # 0) 片长预算（2026-11-20 起是内容比例预算：max(类型预算, 场数×24s)）。
-        #    没有这一条时，导演会按剧情一路拆下去——《孔乙己》七场戏拆出 60 镜
-        #    295 秒，是短剧的三倍，生成成本与观众耐心都不允许。
-        #    批评口径同步翻转：超预算不再要求「删事件」（那是漂移之源），
-        #    而是「把挤在一起的动作拆开写短、把重复机位合并」——事件本身保留。
-        if budget_sec:
-            total = sum(max(0.0, s.duration_sec) for bd in breakdowns for s in bd.shots)
-            limit = budget_sec * 1.5
-            if total > limit:
-                n = sum(len(bd.shots) for bd in breakdowns)
-                issues.append(
-                    f"整片总时长 {total:.0f} 秒、共 {n} 个镜头，超出预算（目标 {budget_sec:.0f} 秒，"
-                    f"上限 {limit:.0f} 秒）。**不要删事件**：把时长压回节奏基线"
-                    "（多数分镜 3–5 秒，别一律写 6 秒以上）、合并同一事件的重复机位；"
-                    "每个节拍仍要有镜头承载。"
-                )
+        # 0) 目标带（D-90）：短剧 55–95 秒/集，目标不是「上限 ×1.5」。
+        #    旧口径只拦 1.5 倍，337 字 / 108.5 秒这种拖沓方案会直接放行；
+        #    现在超目标就要求压回：合并重复机位、跳过过场、把反应空镜并进动作镜，
+        #    但**不删 must_keep 事件**。
+        total = sum(max(0.0, s.duration_sec) for bd in breakdowns for s in bd.shots)
+        n_all_shots = sum(len(bd.shots) for bd in breakdowns)
+        if max_sec is not None and total > max_sec:
+            issues.append(
+                f"整片总时长 {total:.0f} 秒、共 {n_all_shots} 个镜头，超出本集上限 {max_sec:.0f} 秒"
+                f"（目标 {budget_sec or max_sec:.0f} 秒）。**不要删 must_keep 事件**："
+                "合并同一事件的重复机位、跳过纯过场、把反应空镜并进动作镜，"
+                "多数分镜压到 3–4 秒；每个节拍仍要有镜头承载。"
+            )
+        elif min_sec is not None and total < min_sec and total > 0:
+            issues.append(
+                f"整片总时长只有 {total:.0f} 秒，低于本集下限 {min_sec:.0f} 秒："
+                "可能漏拍了节拍或把事件挤进了一个镜头。给关键转折/人物反应补足镜头。"
+            )
+
+        # 0a) 每场目标：与段落决策/内容权重算出的目标比，±25% 以内。
+        if scene_targets:
+            for bd in breakdowns:
+                target = scene_targets.get(bd.scene_id)
+                if not target or target <= 0:
+                    continue
+                actual = sum(max(0.0, s.duration_sec) for s in bd.shots)
+                if not (target * 0.75 <= actual <= target * 1.25):
+                    issues.append(
+                        f"{bd.scene_id} 实际 {actual:.0f} 秒，偏离本场目标 {target:.0f} 秒超过 25%："
+                        "按「目标秒数 × 每拍一镜」重排，不要靠加反应镜头凑时长。"
+                    )
+                max_shots = math.ceil(target / 3) + 1
+                if len(bd.shots) > max_shots:
+                    issues.append(
+                        f"{bd.scene_id} 拆了 {len(bd.shots)} 镜，超过本场目标 {target:.0f} 秒的"
+                        f"镜头上限 {max_shots}：先合并同一事件的重复机位与纯反应空镜。"
+                    )
+
+        # 首镜钩子不做硬校验：一个静止的强画面（额头大包/一墙之隔）也可以是钩子，
+        # 用「必须有位移」去卡会把合法的冷开场打回。钩子由剧本层的
+        # _check_hook + 段落决策的 hook 字段负责，导演侧只在 probe 里观察。
 
         # 0b) 镜头语言多样性：模型会躺在「特写+固定机位」的安全区里——
         #     2026-11-12 孔乙己 v2 实测：25 镜里 11 个 close_up、0 个运动镜头
@@ -1252,12 +1568,20 @@ class DirectorAgent(CrewAgent):
                         f"镜头 {s.id} 没有填写 cut_reason：只有时间跳变/地点切换/无可回避的戏剧切口才允许切镜，"
                         "否则请合并进上一个镜头"
                     )
-                # 5) 相邻重复的同一主体特写
+                # 5) 相邻重复镜：同主体 + 同动作 + 同机位 = 没有新信息的一刀
                 if prev is not None and s.subject.strip() and s.subject.strip() == str(prev.subject).strip():
-                    issues.append(
-                        f"镜头 {s.id} 与上一镜是同一主体（{s.subject}）的重复特写，"
-                        "除非有强戏剧理由，否则合并成一个镜头"
-                    )
+                    same_action = (s.action or "").strip() == (prev.action or "").strip() and bool(s.action)
+                    same_cam = (s.camera.type or "") == (prev.camera.type or "")
+                    if same_action and same_cam:
+                        issues.append(
+                            f"镜头 {s.id} 与上一镜同主体、同动作、同机位（{s.subject}）："
+                            "这一刀没有新信息，必须合并；要换视角就换景别或机位，别重复同一画面"
+                        )
+                    else:
+                        issues.append(
+                            f"镜头 {s.id} 与上一镜是同一主体（{s.subject}）的重复特写，"
+                            "除非有强戏剧理由，否则合并成一个镜头"
+                        )
                 # 2) 接力只能指向更早的镜头
                 if s.chain_from is not None:
                     if s.chain_from not in all_orders:
@@ -1288,6 +1612,7 @@ class DirectorAgent(CrewAgent):
         parts.extend(_format_constraints(
             adaptation_type, visual_style,
             batch_scenes=len(targets), total_scenes=max(1, len(script.scenes)),
+            script=script, scene_ids=[sc.id for sc in targets],
         ))
         parts.extend(["", "请为以下场景设计镜头方案："])
 
@@ -1481,17 +1806,18 @@ def assign_episodes(breakdowns: list[SceneBreakdown], script: Script) -> None:
     那一章就是它所属的集。连载改编时一章一集。
 
     **一章装不下一集时按时长拆集**（2026-11-20《替身v2》复盘新增）：
-    内容比例预算（每场保底 24 秒）让单章短作的总时长可以超过一集
-    （10 场 ≈ 240 秒 = 两集）。旧版全塞一集，观众看到的就是 4 分钟
-    「一集」——即梦对同一篇原文拆 5 集 × 60–95 秒才是短剧的集形态。
-    拆法：章内按场次顺序贪心装箱，每集合计 ≤ EPISODE_TARGET_SEC；
+    短剧单集 55–95 秒（D-90），一章的场次总时长超过 95 秒就贪心拆集
+    （10 场 × 18 秒 ≈ 180 秒 = 两集；旧口径 24 秒保底会得到 240 秒）。
+    旧版全塞一集，观众看到的就是 4 分钟「一集」——即梦对同一篇原文
+    拆 5 集 × 60–95 秒才是短剧的集形态。
+    拆法：章内按场次顺序贪心装箱，每集合计 ≤ EPISODE_MAX_SEC；
     单场超一集时长的不硬拆（场是戏剧单元），它自己占一集。
     集 id 加 `#n` 后缀（`ch_001#2`），episode_index 全局连续。
 
     就地写（与 group 归一同样的做法）：不新增一张表，不改镜头方案的结构，
     只在镜头上多两个字段。
     """
-    from ..video.rhythm import EPISODE_TARGET_SEC
+    from ..video.rhythm import EPISODE_MAX_SEC
 
     order: dict[str, int] = {}
     for i, ch in enumerate(script.source.chapter_ids or []):
@@ -1525,7 +1851,7 @@ def assign_episodes(breakdowns: list[SceneBreakdown], script: Script) -> None:
         run_sec = 0.0
         for sid in scenes_in_ch:
             d = scene_dur.get(sid, 0.0)
-            if run and run_sec + d > EPISODE_TARGET_SEC:
+            if run and run_sec + d > EPISODE_MAX_SEC:
                 parts.append(run)
                 run, run_sec = [], 0.0
             run.append(sid)

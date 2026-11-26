@@ -71,6 +71,7 @@ def test_overview_counts_and_no_token_words(client, store, sample_text):
     body = resp.json()
     assert body["scenes"] == 1
     assert body["characters"] == 2
+    assert body["episodes"] == 1  # 镜头没有 episode_id 时按剧本场头兜底
     assert body["shots"] == 2
     assert body["shots_approved"] == 1  # 只有 shot_1 批准了
     # 响应体里不得出现 token（D-24：界面禁工程黑话）

@@ -15,7 +15,11 @@ from app.pipeline.story_plan import (
     StoryPlan,
     StoryUnderstanding,
     episode_brief,
+    generate_from_plan,
     plan_story,
+)
+from app.domain import (
+    Character, Location, Scene, Script, ScriptBeat, Source,
 )
 
 
@@ -76,6 +80,122 @@ def test_episode_brief_带事件底线与钩子():
     assert "加戏" in brief and "禁止为了压时长删事件" in brief
 
 
+def test_generate_from_plan_逐集扩写并合并(monkeypatch):
+    """每集单独生成，场头 episode/chapter_refs 由代码钉死，合并场号连续。"""
+    import app.pipeline.generation as generation
+
+    calls: list[dict] = []
+
+    def fake_generate(llm, settings, **kwargs):
+        calls.append(kwargs)
+        return Script(
+            title=kwargs["title"],
+            source=Source(chapter_count=1, chapter_ids=["ch_001"]),
+            logline="l",
+            characters=[Character(id="char_001", name="甲")],
+            locations=[Location(id="loc_001", name="屋")],
+            scenes=[Scene(
+                id="scene_001", title="场", chapter_refs=["ch_001"],
+                location_id="loc_001", characters=["char_001"],
+                purpose="p", conflict="c",
+                beats=[ScriptBeat(id="beat_001", type="action", text="甲（char_001）推门。")],
+            )],
+        ), {}
+
+    monkeypatch.setattr(generation, "generate_script", fake_generate)
+    merged, art = generate_from_plan(
+        _FakeLLM(None), None, title="替身", raw_text="原文",
+        plan=_plan(status="confirmed"), adaptation_type="short_drama",
+        language="zh-CN", dialogue_style="vernacular",
+    )
+    assert len(calls) == 3
+    assert calls[0]["skip_adaptation"] is True
+    assert calls[0]["dialogue_style"] == "vernacular"
+    assert "本集人物范围" in calls[0]["bible_scope"]
+    assert "β 诞生" in calls[0]["extra_scope"]
+    assert [sc.episode for sc in merged.scenes] == [1, 2, 3]
+    assert [sc.id for sc in merged.scenes] == ["scene_001", "scene_002", "scene_003"]
+    assert [sc.chapter_refs for sc in merged.scenes] == [["ep_001"], ["ep_002"], ["ep_003"]]
+    assert len(merged.characters) == 1 and len(merged.locations) == 1
+    assert "char_" not in merged.scenes[0].beats[0].text
+    assert art["episodes"] == 3 and art["scenes"] == 3
+
+
+def test_generate_from_plan_跨集别名人物合并(monkeypatch):
+    """逐集 Bible 把同一人物叫成「客一/客」时，合并成同一个角色；同场重复台词去重。"""
+    import app.pipeline.generation as generation
+
+    names = iter(["客一", "客", "客"])
+
+    def fake_generate(llm, settings, **kwargs):
+        name = next(names)
+        line = "我明天一早就上山拜师求学。"
+        return Script(
+            title=kwargs["title"],
+            source=Source(chapter_count=1, chapter_ids=["ch_001"]),
+            logline="l",
+            characters=[Character(id="char_001", name=name)],
+            locations=[Location(id="loc_001", name="屋")],
+            scenes=[Scene(
+                id="scene_001", title="场", chapter_refs=["ch_001"],
+                location_id="loc_001", characters=["char_001"],
+                purpose="p", conflict="c",
+                beats=[
+                    ScriptBeat(id="beat_001", type="action", text="推门。"),
+                    ScriptBeat(id="beat_002", type="dialogue", speaker="char_001", line=line),
+                    ScriptBeat(id="beat_003", type="dialogue", speaker="char_001", line=line),
+                ],
+            )],
+        ), {}
+
+    monkeypatch.setattr(generation, "generate_script", fake_generate)
+    merged, _ = generate_from_plan(
+        _FakeLLM(None), None, title="替身", raw_text="原文",
+        plan=_plan(status="confirmed"), adaptation_type="short_drama",
+        language="zh-CN",
+    )
+    assert [c.name for c in merged.characters] == ["客一"]
+    assert merged.scenes[2].characters == [merged.characters[0].id]
+    # 同场逐字重复的台词只留第一句
+    dup_scene = merged.scenes[2]
+    assert [b.id for b in dup_scene.beats].count("beat_003") == 0
+    assert len(dup_scene.dialogue) == 1
+
+
+def test_generate_from_plan_说话人漏列补进场(monkeypatch):
+    """台词说话人没列进本场 characters 时，代码补上（否则审计报漏人物）。"""
+    import app.pipeline.generation as generation
+
+    def fake_generate(llm, settings, **kwargs):
+        return Script(
+            title=kwargs["title"],
+            source=Source(chapter_count=1, chapter_ids=["ch_001"]),
+            logline="l",
+            characters=[
+                Character(id="char_001", name="甲"),
+                Character(id="char_002", name="乙"),
+            ],
+            locations=[Location(id="loc_001", name="屋")],
+            scenes=[Scene(
+                id="scene_001", title="场", chapter_refs=["ch_001"],
+                location_id="loc_001", characters=["char_001"],
+                purpose="p", conflict="c",
+                beats=[ScriptBeat(
+                    id="beat_001", type="dialogue", speaker="char_002",
+                    line="乙说了一句完整的话。",
+                )],
+            )],
+        ), {}
+
+    monkeypatch.setattr(generation, "generate_script", fake_generate)
+    merged, _ = generate_from_plan(
+        _FakeLLM(None), None, title="替身", raw_text="原文",
+        plan=_plan(status="confirmed"), adaptation_type="short_drama",
+        language="zh-CN",
+    )
+    assert "char_002" in merged.scenes[0].characters
+
+
 # ---------------------------------------------------------------- 提案调用
 
 
@@ -106,6 +226,8 @@ def test_plan_story_成功返回归一化提案():
     # 系统提示词讲清了底线
     sys = llm.calls[0][0]["content"]
     assert "一集都不会删掉任何一条" in sys
+    # DeepSeek 的 json_object 模式要求提示词里出现 json，否则 400
+    assert "JSON" in sys or "json" in sys
 
 
 def test_plan_story_带集数提示与用户要求():
@@ -115,6 +237,14 @@ def test_plan_story_带集数提示与用户要求():
     user = llm.calls[0][1]["content"]
     assert "用户已指定：做 2 集" in user
     assert "结尾留白" in user
+
+
+def test_plan_story_台词语体进提示词():
+    llm = _FakeLLM(_plan())
+    plan_story(llm, title="t", raw_text="x", dialogue_style="vernacular")
+    user = llm.calls[0][1]["content"]
+    assert "白话" in user
+    assert "语体转述" in user
 
 
 def test_plan_story_无事件视为失败():

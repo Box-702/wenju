@@ -74,7 +74,8 @@ def build_chat_tools(
     required_skills = {
         "create_project": "script-generation", "generate_script": "script-generation",
         "map_novel": "novel-serial", "propose_arcs": "novel-serial",
-        "plan_story": "novel-serial", "confirm_story_plan": "novel-serial",
+        # plan_story / confirm_story_plan 不再只挂在 novel-serial：
+        # 短剧默认流程也要先出「理解卡 + 分集提案」，否则分集大纲永远是空的。
         "run_adaptation": "script-review", "run_script_doctor": "script-review",
         "breakdown_scenes": "crew-pipeline", "generate_style_guide": "crew-pipeline",
         "generate_video_prompts": "crew-pipeline",

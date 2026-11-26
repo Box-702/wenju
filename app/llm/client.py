@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, TypeVar
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -30,6 +31,7 @@ from .registry import describe_providers, resolve_chat, resolve_image, resolve_v
 from .vision import VisionClient
 
 T = TypeVar("T", bound=BaseModel)
+log = logging.getLogger(__name__)
 
 
 class _JsonPromptStructured:
@@ -69,13 +71,22 @@ class _JsonPromptStructured:
         m = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", raw, flags=re.DOTALL)
         if m:
             raw = m.group(1)
+
+        def _loads(s: str) -> dict[str, Any]:
+            try:
+                return json.loads(s)
+            except json.JSONDecodeError:
+                # DeepSeek 偶尔在对象/数组末尾多一个逗号；这是合法模型输出里
+                # 最常见的一种坏格式，先修再判失败（2026-11-26 v10 全流程实测）。
+                return json.loads(re.sub(r",\s*([}\]])", r"\1", s))
+
         try:
-            return json.loads(raw)
+            return _loads(raw)
         except json.JSONDecodeError:
             for i, ch in enumerate(raw):
                 if ch in "{[":
                     try:
-                        return json.loads(raw[i:])
+                        return _loads(raw[i:])
                     except json.JSONDecodeError:
                         continue
             raise ValueError(f"无法解析 JSON：{raw[:200]}") from None
@@ -110,6 +121,27 @@ def _append_json_hint(messages: Any, hint: str) -> list[Any]:
         items = list(messages)
     items.append(HumanMessage(content=hint))
     return items
+
+
+class _StructuredWithFallback:
+    """json_mode 优先；解析失败时退回「提示词约束 + 容错解析 + 重采样」。
+
+    为什么需要：DeepSeek 的 json_object 偶尔吐尾逗号，LangChain 的严格
+    parser 直接判失败，整条生成链路会回退成本地规则剧本（2026-11-26
+    《劳山道士》全流程实测）。正常情况仍走 json_mode，不增加提示词成本；
+    只有失败才多一次带 schema 的容错重试。
+    """
+
+    def __init__(self, model: BaseChatModel, schema: type[T]) -> None:
+        self._primary = model.with_structured_output(schema, method="json_mode")
+        self._fallback = _JsonPromptStructured(model, schema)
+
+    def invoke(self, messages: Any, **kwargs: Any) -> T:
+        try:
+            return self._primary.invoke(messages, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("json_mode 结构化输出失败，转容错解析重试：%s", str(exc)[:160])
+            return self._fallback.invoke(messages, **kwargs)
 
 
 class LLM:
@@ -190,7 +222,7 @@ class LLM:
         if self._model is None:
             raise RuntimeError("模型未配置，无法进行结构化输出。")
         if self._supports_json_mode():
-            return self._model.with_structured_output(schema, method="json_mode")
+            return _StructuredWithFallback(self._model, schema)
         return _JsonPromptStructured(self._model, schema)
 
     def _supports_json_mode(self) -> bool:

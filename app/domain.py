@@ -261,6 +261,12 @@ class Character(BaseModel):
     description: str | None = None
     arc: str | None = None
     speech_style: str | None = None
+    # 分集剧本的「人物小传」结构（参照短剧工作台格式）：
+    visual: str | None = None          # 视觉形象（年龄/外形/服装）
+    tags: str | None = None            # 核心标签（一句话人设）
+    background: str | None = None      # 身份背景
+    history: str | None = None         # 成长经历
+    relationships: str | None = None   # 角色关系
 
     @field_validator("gender", mode="before")
     @classmethod
@@ -306,10 +312,17 @@ class DialogueLine(BaseModel):
 
 
 class ScriptBeat(BaseModel):
-    """剧本流节拍：按阅读顺序混排动作 / 对白 / cue。id 需为 ``beat_数字``。"""
+    """剧本流节拍：动作 / 对白 / cue / 内心OS / 闪回 / 音效 / 字幕 / 卡点。
+
+    id 需为 ``beat_数字``。``os`` 用 speaker+line（谁的内心的声音），其余
+    非对白类型用 text（音效写声音、卡点写钩子、闪回写回闪内容）。
+    """
 
     id: str = Field(pattern=r"^beat_[0-9]{3,}$")
-    type: Literal["action", "dialogue", "cue"]
+    type: Literal[
+        "action", "dialogue", "cue",
+        "os", "flashback", "sound", "subtitle", "card",
+    ]
     text: str | None = None
     speaker: str | None = Field(default=None, pattern=r"^char_[a-z0-9_]+$")
     line: str | None = None
@@ -341,6 +354,106 @@ class AdaptationNotes(BaseModel):
         return normalize_fidelity(v)
 
 
+# ---- 段落级改编决策（D-90） ----
+#
+# 为什么放在 domain 而不是 pipeline：它跟着剧本版本一起落库、一起被导演/体检
+# 读取；但它只是「改编说明」，不进 UI，也不参与出片参数的拼装。
+# 一份 plan = 原文逐段的取舍 + 全片目标时长 + 段落落到哪场。
+_SEG_IMPORTANCE = {
+    "must_keep": "must_keep", "must-keep": "must_keep", "mustkeep": "must_keep",
+    "must": "must_keep", "core": "must_keep", "不可删": "must_keep", "必须保留": "must_keep",
+    "important": "important", "keep": "important", "重要": "important",
+    "optional": "optional", "nice": "optional", "可选": "optional", "可删": "optional",
+}
+_SEG_TREATMENT = {
+    "keep": "keep", "保持": "keep", "保留": "keep",
+    "adapt": "adapt", "rewrite": "adapt", "改写": "adapt", "改编": "adapt",
+    "expand": "expand", "expansion": "expand", "扩写": "expand", "扩充": "expand",
+    "compress": "compress", "condense": "compress", "压缩": "compress", "简写": "compress",
+    "cut": "cut", "delete": "cut", "remove": "cut", "删除": "cut", "删": "cut",
+}
+_SEG_FUNCTION = {
+    "hook": "hook", "钩子": "hook",
+    "setup": "setup", "铺垫": "setup", "建立": "setup",
+    "escalation": "escalation", "升级": "escalation", "加压": "escalation",
+    "turn": "turn", "转折": "turn", "反转": "turn",
+    "reveal": "reveal", "揭示": "reveal",
+    "climax": "climax", "高潮": "climax",
+    "resolution": "resolution", "收尾": "resolution", "结局": "resolution",
+    "tag": "tag", "余味": "tag",
+    "character": "character", "人物": "character",
+    "spectacle": "spectacle", "奇观": "spectacle",
+}
+
+
+class SourceSegmentDecision(BaseModel):
+    """原文一段的改编决策（内部结构，不进 UI）。"""
+
+    id: str = Field(pattern=r"^seg_[0-9]{3,}$")
+    summary: str = ""
+    source_anchor: str = ""            # 原文里最短的可核对锚（人名/道具/动作）
+    plot_importance: Literal["must_keep", "important", "optional"] = "important"
+    function: str = "setup"
+    character_focus: str = ""           # 这段服务谁的什么变化（want vs need）
+    treatment: Literal["keep", "adapt", "expand", "compress", "cut"] = "keep"
+    target_beats: int = Field(default=1, ge=0, le=8)
+    target_sec: float = Field(default=0.0, ge=0.0)
+    completeness_risk: str = ""         # 删/压会破坏什么；空 = 不影响完整性
+    reason: str = ""
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _coerce_id(cls, v: object) -> object:
+        return normalize_id(v, "seg", fallback=v)
+
+    @field_validator("plot_importance", mode="before")
+    @classmethod
+    def _coerce_importance(cls, v: object) -> object:
+        key = str(v or "").strip().lower()
+        return _SEG_IMPORTANCE.get(key, key)
+
+    @field_validator("treatment", mode="before")
+    @classmethod
+    def _coerce_treatment(cls, v: object) -> object:
+        key = str(v or "").strip().lower()
+        return _SEG_TREATMENT.get(key, key)
+
+    @field_validator("function", mode="before")
+    @classmethod
+    def _coerce_function(cls, v: object) -> object:
+        key = str(v or "").strip().lower()
+        return _SEG_FUNCTION.get(key, key or "setup")
+
+
+class AdaptationPlan(BaseModel):
+    """一部短剧的段落级改编计划：取舍、目标时长、段落 → 场景的落点。"""
+
+    segments: list[SourceSegmentDecision] = Field(default_factory=list)
+    target_sec: float = 75.0
+    episode_count: int = 1
+    hook: str = ""
+    rationale: str = ""
+    #: scene_id -> 该场目标秒数（场景规划完成后由代码绑定）
+    scene_targets: dict[str, float] = Field(default_factory=dict)
+    #: scene_id -> 覆盖的 segment ids
+    scene_segments: dict[str, list[str]] = Field(default_factory=dict)
+
+    def summary_line(self) -> str:
+        must = sum(1 for s in self.segments if s.plot_importance == "must_keep")
+        expand = sum(1 for s in self.segments if s.treatment == "expand")
+        compress = sum(1 for s in self.segments if s.treatment == "compress")
+        cut = sum(1 for s in self.segments if s.treatment == "cut")
+        return (f"段落决策 {len(self.segments)} 段：不可删 {must} · 扩写 {expand} · "
+                f"压缩 {compress} · 删除 {cut} · 目标 {self.target_sec:.0f} 秒/"
+                f"{self.episode_count} 集")
+
+    def segment(self, seg_id: str) -> SourceSegmentDecision | None:
+        for s in self.segments:
+            if s.id == seg_id:
+                return s
+        return None
+
+
 class Scene(BaseModel):
     """场景。id 需为 ``scene_数字``。
 
@@ -353,6 +466,9 @@ class Scene(BaseModel):
     chapter_refs: list[str] = Field(min_length=1)
     location_id: str = Field(pattern=r"^loc_[a-z0-9_]+$")
     time: str | None = None
+    #: 分集剧本的场头（参照短剧工作台）：第几集 / 内景或外景。
+    episode: int = Field(default=1, ge=1)
+    interior_exterior: Literal["内景", "外景"] | None = None
     characters: list[str] = Field(min_length=1)
     character_look_ids: dict[str, str] = Field(default_factory=dict)  # 本场默认造型
     purpose: str
@@ -417,6 +533,15 @@ class Script(BaseModel):
     characters: list[Character] = Field(min_length=1)
     locations: list[Location] = Field(default_factory=list)
     scenes: list[Scene] = Field(min_length=1)
+    #: 段落级改编决策（D-90）。只在短篇/无故事提案的生成路径产生；
+    #: 跟着版本一起落库，导演与剧本医生读取；不进 UI。
+    adaptation_plan: AdaptationPlan | None = None
+    #: 台词语体（vernacular/classical/mixed），文本审计据此判文言残留。
+    dialogue_style: str = ""
+    #: 故事设定卡（参照短剧工作台）：类型 / 受众 / 故事梗概。
+    genre: str | None = None
+    audience: str | None = None
+    synopsis: str | None = None
 
     @field_validator("characters")
     @classmethod

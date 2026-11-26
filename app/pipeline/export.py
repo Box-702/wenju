@@ -153,6 +153,31 @@ def _screenplay_lines(script: Script, *, markdown: bool = False) -> list[str]:
                     else:
                         lines.append(f"        {line}")
                         blank()
+            elif btype == "os":
+                speaker = chars.get(b.speaker, b.speaker or "") or ""
+                line = str(b.line or b.text or "").strip()
+                if line:
+                    if markdown:
+                        lines.append(f"**{_upper_zh(speaker)}（内心OS）**")
+                        lines.append("")
+                        lines.append(line)
+                        lines.append("")
+                    else:
+                        lines.append(f"{_upper_zh(speaker)}（内心OS）".center(_PAGE).rstrip())
+                        lines.append("")
+                        lines.append(f"        {line}")
+                        blank()
+            elif btype in ("flashback", "sound", "subtitle", "card"):
+                label = {"flashback": "闪回", "sound": "音效",
+                         "subtitle": "字幕", "card": "卡点"}[btype]
+                body = str(b.text or "").strip()
+                if body:
+                    if markdown:
+                        lines.append(f"**【{label}】** {body}")
+                        lines.append("")
+                    else:
+                        lines.append(f"【{label}】 {body}")
+                        blank()
             elif btype == "cue":
                 cue = str(b.text or "").strip()
                 if cue:

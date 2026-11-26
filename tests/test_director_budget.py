@@ -18,7 +18,9 @@ from app.crew.director import (
     MIN_SHOTS_PER_SCENE,
     dialogue_need_sec,
     enforce_duration_budget,
+    repair_dialogue_claims,
     scene_content_weights,
+    stretch_dialogue_after_gate,
 )
 from app.crew.dp import stretch_for_dialogue
 from app.domain import (
@@ -40,10 +42,12 @@ def _beat(beat_id: str, *, line: str = "", text: str = "") -> ScriptBeat:
 
 
 def _shot(shot_id: str, order: int, dur: float, *, scene: str = "scene_001",
-          ref: str = "", function: str = "action", group: str = "") -> Shot:
+          ref: str = "", function: str = "action", group: str = "",
+          action: str = "") -> Shot:
     return Shot(
         id=shot_id, scene_id=scene, order=order, duration_sec=dur,
-        shot_type="medium", subject="甲", action="甲推开门走进来；乙抬头看他；甲走到桌前站住",
+        shot_type="medium", subject="甲",
+        action=action or "甲推开门走进来；乙抬头看他；甲走到桌前站住",
         function=function, dialogue_ref=ref, group_id=group,
     )
 
@@ -59,6 +63,172 @@ def _script(*scenes: tuple[str, list[ScriptBeat]]) -> Script:
         logline="测", characters=[Character(id="char_a", name="甲")],
         locations=[Location(id="loc_a", name="屋")], scenes=sc_objs,
     )
+
+
+def test_闸门先压时长再删镜() -> None:
+    """超预算时先把 4 秒以上镜头压到 4 秒，压进预算就不删镜。"""
+    bd = SceneBreakdown(scene_id="scene_001", shots=[
+        _shot("shot_scene_001_000", 0, 5.0),
+        _shot("shot_scene_001_001", 1, 5.0),
+    ])
+    out, notes = enforce_duration_budget(
+        [bd], 8.0, scene_weights={"scene_001": 1.0})
+    shots = [s for b in out for s in b.shots]
+    assert len(shots) == 2
+    assert all(abs(s.duration_sec - 4.0) < 0.01 for s in shots)
+    assert any("先压到" in n for n in notes)
+
+
+def test_闸门不把重点场削到目标四分之三以下() -> None:
+    """12 秒的大组会把重点场从 28 削到 16；有单场地板就改删 4 秒的小镜。"""
+    shots = [
+        _shot("shot_scene_001_000", 0, 4.0),
+        _shot("shot_scene_001_001", 1, 4.0),
+        _shot("shot_scene_001_002", 2, 6.0, group="g1"),
+        _shot("shot_scene_001_003", 3, 6.0, group="g1"),
+        _shot("shot_scene_001_004", 4, 4.0),
+        _shot("shot_scene_001_005", 5, 4.0),
+    ]
+    bd = SceneBreakdown(scene_id="scene_001", shots=shots)
+    out, _notes = enforce_duration_budget(
+        [bd], 27.0, max_sec=95.0, scene_weights={"scene_001": 1.0})
+    total = sum(s.duration_sec for b in out for s in b.shots)
+    assert total >= 27.0 * 0.75
+    assert any(s.group_id == "g1" for b in out for s in b.shots)
+
+
+def test_闸门不删台词镜与场尾镜() -> None:
+    """台词镜（对白的唯一载体）与每场最后一镜（场尾）不能被当壁纸删掉。"""
+    shots = [
+        _shot("shot_scene_001_000", 0, 4.0, ref="beat_001"),  # 首镜 + 台词
+        _shot("shot_scene_001_001", 1, 4.0),
+        _shot("shot_scene_001_002", 2, 4.0),
+        _shot("shot_scene_001_003", 3, 4.0),                  # 场尾
+    ]
+    bd = SceneBreakdown(scene_id="scene_001", shots=shots)
+    out, _notes = enforce_duration_budget(
+        [bd], 8.0, max_sec=95.0, scene_weights={"scene_001": 1.0})
+    kept = {s.id for b in out for s in b.shots}
+    assert "shot_scene_001_000" in kept   # 首镜/台词
+    assert "shot_scene_001_003" in kept   # 场尾
+    assert len(kept) == 2                 # 两个非保护镜被删，保护镜留下
+
+
+def test_闸门不删撞墙穿墙等不可逆动作镜() -> None:
+    """撞墙/穿墙这种事件本身不能被当普通动作删掉，只剩准备和后果。"""
+    shots = [
+        _shot("shot_scene_001_000", 0, 4.0, action="王生退开数尺，摆出要冲的架势"),
+        _shot("shot_scene_001_001", 1, 4.0,
+              action="王生猛地朝墙冲去，脑袋撞在墙上，弹回来"),
+        _shot("shot_scene_001_002", 2, 4.0, action="妻扶起他，笑得弯下腰"),
+        _shot("shot_scene_001_003", 3, 4.0, action="王生捂着额头骂师父"),
+    ]
+    bd = SceneBreakdown(scene_id="scene_001", shots=shots)
+    out, _notes = enforce_duration_budget(
+        [bd], 8.0, max_sec=95.0, scene_weights={"scene_001": 1.0})
+    kept = {s.id for b in out for s in b.shots}
+    assert "shot_scene_001_001" in kept
+
+
+def test_闸门删镜不跌破单集地板() -> None:
+    """按组删镜时不能把成片从 80 秒一刀砍到 60 秒以下。"""
+    scene_ids = [f"scene_{i:03d}" for i in range(1, 5)]
+    bds = []
+    order = 0
+    for sid in scene_ids:
+        shots = []
+        for i in range(5):
+            shots.append(_shot(f"shot_{sid}_{i:03d}", order, 4.0, scene=sid))
+            order += 1
+        bds.append(SceneBreakdown(scene_id=sid, shots=shots))
+    out, _notes = enforce_duration_budget(
+        bds, 77.0, scene_weights={sid: 1.0 for sid in scene_ids})
+    total = sum(s.duration_sec for b in out for s in b.shots)
+    assert 55.0 <= total <= 77.01
+
+
+def test_台词认领修复_无效ref改挂对白节拍() -> None:
+    script = _script(("scene_001", [
+        _beat("beat_001", text="甲推门进来"),
+        _beat("beat_002", line="你叫β。你的工作是替我上班。"),
+    ]))
+    bd = SceneBreakdown(scene_id="scene_001", shots=[
+        _shot("shot_scene_001_000", 0, 4.0, ref="beat_001"),  # 指向 action beat，非法
+    ])
+    fixed = repair_dialogue_claims(script, [bd])
+    assert fixed >= 1
+    assert bd.shots[0].dialogue_ref == "beat_002"
+
+
+def test_台词认领修复_漏认领挂到空闲镜头() -> None:
+    script = _script(("scene_001", [
+        _beat("beat_001", line="甲说第一句。"),
+        _beat("beat_002", line="甲说第二句。"),
+    ]))
+    bd = SceneBreakdown(scene_id="scene_001", shots=[
+        _shot("shot_scene_001_000", 0, 4.0, ref="beat_001"),
+        _shot("shot_scene_001_001", 1, 4.0),
+    ])
+    fixed = repair_dialogue_claims(script, [bd])
+    assert fixed >= 1
+    assert bd.shots[0].dialogue_ref == "beat_001"
+    assert bd.shots[1].dialogue_ref == "beat_002"
+
+
+def test_台词认领修复_无空闲镜头时补录一镜() -> None:
+    """3 句台词只有 2 个镜头：第 3 句必须补一个补录镜，不能消失。"""
+    script = _script(("scene_001", [
+        _beat("beat_001", line="第一句。"),
+        _beat("beat_002", line="第二句。"),
+        _beat("beat_003", line="第三句。"),
+    ]))
+    bd = SceneBreakdown(scene_id="scene_001", shots=[
+        _shot("shot_scene_001_000", 0, 4.0, ref="beat_001"),
+        _shot("shot_scene_001_001", 1, 4.0, ref="beat_002"),
+    ])
+    repair_dialogue_claims(script, [bd])
+    assert len(bd.shots) == 3
+    assert {s.dialogue_ref for s in bd.shots} == {"beat_001", "beat_002", "beat_003"}
+    assert sorted(s.order for s in bd.shots) == [0, 1, 2]
+    assert len({s.id for s in bd.shots}) == 3
+
+
+def test_台词补录后全局重排order并修chain() -> None:
+    """补录镜插在场景末尾后，全局 order/id 重排，后续场景的接力引用跟着改。"""
+    script = _script(
+        ("scene_001", [_beat("beat_001", line="第一句。"), _beat("beat_002", line="第二句。")]),
+        ("scene_002", [_beat("beat_001", line="第三句。")]),
+    )
+    s1 = _shot("shot_scene_001_000", 0, 4.0, ref="beat_001")
+    s2 = _shot("shot_scene_002_001", 5, 4.0, scene="scene_002")
+    s2.chain_from = 0
+    bds = [
+        SceneBreakdown(scene_id="scene_001", shots=[s1]),
+        SceneBreakdown(scene_id="scene_002", shots=[s2]),
+    ]
+    repair_dialogue_claims(script, bds)
+    by_scene = {bd.scene_id: sorted(bd.shots, key=lambda x: x.order) for bd in bds}
+    assert s1.order == 0
+    assert len(by_scene["scene_001"]) == 2
+    assert by_scene["scene_001"][1].order == 1
+    assert by_scene["scene_002"][0].order == 2
+    assert by_scene["scene_002"][0].chain_from == 0
+
+
+def test_删镜后台词范围重算并补时长() -> None:
+    """两个镜头引用同一句；删掉前一个后，后一个会继承两句话，必须再抬时长。"""
+    long_line = "第二句也要念完，否则观众看到的就是半句话。"
+    script = _script(("scene_001", [
+        _beat("beat_001", line="第一句。"),
+        _beat("beat_002", line=long_line),
+    ]))
+    remaining = _shot("shot_scene_001_001", 1, 4.0, ref="beat_001")
+    bd = SceneBreakdown(scene_id="scene_001", shots=[remaining])
+    n, added = stretch_dialogue_after_gate(script, [bd])
+    assert n == 1
+    assert added > 0
+    assert remaining.duration_sec >= dialogue_need_sec(
+        [_beat("beat_001", line="第一句。"), _beat("beat_002", line=long_line)])
 
 
 def test_口播时长口径() -> None:

@@ -1,14 +1,16 @@
 <script setup>
 // =====================================================================
-// ScriptHistoryPanel.vue —— 剧本页的左栏（即梦「脚本修改历史」形态）
+// ScriptHistoryPanel.vue —— 剧本页左侧「脚本修改历史」
 //
-// 即梦的左栏随视图切换：剧本页 = 修改历史（每条 = 人话描述 + 版本号 +
-// 时间，点开看说明），分镜/角色页 = 资产树。本面板是剧本页那份。
-// 当前版本高亮（金色竖条），点条目展开该版说明。
+// 每条 = 人话描述 + 版本号 + 时间，点开看说明；当前版本高亮（金色竖条）。
+// 标题栏右侧面板图标可收起（2026-11-26 用户要求），收起后由 App.vue 在
+// 主区左缘显示竖排「修改历史」标签恢复；开合状态记在 localStorage。
 // =====================================================================
 import { computed } from 'vue'
 import AppIcon from '../AppIcon.vue'
 import { store } from '../../stores/app'
+
+const emit = defineEmits(['collapse'])
 
 // 实际后端取值：generation | agent_adaptation | import | manual_edit
 const SOURCE_LABELS = {
@@ -38,6 +40,9 @@ const versions = computed(() => store.versions || [])
     <div class="hp-head">
       <span class="hp-title">脚本修改历史</span>
       <span class="hp-cnt">{{ versions.length }}</span>
+      <button class="hp-collapse" type="button" title="收起修改历史" @click="emit('collapse')">
+        <AppIcon name="panel" />
+      </button>
     </div>
     <div class="hp-scroll">
       <p v-if="!versions.length" class="hp-empty">
@@ -73,6 +78,14 @@ const versions = computed(() => store.versions || [])
   padding: 1px 6px; border-radius: 3px;
   border: 1px solid color-mix(in oklch, var(--gold) 40%, transparent);
 }
+.hp-collapse {
+  margin-left: auto; width: 24px; height: 24px;
+  display: grid; place-items: center; flex: none;
+  border: none; border-radius: 5px; background: transparent;
+  color: var(--dim); cursor: pointer;
+}
+.hp-collapse:hover { color: var(--ink); background: var(--surface-2); }
+.hp-collapse :deep(svg) { width: 13px; height: 13px; }
 .hp-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px; }
 .hp-empty { padding: 16px 8px; font-size: 12px; color: var(--dim); text-align: center; line-height: 1.7; }
 .hp-row {

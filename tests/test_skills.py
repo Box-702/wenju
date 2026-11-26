@@ -151,7 +151,11 @@ def test_audience_splits_crew_and_main():
     """两组技能井水不犯河水：剧组方法论不该进主 Agent 的目录，反之亦然。"""
     crew = {s.name for s in list_skills("crew")}
     main = {s.name for s in list_skills("main")}
-    assert crew == {"director-breakdown", "video-prompt-zh", "video-prompt-en", "style-guide"}
+    assert crew == {
+        "director-breakdown", "video-prompt-zh", "video-prompt-en", "style-guide",
+        # D-90：流水线内部的段落改编决策，不暴露给主对话 Agent
+        "adaptation-plan",
+    }
     assert main == {
         "novel-serial",
         "crew-pipeline",

@@ -36,6 +36,9 @@ def test_side_effect_tool_capabilities_are_skill_gated(store, llm):
     for name, skill in required.items():
         assert (tools[name].metadata or {}).get("required_skill") == skill
     assert (tools["generate_script"].metadata or {}).get("conditional_skill") == "novel-serial"
+    # 分集提案是短剧默认流程的一部分，不能再只挂在 novel-serial 下
+    assert not (tools["plan_story"].metadata or {}).get("required_skill")
+    assert not (tools["confirm_story_plan"].metadata or {}).get("required_skill")
 
 
 def test_chat_tool_flow_closed_loop(store, llm, settings, sample_text):

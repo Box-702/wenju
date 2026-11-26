@@ -40,6 +40,8 @@ export const store = reactive({
   // 场景聚焦模式（点击左侧场景时设置，第二栏显示单个场景详情）
   // 第二列上下文栏开关（即梦式：大纲 / 镜头 / 资产 / 白模）：默认开
   rightOpen: localStorage.getItem('sw-layout:rightOpen') !== '0',
+  // 剧本页左侧「脚本修改历史」是否展开（2026-11-26 用户要求可收起）
+  ctxOpen: localStorage.getItem('sw-ctx-open') !== '0',
 
   // 工作台主区视图（D-73 对标即梦四栏）：null=作品总览；script/clips/roles/episodes=工作台。
   // 对话是右侧常驻面板（AgentPanel），主区让给工作台——即梦式布局。
@@ -210,6 +212,16 @@ export function restorePanelPrefs() {
 export function toggleAgentPanel() {
   store.agentOpen = !store.agentOpen
   localStorage.setItem('sw-agent-open', store.agentOpen ? '1' : '0')
+}
+
+/** 开/关剧本页左侧「脚本修改历史」。 */
+export function setCtxOpen(open) {
+  store.ctxOpen = !!open
+  localStorage.setItem('sw-ctx-open', store.ctxOpen ? '1' : '0')
+  // 窄屏下历史栏是覆盖式抽屉，开合同时驱动 rightOpen
+  if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+    store.rightOpen = store.ctxOpen
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -1299,25 +1311,30 @@ export function setVideoSubtitle(on) {
   localStorage.setItem('sw_video_subtitle', on ? 'on' : 'off')
 }
 
-/** 启动批量生成（自动/审批模式由 store.videoMode 决定）。 */
-export async function startVideoBatch() {
-  if (!store.pid) return
+/** 启动批量生成（自动/审批模式由 store.videoMode 决定）。
+ *  episodeId 只提交该集的生成单元；不传 = 全片。 */
+export async function startVideoBatch(episodeId = '') {
+  if (!store.pid) return { ok: false, error: '没有选定作品' }
   const approved = store.shots.filter((shot) => shot.video_prompt && shot.prompt_status === 'approved')
   if (!approved.length) {
     notify('请先逐镜批准视频 Prompt，再开始批量生成', 'info')
-    return
+    return { ok: false, error: '没有已批准的 Prompt' }
   }
   try {
-    store.videoBatch = await api(`/projects/${store.pid}/video/generate-batch`, 'POST', {
+    const batch = await api(`/projects/${store.pid}/video/generate-batch`, 'POST', {
       mode: store.videoMode,
       resolution: store.videoResolution || null,
       aspect_ratio: store.videoAspect || null,
+      episode_id: episodeId || null,
     })
+    store.videoBatch = batch
     notify(`批量生成已启动（${store.videoMode === 'auto' ? '自动' : '审批'}模式）`, 'ok')
     await loadVideoJobs()
     ensureBatchPolling()
+    return { ok: true, batch }
   } catch (e) {
     notify(`批量生成启动失败：${e.message}`, 'error')
+    return { ok: false, error: e.message }
   }
 }
 

@@ -15,7 +15,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import AppIcon from '../AppIcon.vue'
 import { api } from '../../api'
-import { store, notify, loadStoryPlan, loadViewer, toggleAgentPanel } from '../../stores/app'
+import { store, notify, loadStoryPlan, loadViewer, toggleAgentPanel, exportVersion } from '../../stores/app'
 
 // 历史修改已迁去左栏（即梦「脚本修改历史」形态，随剧本页联动）——这里只剩三步。
 const TABS = [
@@ -38,12 +38,52 @@ watch(() => store.pid, () => {
 })
 
 const sp = computed(() => store.storyPlan)
+const vs = computed(() => store.viewerScript)
+const vsMeta = computed(() => {
+  const s = vs.value
+  if (!s) return null
+  return {
+    logline: s.logline || '',
+    genre: s.genre || '',
+    audience: s.audience || '',
+    synopsis: s.synopsis || '',
+    characters: s.characters || [],
+  }
+})
+const scriptChars = computed(() =>
+  (vs.value?.characters || []).map((c) => ({
+    ...c,
+    roleLabel: roleLabel(c.role),
+  })))
+const episodeCount = computed(() => {
+  const eps = new Set((vs.value?.scenes || []).map((s) => s.episode || 1))
+  return eps.size
+})
 const hasChatModel = computed(() => store.modelInfo?.available === true)
+const currentVersionId = computed(() => store.versions?.[0]?.id || '')
+const exporting = ref('')
+async function downloadScript(fmt) {
+  const id = currentVersionId.value
+  if (!id) {
+    notify('还没有可下载的剧本版本', 'info')
+    return
+  }
+  exporting.value = fmt
+  try {
+    await exportVersion(id, fmt)
+    notify(`剧本已导出 ${String(fmt).toUpperCase()}`, 'success')
+  } catch (e) {
+    notify('导出失败：' + e.message, 'error')
+  } finally {
+    exporting.value = ''
+  }
+}
 
 const subtitle = computed(() => {
   if (sp.value?.status === 'proposed') return '提案待确认'
   const n = store.overview?.scenes ?? store.viewerScript?.scenes?.length
-  return n ? `共 ${n} 场` : '剧本'
+  if (!n) return '剧本'
+  return episodeCount.value > 1 ? `共 ${episodeCount.value} 集 · ${n} 场` : `共 ${n} 场`
 })
 
 // =====================================================================
@@ -152,7 +192,8 @@ const screenplay = computed(() => {
       key: s.id || i,
       ep,
       localNo: localCounter[ep],
-      slug: [s.time, locName[s.location_id] || s.location_id].filter(Boolean).join(' '),
+      slug: [s.interior_exterior, locName[s.location_id] || s.location_id, s.time]
+        .filter(Boolean).join(' · '),
       cast: (s.characters || []).map(nameOf).join('、'),
       beats: (s.beats || []).map((b) => ({
         id: b.id,
@@ -173,6 +214,29 @@ function goChat() {
   if (!store.agentOpen) toggleAgentPanel()
   store.focusSeq += 1
   notify('在右侧对话里直接说改动需求即可', 'info')
+}
+
+function askPlanStory() {
+  if (!store.agentOpen) toggleAgentPanel()
+  store.draft = '读原文，做分集提案：先给我理解卡（内核/人物/关键事件），再给每集标题、钩子、目标时长。'
+  store.draftSeq += 1
+  notify('需求已放进对话输入框，发送后生成分集大纲', 'info')
+}
+
+function askConfirmPlan() {
+  if (!store.agentOpen) toggleAgentPanel()
+  store.draft = '我确认这套分集提案，请确认后按提案生成剧本。'
+  store.draftSeq += 1
+  notify('已把确认需求放进对话输入框', 'info')
+}
+
+function prepareAssets() {
+  // 剧本确认后的下一步：只把需求放进对话输入框，让 Agent 先列清单和费用，
+  // 用户确认后才真正生成（D-43：模型只发起，用户确认才花钱）。
+  if (!store.agentOpen) toggleAgentPanel()
+  store.draft = '剧本已确认。请根据当前剧本，先列出要生成的角色定妆照、场景图和音色清单，以及会生成多少张图/多少秒；我确认后再生成。'
+  store.draftSeq += 1
+  notify('需求已放进对话输入框，确认清单后再发送', 'info')
 }
 
 // =====================================================================
@@ -246,7 +310,7 @@ onBeforeUnmount(() => {
     <div class="sv-body">
       <!-- ============ 01 设定 ============ -->
       <template v-if="tab === 'settings'">
-        <div v-if="!sp" class="sv-empty">
+        <div v-if="!sp && !vsMeta" class="sv-empty">
           <AppIcon name="edit" class="empty-ic" />
           <p v-if="hasChatModel">还没有故事提案——在对话里说「读原文做分集提案」</p>
           <template v-else>
@@ -254,6 +318,56 @@ onBeforeUnmount(() => {
             <button class="ghost small" @click="store.showSettings = true">配置模型</button>
           </template>
         </div>
+
+        <!-- 没有故事提案、但已有剧本：用剧本本身撑起「故事设定」 -->
+        <template v-else-if="!sp">
+          <div class="sv-grid2">
+            <div class="field-card">
+              <span class="field-label">集数</span>
+              <div class="field-num">{{ episodeCount }}</div>
+              <span class="field-note">按场号统计</span>
+            </div>
+            <div class="field-card">
+              <span class="field-label">目标受众</span>
+              <div class="field-num">{{ vsMeta.audience || '大众' }}</div>
+              <span class="field-note">剧本生成时的设定</span>
+            </div>
+          </div>
+          <section class="card">
+            <h3 class="card-title">一句话故事</h3>
+            <p class="oneliner">{{ vsMeta.logline || '（剧本没有写一句话故事）' }}</p>
+          </section>
+          <section v-if="vsMeta.genre" class="card">
+            <h3 class="card-title">故事类型</h3>
+            <p class="big-text">{{ vsMeta.genre }}</p>
+          </section>
+          <section v-if="vsMeta.synopsis" class="card">
+            <h3 class="card-title">故事梗概</h3>
+            <p class="big-text">{{ vsMeta.synopsis }}</p>
+          </section>
+          <section class="card">
+            <h3 class="card-title">人物小传</h3>
+            <div v-if="scriptChars.length" class="char-bios">
+              <div v-for="c in scriptChars" :key="c.id" class="char-bio">
+                <div class="cb-head">
+                  <strong>{{ c.name }}</strong>
+                  <span>{{ c.roleLabel }}</span>
+                  <span v-if="c.tags" class="cb-tag">{{ c.tags }}</span>
+                </div>
+                <p v-if="c.visual"><b>视觉形象</b>{{ c.visual }}</p>
+                <p v-if="c.background"><b>身份背景</b>{{ c.background }}</p>
+                <p v-if="c.history"><b>成长经历</b>{{ c.history }}</p>
+                <p v-if="c.personality"><b>性格</b>{{ c.personality }}</p>
+                <p v-if="c.relationships"><b>关系</b>{{ c.relationships }}</p>
+                <p v-if="c.arc"><b>弧线</b>{{ c.arc }}</p>
+                <p v-if="!c.visual && !c.background && !c.personality && c.description">
+                  <b>设定</b>{{ c.description }}
+                </p>
+              </div>
+            </div>
+            <p v-else class="muted-line">剧本里还没有人物</p>
+          </section>
+        </template>
 
         <template v-else>
           <div v-if="sp.status === 'proposed'" class="tip-bar">
@@ -354,32 +468,39 @@ onBeforeUnmount(() => {
       <template v-else-if="tab === 'outline'">
         <div v-if="!sp" class="sv-empty">
           <AppIcon name="edit" class="empty-ic" />
-          <p>还没有分集提案——点左栏「对话」回去说「读原文做分集提案」</p>
+          <p>还没有分集提案——先让 Agent 读原文做提案，再写剧本</p>
+          <button class="primary small" @click="askPlanStory">生成分集提案</button>
         </div>
         <div v-else-if="!(sp.episodes || []).length" class="sv-empty">
           <p>提案里还没有分集条目</p>
         </div>
-        <div v-else class="eps">
-          <section v-for="ep in sp.episodes" :key="ep.index" class="card ep-card">
-            <div class="ep-head">
-              <span class="ep-num">{{ String(ep.index).padStart(2, '0') }}</span>
-              <h3 class="ep-title">第 {{ ep.index }} 集《{{ ep.title }}》</h3>
-            </div>
-            <p v-if="ep.hook" class="ep-hook">{{ ep.hook }}</p>
-            <div class="ep-meta">
-              <span v-if="ep.target_sec">约 {{ ep.target_sec }} 秒</span>
-              <span>{{ eventsFor(ep.index).length }} 个关键事件</span>
-              <span v-if="sceneCountFor(ep)">约 {{ sceneCountFor(ep) }} 场</span>
-            </div>
-            <!-- 节拍条：该集事件画成等宽小段 -->
-            <div v-if="eventsFor(ep.index).length" class="beat-bar">
-              <span
-                v-for="ev in eventsFor(ep.index)" :key="ev.id"
-                class="beat-seg" :title="ev.text"
-              ></span>
-            </div>
-          </section>
-        </div>
+        <template v-else>
+          <div v-if="sp.status !== 'confirmed'" class="plan-banner">
+            <span>提案待确认：确认后生成剧本会按集扩写，关键事件清单不会丢。</span>
+            <button class="ghost small" @click="askConfirmPlan">确认这套分集</button>
+          </div>
+          <div class="eps">
+            <section v-for="ep in sp.episodes" :key="ep.index" class="card ep-card">
+              <div class="ep-head">
+                <span class="ep-num">{{ String(ep.index).padStart(2, '0') }}</span>
+                <h3 class="ep-title">第 {{ ep.index }} 集《{{ ep.title }}》</h3>
+              </div>
+              <p v-if="ep.hook" class="ep-hook">{{ ep.hook }}</p>
+              <div class="ep-meta">
+                <span v-if="ep.target_sec">约 {{ ep.target_sec }} 秒</span>
+                <span>{{ eventsFor(ep.index).length }} 个关键事件</span>
+                <span v-if="sceneCountFor(ep)">约 {{ sceneCountFor(ep) }} 场</span>
+              </div>
+              <!-- 节拍条：该集事件画成等宽小段 -->
+              <div v-if="eventsFor(ep.index).length" class="beat-bar">
+                <span
+                  v-for="ev in eventsFor(ep.index)" :key="ev.id"
+                  class="beat-seg" :title="ev.text"
+                ></span>
+              </div>
+            </section>
+          </div>
+        </template>
       </template>
 
       <!-- ============ 03 正文 ============ -->
@@ -394,7 +515,18 @@ onBeforeUnmount(() => {
         <template v-else>
           <div class="sp-toolbar">
             <span class="sp-count">共 {{ screenplay.length }} 场 · {{ totalChars }} 字</span>
-            <button class="ghost small" @click="goChat">去对话里改</button>
+            <div class="sp-actions">
+              <button class="ghost small" :disabled="!currentVersionId || !!exporting"
+                      @click="downloadScript('txt')">
+                {{ exporting === 'txt' ? '导出中…' : '下载 TXT' }}
+              </button>
+              <button class="ghost small" :disabled="!currentVersionId || !!exporting"
+                      @click="downloadScript('docx')">
+                {{ exporting === 'docx' ? '导出中…' : '下载 DOCX' }}
+              </button>
+              <button class="primary small" @click="prepareAssets">下一步：生成资产</button>
+              <button class="ghost small" @click="goChat">去对话里改</button>
+            </div>
           </div>
           <div class="sp-page">
             <section v-for="sc in screenplay" :key="sc.key" class="sp-scene">
@@ -406,6 +538,23 @@ onBeforeUnmount(() => {
                   <strong class="sp-speaker">{{ b.speaker }}</strong>
                   <span v-if="b.emotion" class="sp-emo">（{{ b.emotion }}）</span>
                   <span class="sp-dialogue">：{{ b.line }}</span>
+                </template>
+                <template v-else-if="b.type === 'os'">
+                  <strong class="sp-speaker">{{ b.speaker }}</strong>
+                  <span class="sp-emo">（内心OS）</span>
+                  <span class="sp-dialogue">：{{ b.line }}</span>
+                </template>
+                <template v-else-if="b.type === 'flashback'">
+                  <span class="sp-tag">【闪回】</span><span>{{ b.text }}</span>
+                </template>
+                <template v-else-if="b.type === 'sound'">
+                  <span class="sp-tag">【音效】</span><span>{{ b.text }}</span>
+                </template>
+                <template v-else-if="b.type === 'subtitle'">
+                  <span class="sp-tag">【字幕】</span><span>{{ b.text }}</span>
+                </template>
+                <template v-else-if="b.type === 'card'">
+                  <span class="sp-tag">【卡点】</span><span>{{ b.text }}</span>
                 </template>
                 <template v-else>
                   <span class="sp-tri">△</span><span>{{ b.text }}</span>
@@ -568,6 +717,15 @@ onBeforeUnmount(() => {
 .notes-area:focus { outline: none; border-color: var(--line-strong); }
 
 /* ---- 分集大纲 ---- */
+.plan-banner {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: var(--space-3); padding: 9px 12px;
+  border: 1px solid color-mix(in oklch, var(--warn) 38%, var(--line));
+  border-radius: var(--radius-md);
+  background: color-mix(in oklch, var(--warn) 6%, transparent);
+  color: var(--muted); font-size: 12px;
+}
+.plan-banner span { flex: 1; }
 .eps { display: flex; flex-direction: column; }
 .ep-card { position: relative; }
 .ep-head { display: flex; align-items: baseline; gap: var(--space-3); margin-bottom: var(--space-2); }
@@ -591,6 +749,7 @@ onBeforeUnmount(() => {
   margin-bottom: var(--space-3);
 }
 .sp-count { font-size: var(--fs-xs); color: var(--muted); font-family: var(--mono); }
+.sp-actions { display: flex; align-items: center; gap: var(--space-2); }
 .sp-page {
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius-lg);
@@ -611,6 +770,24 @@ onBeforeUnmount(() => {
 .sp-speaker { font-weight: 700; color: var(--ink); }
 .sp-emo { color: var(--muted); font-style: italic; }
 .sp-dialogue { color: var(--ink); }
+.sp-tag { color: var(--gold); font-weight: 700; margin-right: 6px; }
+
+/* ---- 人物小传（剧本自带、无故事提案时） ---- */
+.char-bios { display: flex; flex-direction: column; gap: var(--space-3); }
+.char-bio { border-top: 1px dashed var(--line); padding-top: var(--space-2); }
+.char-bio:first-child { border-top: none; padding-top: 0; }
+.cb-head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: 2px; }
+.cb-head strong { color: var(--ink); }
+.cb-head span { font-size: var(--fs-xs); color: var(--muted); }
+.cb-tag {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 999px; padding: 1px 8px;
+}
+.char-bio p {
+  margin: 2px 0; font-size: var(--fs-sm); color: var(--muted);
+  line-height: 1.7; white-space: pre-wrap;
+}
+.char-bio p b { color: var(--ink); font-weight: 600; margin-right: 6px; }
 
 /* ---- 历史修改 ---- */
 .hist { display: flex; flex-direction: column; gap: var(--space-2); }

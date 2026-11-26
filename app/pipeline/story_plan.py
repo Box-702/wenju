@@ -22,17 +22,17 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..video.rhythm import EPISODE_MAX_SEC, EPISODE_MIN_SEC, EPISODE_TARGET_SEC
+
 log = logging.getLogger(__name__)
 
-# 单集目标时长（秒）：短剧一集 55–95 秒（即梦实操口径，也是我们的
-# 内容比例预算「每场保底 24 秒」折算 2–4 场/集的区间）。
-EPISODE_TARGET_SEC = 75.0
-EPISODE_MIN_SEC = 55.0
-EPISODE_MAX_SEC = 95.0
+# 单集目标时长（秒）统一由 app/video/rhythm.py 提供（D-90）：
+# 55–95 秒/集，默认 75。这里只 re-export，避免两套口径再次漂移。
 
 
 class PlanCharacter(BaseModel):
@@ -150,6 +150,12 @@ PLAN_PROMPT = (
     "- 薄原文做厚靠加戏，不靠砍事件；\n"
     "- 钩子落在反转或新信息上，第一集开场 3 秒内要有事发生；\n"
     "- rationale 用人话解释为什么分这么多集。\n"
+    "\n"
+    "只返回 JSON 对象（不要 Markdown 代码块）：\n"
+    '{"understanding":{"logline":"","themes":[],"characters":[{"name":"","role":"","bio":""}],'
+    '"core_conflict":"","events":[{"id":"ev_001","text":"","episode":1}]},'
+    '"episodes":[{"index":1,"title":"","hook":"","target_sec":75,"scenes_hint":4}],'
+    '"rationale":"","status":"proposed"}\n'
 )
 
 
@@ -160,11 +166,13 @@ def plan_story(
     raw_text: str,
     episodes_hint: int | None = None,
     notes: str = "",
+    dialogue_style: str = "",
 ) -> StoryPlan | None:
     """理解 + 分集提案（一次结构化调用）。模型不可用/失败返回 None。
 
     episodes_hint：用户已拍板集数时带上（提案直接按这个集数分），
-    notes：用户的额外要求（如「结尾留白」「第 2 集压缩」）。
+    notes：用户的额外要求（如「结尾留白」「第 2 集压缩」），
+    dialogue_style：用户已拍板的台词语体——提案里引用的关键台词也要按这个语体转述。
     """
     if not getattr(llm, "available", False):
         return None
@@ -175,6 +183,12 @@ def plan_story(
         user += f"\n\n用户已指定：做 {episodes_hint} 集。按这个集数分配事件。"
     if notes:
         user += f"\n\n用户要求：{notes}"
+    if dialogue_style:
+        from .source_style import dialogue_style_note
+
+        note = dialogue_style_note(dialogue_style)
+        if note:
+            user += f"\n\n{note}\n（提案 events 里引用的关键台词，也按这个语体转述。）"
     try:
         resp = llm.structured(StoryPlan).invoke([
             {"role": "system", "content": PLAN_PROMPT},
@@ -203,7 +217,205 @@ def episode_brief(plan: StoryPlan, ep: EpisodeArc) -> str:
     if ep.hook:
         lines.append(f"【结尾钩子】本集最后一个节拍要落在：{ep.hook}")
     lines.append(
-        "【扩写规则】事件薄的部分加戏（反应/铺垫/伏笔/日常细节），加出来的戏"
-        "必须服务本集冲突；禁止为了压时长删事件——装不下是提案的事，不是你的事。"
+        "【扩写规则——加戏边界】事件薄的部分可以加戏（反应/铺垫/伏笔），"
+        "但**加出来的每一场都必须直接服务本集核心冲突或人物弧线**；"
+        "纯日常过场、无冲突的寒暄和转场不许加。"
+        "禁止为了压时长删事件——装不下是提案的事，不是你的事。"
     )
     return "\n".join(lines)
+
+
+def _name_key(name: str) -> str:
+    """人物跨集合并用的名字键：甲乙丙→一二三、去掉「众/们」等泛称前缀。
+
+    逐集生成时 Bible 会把同一人物叫成「客一/客甲」「众门人/门人」；
+    按原名精确匹配会拆成两个角色，下游多生定妆照。
+    """
+    s = str(name or "").strip()
+    for a, b in (("甲", "一"), ("乙", "二"), ("丙", "三"), ("丁", "四")):
+        s = s.replace(a, b)
+    if s.startswith("众"):
+        s = s[1:]
+    return s.replace("们", "")
+
+
+def _match_name_key(name: str, keys: Any) -> str | None:
+    key = _name_key(name)
+    if key in keys:
+        return key
+    # 「妻 / 王妻」「门人 / 众门人」这类包含关系；只允许长度差 ≤2，避免乱并。
+    for existing in keys:
+        if existing and key and abs(len(existing) - len(key)) <= 2 and (
+            existing.endswith(key) or key.endswith(existing)
+            or existing.startswith(key) or key.startswith(existing)
+        ):
+            return existing
+    return None
+
+
+def _strip_char_ids(text: str) -> str:
+    """去掉动作里漏出的人物 id（模型偶尔写「王生（char_001）推门」）。"""
+    cleaned = re.sub(r"[（(]\s*char_[A-Za-z0-9_]+\s*[）)]", "", text or "")
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
+def _episode_recap(script: Any) -> str:
+    """给下一集的前情提要：只带上一集真正发生的事，不重复原文。"""
+    bits = [f"上一集：{script.logline}"]
+    for sc in script.scenes:
+        for b in sc.beats:
+            text = (b.line or b.text or "").strip()
+            if text:
+                bits.append(text)
+    return "\n".join(bits)[:900]
+
+
+def _merge_episode_scripts(title: str, scripts: list[Any], plan: StoryPlan) -> Any:
+    """把逐集剧本合并成一本：场号全局连续，人物/地点按名字去重，
+    所有场头 episode 与 chapter_refs 指向各自集。"""
+    from ..domain import DialogueLine
+
+    base = scripts[0].model_copy(deep=True)
+    chars_by_name: dict[str, Any] = {}
+    locs_by_name: dict[str, Any] = {}
+    merged_chars: list[Any] = []
+    merged_locs: list[Any] = []
+    scenes: list[Any] = []
+
+    for script in scripts:
+        cmap: dict[str, str] = {}
+        lmap: dict[str, str] = {}
+        for c in script.characters:
+            key = _match_name_key(c.name, chars_by_name)
+            if key is not None:
+                cmap[c.id] = chars_by_name[key].id
+                continue
+            c2 = c.model_copy(deep=True)
+            used = {x.id for x in merged_chars}
+            if c2.id in used:
+                c2.id = f"{c2.id}_{len(merged_chars) + 1}"
+            merged_chars.append(c2)
+            chars_by_name[_name_key(c2.name)] = c2
+            cmap[c.id] = c2.id
+        for loc in script.locations:
+            if loc.name in locs_by_name:
+                lmap[loc.id] = locs_by_name[loc.name].id
+                continue
+            l2 = loc.model_copy(deep=True)
+            used = {x.id for x in merged_locs}
+            if l2.id in used:
+                l2.id = f"{l2.id}_{len(merged_locs) + 1}"
+            merged_locs.append(l2)
+            locs_by_name[l2.name] = l2
+            lmap[loc.id] = l2.id
+
+        for sc in script.scenes:
+            sc2 = sc.model_copy(deep=True)
+            sc2.id = f"scene_{len(scenes) + 1:03d}"
+            sc2.action = [_strip_char_ids(x) for x in sc2.action]
+            sc2.characters = [cmap.get(cid, cid) for cid in sc2.characters]
+            sc2.location_id = lmap.get(sc2.location_id, sc2.location_id)
+            # 同一场里逐字重复的台词只留第一句（审计会报「台词重复」）
+            seen_lines: set[str] = set()
+            kept_beats: list[Any] = []
+            for b in sc2.beats:
+                if b.type == "dialogue" and (b.line or "").strip():
+                    key = re.sub(r"[\s，。！？!?…；;：:\"'「」『』“”]+", "", b.line)
+                    if len(key) >= 6 and key in seen_lines:
+                        continue
+                    if len(key) >= 6:
+                        seen_lines.add(key)
+                kept_beats.append(b)
+            sc2.beats = kept_beats
+            for b in sc2.beats:
+                if b.speaker:
+                    b.speaker = cmap.get(b.speaker, b.speaker)
+                if b.type not in ("dialogue", "os") and b.text:
+                    b.text = _strip_char_ids(b.text)
+            sc2.dialogue = [
+                DialogueLine(speaker=b.speaker, line=b.line)
+                for b in sc2.beats
+                if b.type == "dialogue" and b.speaker and b.line
+            ]
+            scenes.append(sc2)
+
+    base.title = title
+    base.scenes = scenes
+    base.characters = merged_chars or base.characters
+    base.locations = merged_locs or base.locations
+    base.logline = plan.understanding.logline or base.logline
+    base.adaptation_plan = None
+    return base
+
+
+def generate_from_plan(
+    llm: Any,
+    settings: Any,
+    *,
+    title: str,
+    raw_text: str,
+    plan: StoryPlan,
+    adaptation_type: str,
+    language: str,
+    prior_context: str = "",
+    dialogue_style: str = "",
+    on_progress: Any = None,
+) -> tuple[Any, dict[str, Any]]:
+    """按已确认提案逐集扩写，再合并成一本多集剧本。
+
+    每集只拿到本集事件底线 + 上一集前情；场头 episode / chapter_refs 由代码
+    钉死（不靠模型自觉），合并时场号全局连续、人物地点按名字去重。
+    """
+    if plan.status != "confirmed":
+        raise ValueError("故事提案尚未确认，不能按集扩写")
+    from .generation import generate_script
+
+    scripts: list[Any] = []
+    prev = prior_context
+    for ep in plan.episodes:
+        if callable(on_progress):
+            on_progress(ep)
+        brief = episode_brief(plan, ep)
+        script, _art = generate_script(
+            llm,
+            settings,
+            title=f"{title}（第 {ep.index} 集）",
+            raw_text=raw_text,
+            adaptation_type=adaptation_type,
+            language=language,
+            prior_context=prev,
+            dialogue_style=dialogue_style,
+            extra_scope=brief,
+            # 逐集 Bible 只带本集出场人物——全人物表会让场景阶段把台词
+            # 安到没出场的人物头上（2026-11-26 实测：妻在山上说门人台词）。
+            bible_scope=(
+                "【本集人物范围】人物表只列本集事件中实际出场的人物；"
+                "其他集的人物不要写进人物表，也不要给没有出场的人物安排台词。\n"
+                + brief
+            ),
+            skip_adaptation=True,
+        )
+        # 确定性收口：说话人必须在场。漏列的补进 characters，
+        # 否则文本审计报「漏人物」、下游选角/人物锚会漏。
+        for sc in script.scenes:
+            speakers = {b.speaker for b in sc.beats if b.speaker}
+            missing = sorted(speakers - set(sc.characters))
+            if missing:
+                sc.characters = sc.characters + missing
+        for sc in script.scenes:
+            sc.episode = ep.index
+            sc.chapter_refs = [f"ep_{ep.index:03d}"]
+        scripts.append(script)
+        prev = _episode_recap(script)
+
+    merged = _merge_episode_scripts(title, scripts, plan)
+    artifacts = {
+        "mode": "plan",
+        "episodes": len(plan.episodes),
+        "scenes": len(merged.scenes),
+        "story_plan": {
+            "episodes": len(plan.episodes),
+            "events": len(plan.understanding.events),
+        },
+    }
+    return merged, artifacts

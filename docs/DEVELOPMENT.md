@@ -4157,6 +4157,107 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **解法**：按单元说话人数分配样音字符预算（1 人 40 字 / 2 人各 26 字 / 3 人各 16 字；中文 TTS 约 4.5 字/秒），提交侧与预生成侧共用同一预算函数；缓存键带文本摘要，预算变化自然触发重生。
 - **涉及文件**：`app/video/service.py` · `tests/test_voice_casting.py`。
 
+### 5.109 段落决策 brief 让 scope_note 非空，story_plan=None 时崩溃（2026-11-25）
+
+- **症状**：改造后第一次跑 337 字探针，剧本阶段报「LLM 生成失败，回退本地规则剧本：'NoneType' object has no attribute 'episodes'」，成片脚本只剩 1 场 3 拍 / 7.5 秒。
+- **根因**：`generation.py` 的 artifacts 用 `if scope_note` 判断「有没有已确认的故事提案」。D-90 的段落改编 brief 也拼进 `scope_note`——于是 `scope_note` 非空、`story_plan` 仍是 `None`，紧接着访问 `story_plan.episodes` 就崩了。旧链路上 scope_note 只可能来自 story_plan，这个耦合一直没暴露。
+- **解法**：判断改成 `if story_plan is not None`；artifacts 同时落 `adaptation_plan` 与 `adaptation_issues`，探针可回查。
+- **涉及文件**：`app/pipeline/generation.py` · `N2D/rhythm_probe.py`。
+
+### 5.110 闸门按整组删镜导致过冲，重点场被削（2026-11-25）
+
+- **症状**：真实项目 `proj_b0dbef19a92a` 预检 23 镜 / 97 秒、目标 77 秒；闸门删 9 镜后压到 **60.6 秒**（过冲 16 秒），仙术奇观从段落目标 28 秒被削到 16.4 秒。
+- **根因**：① 闸门以「生成组（2–3 镜）」为单位删，一刀 8–12 秒，没有「删到目标就停」的总时长地板；② 2b 按场配额循环，场配额之和=预算，但整组粒度会让某场从 30 秒直接掉到 18 秒，累加后总量低于目标；③ 删镜前只封顶 >6 秒，没有先把 5–6 秒镜头压回短剧基线。
+- **解法**：超目标时先做**软压缩**（>4 秒的非台词镜头压到 4 秒，台词镜不低于念得完），压不进预算才删；删镜时加地板 `max(55, 目标×0.85)`，会跌破地板的组跳过、换更小的组（除非当前 >1.2× 目标）。真实项目重跑：18 镜 / **72.5 秒**，仙术场 **27.4/28 秒**。
+- **涉及文件**：`app/crew/director.py` · `tests/test_director_budget.py` · `tests/test_director_guard.py`。
+
+### 5.111 删镜后台词范围过期，4 秒镜要念两句（2026-11-25）
+
+- **症状**：修复 5.110 后，`shot_scene_005_022` 仍只有 4.0 秒，却要念「俛首骤入，勿逡巡。」+「归宜洁持，否则不验。」两句（需 4.9 秒）。
+- **根因**：`dialogue_map_for` / `assign_dialogue_ranges` 用「有 ref 的镜头」切段；闸门删掉前面一个引用同一句的镜头后，这个镜头成了第一个引用者，台词范围从一句变成两句。闸门在删镜**前**算的映射已经过期，删完没有重算，所以没有把它拉长。
+- **解法**：闸门（含删镜）与运镜兜底之后，再调 `stretch_dialogue_after_gate()`：重算台词范围，把念不完的镜头抬到 `dialogue_need_sec`（≤15 秒），并在 summary 里记「删镜后 N 个台词镜再抬到念得完（+X 秒）」。对已有版本按同一函数后处理，`vver_863ac5f9017f` 从 71.6 → 72.5 秒，台词镜 0 个偏短。
+- **涉及文件**：`app/crew/director.py` · `tests/test_director_budget.py`。
+
+### 5.112 闸门删镜不保护台词/场尾，冷开场与结尾被删空（2026-11-25）
+
+- **症状**：5.110/5.111 后的版本 18 镜 / 72.5 秒，指标好看，但逐镜看：① 冷开场 2 个镜头都没有 `dialogue_ref`，王妻「墙没穿过去，倒撞出个寿星头」和王生「老道士骗我」全没了；② 第五场只剩「念咒 / 被弹回 / 道士逼他入墙」，**穿墙成功和「归宜洁持，否则不验」没有落镜**，成片停在动作中段。剧本 10 句台词，最终只有 5–6 句被镜头认领。
+- **根因**：① 闸门 `drop_priority` 只看「壁纸/时长」，台词镜和每场最后一镜没有保护；`MIN_SHOTS_PER_SCENE=2` 只保数量，不保内容，4 镜的冷开场可以删到 2 个纯动作镜。② 粗查时用「全局 beat id 集合」判覆盖，但 beat id 每场重复（每个场景都有 beat_001…），别的场的 `beat_002` 会把这里的缺口掩盖掉——必须按场判。
+- **解法**：闸门加 `protected` 集合＝有 `dialogue_ref` 的镜头 + 每场最后一镜 + 第一场第一镜；只剩保护镜且总量仍在单集上限内就停（宁可超目标，不丢对白与收尾），超上限才允许动。另加**单场地板 = 目标 75%**，防止台词保护后闸门转去削仙术场（实测 28 秒被削到 13.9 秒）。重跑：**18 镜 / 75.4 秒**，台词 **10/10**，仙术 **21.4/28 秒**，结尾回到「穿墙成功 + 归宜洁持」。
+- **涉及文件**：`app/crew/director.py` · `tests/test_director_budget.py`。
+
+### 5.113 场景地点全落到第一个地点，提示词把堂屋写成山道（2026-11-25）
+
+- **症状**：真实项目 `proj_b0dbef19a92a` 的 5 个场景 `location_id` 全是 `loc_001`（劳山）。冷开场「撞墙之辱」在王生家堂屋，第 2–5 场在观宇，但 18 条提示词全以「山道蜿蜒、观宇飞檐」开头；视频模型会把堂屋戏生成到山里。
+- **根因**：场景规划模型输出的地点是中文名（「观宇」「王生家堂屋」）或空；`generation.py` 只用 `normalize_id(loc, "loc", fallback=locs[0])`，中文名 slug 后为空，统一回退 `loc_001`。人物有名字→id 的别名索引，地点没有。
+- **解法**：新增 `resolve_location()`：id → 名字 → 场景文字三级解析。别名表同时收地点名与 id；如果模型给的就是 fallback（最常见的一刀切 `loc_001`），但场景标题/目的/动作/节拍里能认出更具体的地点（「王生家」「观宇」），以文字为准；同长取出现位置更靠后的（主场景更具体）。真实项目已把 1 场纠正为 `loc_003`（王生家）、2–5 场为 `loc_002`（观宇），重出提示词锚正确。
+- **涉及文件**：`app/pipeline/generation.py` · `tests/test_location_resolution.py`。
+
+### 5.114 文言原文没问白话/文言，剧本一半口语一半古文（2026-11-25）
+
+- **症状**：用户指出《聊斋志异》改编时 Agent 没问台词语体，剧本里「能之！弟子诚心求道」和「俛首骤入，勿逡巡」混在一起；文言原文的台词语言是必须由作者拍板的分叉。
+- **根因**：`generate_script` 没有语体参数；`script-generation` 技能没有「文言先问」规则；对话工具直接生成，模型按原文风格自由发挥。
+- **解法**：新增 `app/pipeline/source_style.py`：轻量识别文言/半文言（之乎者也密度 vs 现代口语词，短选段用密度兜底）；`generate_script` 工具增加 `dialogue_style` 参数（vernacular/classical/mixed），**文言原文不传就拒绝生成并返回「先问用户」的提示**；`script-generation` 技能写明必须用 `ask_user_choice` 问「全部白话 / 保留文言 / 混合」；生成时把对应约束注入场景阶段（白话要求意译文言对白，唱词/咒语可留原文但要白话托底）。当前测试项目已按用户选择改成全部白话（`ver_941f24dbe749`）。
+- **涉及文件**：`app/pipeline/source_style.py` · `app/pipeline/generation.py` · `app/chat/tools/screenplay.py` · `app/skills/script-generation/SKILL.md` · `tests/test_source_style.py`。
+
+### 5.115 场景规划返回空 scenes；文言回退把原文整段塞进 action（2026-11-26）
+
+- **症状**：按参考格式加完场头/节拍类型/人物小传字段后，连续两次生成 v6 都报「LLM 生成失败，回退本地规则剧本：场景生成为空」；回退脚本把《聊斋》文言原文整段塞进 action 节拍（一处 7 条 action 就是 7 段古文），文本层直接报废。
+- **根因**：① 结构化场景阶段返回 `scenes=[]`，原空场景重试只是原样再问一次，没有带反馈；② `generate_script` 的兜底 `make_source_script` 不看原文语体，文言原文+白话选择也照样回退原文；③ 段落决策的总拍数没有写进 scene prompt 的硬上限，模型容易写超（v7 目标 75 秒写成 122 秒）。
+- **解法**：空 `scenes` 重试带明确反馈（只返回 scenes 数组、每场 2–5 拍）；`plan_brief` 写入总拍数与 1.3 倍上限；`source_style=classical` 且已确认白话时**不再回退原文，直接抛错**让上游重试/报错；生成后跑 `script_text.audit_script_text`，场头/英文/文言/不可拍/漏人物/重复/卡点/时长进 artifacts 与日志。
+- **涉及文件**：`app/pipeline/generation.py` · `app/pipeline/adaptation.py` · `app/pipeline/script_text.py` · `tests/test_script_text.py`。
+
+### 5.116 文言审计误报连击：「也」/唱词/95.1 秒（2026-11-26）
+
+- **症状**：v8/v9 文本审计把「师父，您怎么也得教我一招半式，也不枉我大老远来一趟」判成文言残留；v10 又报「95 秒超过 95 秒」；嫦娥唱词被白话改写器意译成「飘飘悠悠啊，回去吧……」这种现代长句，反而把估算从 95.1 顶到 96.9 秒。
+- **根因**：① `_CLASSICAL_CHARS` 里的「也」在现代口语里成对出现，单句审计必然误报；② 审计与改写都把引号里的唱词/古句当叙述文言；③ 95 秒上限用浮点 `>` 比较，95.1 也算超；④ 改写 prompt 只说「唱词可以保留」，`_is_better` 又直接数原文虚词——加引号不降分，模型自然选择意译。
+- **解法**：① 新增 `strict_classical_score`（去掉「也」）专用于逐句审计；② 审计/改写先剥掉「」引号内容，唱词、咒语按 D-91/D-92 保留原文；③ 95 秒上限按整数秒比较，场景规划闸门留 0.5 秒余量；④ 改写 prompt 改为「唱词、咒语优先保留原文并加「」」，`_is_better` 只比较引号外文言密度；⑤ `ensure_hook_card` 补在首拍后，`test_screenplay_source` 三处首拍断言跳过 card。
+- **涉及文件**：`app/pipeline/source_style.py` · `app/pipeline/script_text.py` · `app/pipeline/script_rewrite.py` · `app/pipeline/adaptation.py` · `tests/test_script_text.py` · `tests/test_script_rewrite.py` · `tests/test_screenplay_source.py`。
+
+### 5.117 只有剧本没拆镜时总览显示「0 集」（2026-11-26）
+
+- **症状**：v10 剧本已落库（6 场、场头集号 1），但作品页头显示「0 集 · 0 镜」，看起来像剧本没有分集。
+- **根因**：`app/api/common.py` 的 overview 只从**视频镜头**的 `episode_id` 收集集号；还没拆镜时 shots 为空，集号集合自然为空，没有回落到剧本场头。
+- **解法**：镜头里没有集号时，按剧本场头的 `Scene.episode` 兜底；有镜头仍以镜头的 `episode_id` 为准（D-63 的集-镜口径不变）。
+- **涉及文件**：`app/api/common.py` · `tests/test_overview.py`。
+
+### 5.118 片长闸门把「撞墙/穿墙/化嫦娥」当普通动作删掉（2026-11-26）
+
+- **症状**：v10 第一次导演出 20 镜 / 91.7 秒、14/14 台词，但冷开场只有「摆架势 → 嘲讽 → 捂头」，「撞墙」本身没有镜头；第五场只有「被推到墙前 → 墙内叮嘱」，「穿墙」过程没有镜头；第三场有嫦娥跳舞，却没有「掷筷化人」。
+- **根因**：`enforce_duration_budget` 的 protected 只收台词镜、每场最后一镜、第一场第一镜；中段的不可逆动作镜（撞、穿、化、掷）既不是台词也不是场尾，被当普通动作按优先级删掉。导演提示词也只说「每个动作段按主动作切」，没把「不可逆事件必须有过程镜」写成硬规则。
+- **解法**：① 闸门增加 `_KEY_ACTION_RE`（撞/穿墙/穿过/化作/变回/掷/剪纸/跃/砸/摔/刺/砍/杀/死/血/夺/撕/烧）保护命中镜头；② `director-breakdown` SKILL 写明「不可逆事件必须有一个镜头把过程演出来，不能只拍准备和后果」；③ 补闸门单测。
+- **涉及文件**：`app/crew/director.py` · `app/skills/director-breakdown/SKILL.md` · `tests/test_director_budget.py`。
+
+### 5.119 资产库卡片被压成 32px 细条，正文全被裁掉（2026-11-26）
+
+- **症状**：资产库改版后，角色卡在网格里只剩 32px 高的一条，媒体占位图、名字、按钮全被 `overflow:hidden` 裁掉；同网格里最后一张卡和「新建角色」卡却是正常高度。
+- **根因**：`.grid` 是滚动 flex 容器里的 grid，`grid-auto-rows: auto` 在该上下文按 min-content 结算；卡片是 `overflow:hidden` 的 flex column，媒体/正文高度没有参与行高，行高只剩边框与少量摘要。另外全局 `.card` 的 `padding:14px 16px; margin-top:8px` 也在污染卡片网格。
+- **解法**：`.grid` 显式 `grid-auto-rows: max-content`，让行高按卡片内容展开；资产卡的 scoped `.card` 覆盖 `padding:0; margin:0; box-shadow:none`，与全局通用卡片解耦。
+- **涉及文件**：`frontend/src/components/workbench/RolesView.vue`。
+
+### 5.120 分集大纲永远是空的：工具被技能门禁藏起来 + 提案提示词缺 json + 按集扩写没实现（2026-11-26）
+
+- **症状**：用户重跑全流程后指出「分集大纲永远没有出来过，说明完全没有按照这种架构跑过」。作品有剧本，但 02 分集大纲一直停在空状态；项目 `story_plan_json` 始终是 `{}`。
+- **根因**（三个独立断点，缺一个都跑不通）：
+  1. `plan_story` / `confirm_story_plan` 的 `required_skill` 是 `novel-serial`；短剧默认加载 `script-generation`，而 `script-generation` SKILL 从没要求调用 `plan_story` → 工具对默认链路不可见。
+  2. `PLAN_PROMPT` 里没有出现 “json” 这个词；DeepSeek 的 `response_format=json_object` 直接 400（`Prompt must contain the word 'json'`）→ 即使调用也失败。
+  3. `story_plan.py` 文件头写着 `generate_from_plan()`，实际没有实现；`generate_script(story_plan=...)` 只是把所有集的任务书拼进一次场景调用 → 4 集提案生成出 5 场、全部 `episode=1`。
+- **解法**：① 取消 `plan_story`/`confirm_story_plan` 的技能门禁，并在 `script-generation` SKILL 写死「先提案、用户确认、再生成」；② `PLAN_PROMPT` 补 JSON 结构示例；③ 实现 `generate_from_plan()`：逐集调用 `generate_script(extra_scope=episode_brief, skip_adaptation=True)`，代码钉死 `Scene.episode` / `chapter_refs=ep_NNN`，再合并成一本多集剧本；N2D 增加「⓪ 分集大纲」阶段并自动确认（CLI 非交互），聊天工具确认后走按集扩写。
+- **涉及文件**：`app/chat/tools/__init__.py` · `app/skills/script-generation/SKILL.md` · `app/pipeline/story_plan.py` · `app/pipeline/generation.py` · `app/chat/tools/screenplay.py` · `N2D/novel2video.py` · `tests/test_story_plan.py`。
+
+### 5.121 按集合并后人物翻倍、char id 漏进动作（2026-11-26）
+
+- **症状**：4 集合并后人物从 7 个变成 10 个（客一/客甲、客二/客乙、众门人/门人各算一个）；动作文本里出现「王生（char_001）一身体面锦袍」这种 id 泄漏，文本审计报英文残留。
+- **根因**：逐集生成时每集都独立跑一次故事圣经，同一人物被起了不同称呼；合并只按 name 精确匹配，认不出别名。场景模型偶尔把人物 id 写进动作括号里。
+- **解法**：合并时用 `_name_key`（甲乙丙→一二三、去「众/们」）+ 包含关系（妻/王妻）归并人物，并同步改写场景 `characters`、beat `speaker`；对 action/cue 文本清掉 `（char_xxx）`。补「跨集别名合并」「id 清理」单测。
+- **涉及文件**：`app/pipeline/story_plan.py` · `tests/test_story_plan.py`。
+
+### 5.122 按集链路不传台词语体；逐集 Bible 带全人物导致「妻在山上说门人台词」（2026-11-26）
+
+- **症状**：分集版剧本对白半文半白（「恐你娇惰，不能作苦」「良宵胜乐，不可不同」），但 `script.dialogue_style` 是空串，文本审计不报文言；ep1 里妻（char_006）在山上说「新来的？看着细皮嫩肉的」「走吧，师弟」——人物错位。
+- **根因**：① D-91 的「文言先问语体」闸门只在聊天工具层，`generate_from_plan`/N2D 直跑没有传 `dialogue_style`，剧本因此不标语体、审计跳过；② 逐集生成时故事圣经仍读全篇原文，把全集人物都列进 Bible，场景阶段把门人的台词安到了妻的 id 上；③ 没有「说话人必须在本场 characters」的确定性校验。
+- **解法**：`plan_story(dialogue_style=)` 把语体带进提案；`generate_from_plan` 把 `dialogue_style` 贯穿每集，并传 `bible_scope`：「人物表只列本集事件实际出场的人物」；生成后代码校验 `beat.speaker ⊆ scene.characters`，漏列补进；`episode_brief` 的加戏规则改为「加出来的每一场必须直接服务本集核心冲突或人物弧线，纯日常过场不许加」；N2D 增加 `--dialogue-style`。
+- **涉及文件**：`app/pipeline/story_plan.py` · `app/pipeline/generation.py` · `app/chat/tools/screenplay.py` · `app/skills/script-generation/SKILL.md` · `N2D/novel2video.py` · `tests/test_story_plan.py`。
+
 ### T-38 《劳山道士》音色与节奏试验版（2026-11-25，付费）
 
 - **假设**：先按角色台词生成音色样音、选角按年龄修正、提示词去掉拖长标点并加语速提示后，重出组 2（025-027）的声音与节奏会明显好于原版。
@@ -4166,3 +4267,60 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **效果**：组 2 QA 通过；音量分析（silencedetect，-35dB/0.35s）：组 2 的 11 秒窗口内人声由约 2.4s 升至约 3.1s（+30%），停顿由 6 段降为 5 段；成片 7/27 镜 · 29.71s · 无字幕 · 17.3 MB，导出 `~/.wenju/workspace/劳山道士_样片/07_成片/劳山道士_样片_试验版.mp4`。
 - **费用**：成功 1 个 12 秒单元（768P Highspeed）≈ ¥4.8，usage 无参考视频附加；被拒的第一次 ¥0；TTS 样音数条可忽略。厂商账单待核对。
 - **遗留**：听感未做人工确认；4 秒一镜与无台词镜头仍是节奏天花板——要更快需缩镜头时长并重折组提示词；旧样音升级靠「删旧样音/换音色」触发，产品里还没有「重生成音色样音」入口；组 1/028 未重出（各约 ¥4.8/¥2.0，待用户决定）。
+
+### T-39 短剧节奏：段落决策 + 55–95 秒目标带（2026-11-25，付费-对话模型）
+
+- **假设**：在剧本层逐段判「扩写/保留/改写/压缩/删除」、把导演预算从「每场 24 秒保底」改成「55–95 秒/集目标带」后，同一个 337 字摘要的镜头数与成片时长会显著下降，同时 must_keep 事件与奇观不丢。
+- **过程**：先写 `N2D/rhythm_probe.py`（只跑剧本+分镜，不建项目、不出图/片），用临时 `WENJU_HOME` + app.db 副本跑基线：337 字摘要与 1077 字全本各一次；改完同口径复跑。
+  - 基线 337：4 场 / 23 拍 / **22 镜 / 105.2 秒**（既有作品为 27 镜 / 108.5 秒）；首镜无钩子。
+  - 基线全本：6 场 / 39 拍 / **29 镜 / 124.0 秒**；含「纸月夜宴」，首镜无钩子。
+  - 改后 337（最终）：2 场 / 13 拍 / **12 镜 / 55.2 秒**；冷开场「撞墙之辱」→「劳山求归」；段落决策 3 段（must_keep 2 / 扩写 1 / 删除 1），must_keep 2/2。
+  - 改后全本（第一次）：5 场 / 28 拍 / **18 镜 / 69.2 秒**；段落决策 6 段（must_keep 5 / 扩写 3 / 删除 1，删的是「异史氏曰」）；仙术奇观 28 秒，must_keep 5/5。
+  - 改后全本（第二次）：5 场 / 17 拍 / 14 镜 / 72.1 秒；段落目标 74 秒，must_keep 4/4；导演遗留 15 条（见下）。
+  - 真实项目落库（`proj_b0dbef19a92a`）：最初 14 镜 / 60.6 秒（仙术 16.4/28 秒）；修 5.110/5.111/5.112 后 18 镜 / 75.4 秒，台词 10/10；随后发现**地点全落 loc_001、文言没问白话**（5.113/5.114），剧本改为全白话（`ver_941f24dbe749`）、地点纠正为「1 场王生家、2–5 场观宇」，第五场按 6 个节拍补全；最终 **19 镜 / 92.7 秒 · 台词 10/10 · 仙术 22 秒**，提示词版本 `vver_a3f82320f65c`。
+  - 新项目 v2（`proj_58e3c910a0e9`，2026-11-26）：从零自动生成 4 场 / 9 句，地点只对 1/2 场（3/4 仍 loc_001），第 4 场 6 句只拆 4 镜（漏王生长请求/道士训斥）；确定性修正（3 场宴席、4 场观宇、重复台词合并为 4 句）后 **17 镜 / 88.0 秒**，台词 **11/11**，提示词版本 `vver_4a22df279ba9`，锚点 @王生家/@观宇/@宴席 全对。
+- **发现的问题**：
+  1. 「学艺被跳过」不是 agent 的锅：337 字基线输入里就没有夜宴法术——那是上一轮改写稿删掉的；全本基线本来就会拍「纸月夜宴」。
+  2. **5.109**：段落 brief 让 `scope_note` 非空、`story_plan=None` 时 `story_plan.episodes` 崩溃，回退成 1 场 3 拍。
+  3. 导演第三次迭代后仍可能带着校验问题返回：全本第二次复跑有 15 条遗留——`scene_004/005` 超本场目标 25%+、41 字台词塞进 4 秒镜、`dialogue_ref` 指向 action beat。校验能发现，但模型不改；这是下一轮要把「对话认领修复」前移到硬闸门的问题，本轮未修。
+  4. 硬闸门按整组删镜会过冲，且不保护台词/场尾：预检 97 秒 → 60.6 秒（仙术 16.4/28 秒），第二版又删掉冷开场两句台词和「穿墙成功/归宜洁持」。**已修（5.110/5.111/5.112）**：先压 >4 秒镜头、删镜加 55 秒地板、删后重算台词范围、台词镜/场尾镜/单场 75% 目标不可删。最终 18 镜 / 75.4 秒，仙术 21.4/28 秒，台词 10/10。
+  5. 段落决策的 `target_sec` 与 `target_beats` 会对不上（如 4 拍 30 秒）；纠偏已夹成 2.5–5 秒/拍。
+- **修改**：D-90；`app/pipeline/adaptation.py`、`app/skills/adaptation-plan/SKILL.md`、`app/domain.py`（AdaptationPlan）、`app/pipeline/generation.py`、`app/crew/director.py`、`app/crew/script_doctor.py`、`app/video/rhythm.py`（55/75/95）、`app/pipeline/profiles.py`、`N2D/rhythm_probe.py`，及测试。
+- **效果**：337 字时长 **-49%**（108.5→55.2 秒）、镜头 **-56%**（27→12）；全本时长 **-44%**（124→69.2 秒）、镜头 **-38%**（29→18）；must_keep 覆盖 2/2、5/5；冷开场与「哪里扩/哪里压」的决策落库可查（按用户要求不进 UI）。探针报告在 `~/.wenju/runs/rhythm_probes/`。
+- **费用**：9 次探针（2 次基线 + 7 次改后/调试）+ 1 次真实项目落库（`proj_b0dbef19a92a`）只调对话模型（deepseek-flash），未出图/片；按单价粗估 <¥5，厂商账单未核对。
+- **遗留**：模型自身的收敛仍未解决——真实项目预检仍有 13–30 条问题（单场超/欠目标、固定机位、个别台词 ref），最终靠确定性闸门把总量/台词/重点场拉回可用，但预检错误仍会写进版本备注；第五场是手动按 6 个节拍补全的（26 秒/目标 15），v2 第 4 场也靠合并台词才凑齐 4/4，说明导演对「多台词场」仍会少拆，下一轮要把「每个台词 beat 至少一镜」做成确定性补录镜（pickup），再做单场再平衡与运镜兜底。地点解析对「宴席/观宇」这类近义场景仍会落回劳山，下一步补地点描述/同义词匹配。提示词长度按用户要求暂不压（17 条仍超 250 字预算）。最终判据本轮按用户指定改用聊斋全本，番茄链路未测；未做付费视频小样；段落决策表按用户要求不展示。
+
+### T-40 剧本文本格式与审计（2026-11-26，付费-对话模型）
+
+- **假设**：把参考短剧工作台的「集-场头 + OS/闪回/音效/卡点 + 人物小传 + 故事设定」落进剧本模型与生成提示词，再用确定性审计把关，能在出片前拦住英文/文言/漏人物/不可拍/超时。
+- **过程**：v5 五场 / 43 拍 / 115.6 秒，已有 card 与人物小传字段，但冷开场 card「三天前从劳山归来」把地点带成劳山；v6 连续两次 `scenes=[]`，回退脚本把文言原文整段塞进 action；加空场景反馈重试、总拍数上限、文言不回退后，v7 六场 / 122 秒、地点 1/6 王生家 + 2–5 观宇、人物补全，但审计仍报 7 条（3 个人物小传文言、嫦娥/客乙两句文言、无 card、122 秒 > 目标 75 秒）。v8 加「白话改写后处理 + 拍数/时长硬闸门 + card 补齐」；v9 五场 / 100.1 秒，审计只剩 1 条「也」误报；v10 六场 / 31 拍 / 估算 95.1 秒，唱词按「保留原文 + 引号」收口，最终审计 **0 条**（`proj_bca94d23f653` / `ver_4f7ec21a25fc`）。
+- **发现的问题**：① 模型不遵守「人物小传也白话」；② 原文唱词/古句会直接进 dialogue；③ 总拍数/时长仍会写超（目标 75 秒写 122 秒）；④ card 缺失；⑤ 审计按「动作+台词」扫漏人物会误报（对白提及不在场的人），已改为只扫动作；⑥ 单字「也」把现代口误判成文言，95.1 秒被浮点比较判超；⑦ 改写器把唱词意译成长句，反而顶高时长（5.116）。
+- **修改**：D-92；`app/domain.py`（beat types / Scene episode+内外景 / Character 小传字段 / Script 语体与设定）、`app/pipeline/generation.py`（格式提示词、空场景反馈重试、拍数上限、文言不回退）、`app/pipeline/script_text.py`（文本审计）、`app/pipeline/script_rewrite.py`（白话改写后处理）、`app/pipeline/source_style.py`（白话口径/严格文言表）、`app/pipeline/adaptation.py`（运行时估算闸门 + 95 秒硬上限）、`app/api/common.py`（剧本场头兜底集数）、`frontend/src/components/workbench/ScriptView.vue`（正文标记/人物小传/场头/TXT·DOCX 下载/生成资产 CTA）、`frontend/src/components/workbench/ClipsView.vue`（分集总览卡）、`app/video/service.py`（批量按 episode_id 过滤）、`frontend/src/components/workbench/RolesView.vue`（导出本页/新建角色入口）、`app/pipeline/export.py`（OS/闪回/音效/卡点导出）。
+- **效果**：文本格式字段已落库、UI 可读；审计能在生成当场列出英文/文言/漏人物/不可拍/重复/无卡点/超时；v10 审计归零，6 场 / 31 拍 / 95.1 秒（取整 95），must_keep 5/5，地点 1/6 王生家 + 2–5 观中，白话 14 句，开场/结尾各 1 个 card。全量 `pytest tests -q` **916 passed**，`pytest evals -q` **24 passed / 23 skipped（在线层未跑）**，前端 `npm run build` 通过；浏览器逐页点检剧本/分镜/资产三页，TXT/DOCX 导出接口实测 200（docx 4466 B / txt 5584 B）。
+- **费用**：v5/v6/v6b/v7/v8/v9/v10 共 7 次剧本生成 + 1 次定向白话改写（只调 deepseek-flash，未出图/片），粗估 <¥5，厂商账单未核对。
+- **遗留**：v10 已跑导演/提示词（见 T-41），当前视频版本 22 镜 / 93.7 秒；分集总览的批量出片按 D-53 只报「秒数」不报 ¥（未推翻 D-53）；道具 tab 未做——数据模型里没有道具实体，先不做空壳入口；分集下载只支持单集作品（多集需整片合成后下载）；长文 `story_plan` 路径尚未按新文本审计复跑。
+
+### T-41 v10 导演复跑与不可逆动作保护（2026-11-26，付费-对话模型）
+
+- **假设**：v10 文本审计归零后，导演能在 55–95 秒内拆出覆盖 14 句台词、且每个不可逆动作都有过程镜的方案。
+- **过程**：第一次 `vver_a236da0a718c`：20 镜 / 91.7 秒 / 台词 14/14，但撞墙、穿墙、掷筷化嫦娥三个事件本身没有镜头；给闸门加关键动作保护 + SKILL 硬规则后第二次 `vver_977601f3a822`：22 镜 / 93.7 秒 / 台词 14/14，撞墙（001_001）、掷筷化人（003_006）、变回筷子（003_008）、穿墙两镜（005_014/015）、结尾撞墙（006_020）都在。
+- **发现的问题**：① 闸门只保护台词/场尾/首镜，中段不可逆动作会被删（5.118）；② 场目标与台词下限冲突：第 4 场目标 10.2 秒，三句台词实际要 19.6 秒（+92%），第 2 场 +39%；总时长仍被压在 93.7 秒，说明总预算优先于单场目标；③ 22 条提示词全部超 250 字预算（用户已明确暂不压），其中 3 条有同一句写两遍（斧头/堂屋门/茶碗），1 条曾出现推镜+手持冲突（本次复跑未复现）。
+- **修改**：`app/crew/director.py`（`_KEY_ACTION_RE` + protected）、`app/skills/director-breakdown/SKILL.md`（不可逆事件单独成镜）、`tests/test_director_budget.py`（保护撞墙镜）。
+- **效果**：22 镜 / 93.7 秒（55–95 内），14/14 台词，三个不可逆事件全部有过程镜；全量 `pytest tests -q` 916 passed，`pytest evals -q` 24 passed / 23 skipped。
+- **费用**：2 次导演 + 2 次摄影提示词（只调 deepseek-flash，未出图/片），粗估 <¥1.5，厂商账单未核对。
+- **遗留**：提示词长度与 3 条重复句未清理；第 2/4 场超单场目标（台词下限所致）；还没出视频小样；参考视频接力与角色一致性未验证。
+
+### T-42 分集大纲与按集扩写的真实全流程验证（2026-11-26，付费-对话模型）
+
+- **假设**：把 `plan_story` 从 `novel-serial` 解绑、补进 `script-generation` 的硬流程、修正提案 JSON 提示词、实现 `generate_from_plan` 之后，N2D 全流程会真的产出多集大纲，并生成每集独立场次的剧本。
+- **过程**（临时 `WENJU_HOME` + app.db 副本，同一份 1077 字《劳山道士》，`--stop-after-script`，不出图/片）：
+  1. 第一次：`plan_story` 400（提示词没有 “json”）→ 退回直跑剧本。
+  2. 第二次：修提示词后提案成功 4 集 / 22 事件，但故事圣经返回尾逗号 JSON，回退 1 场本地剧本。
+  3. 第三次：加结构化输出容错后提案 4 集 / 25 事件，剧本 5 场但 **全部 `episode=1`**——查出 `generate_from_plan` 根本没实现。
+  4. 第四次（补按集扩写 + 人物别名合并 + char id 清理）：提案 **4 集 / 24 事件**；剧本 **14 场 / 7 角色 / 模式 plan**；4 集场次分布 4/3/4/3；`chapter_refs` 覆盖 `ep_001..ep_004`；文本审计 **0 条**；无 `char_` 泄漏。
+- **发现的问题**：① 工具被技能门禁藏起来（5.120）；② DeepSeek json_object 要求提示词含 “json”；③ `generate_from_plan` 只有注释没有实现，所有集被压成一次生成；④ 逐集 Bible 人物称呼漂移、动作漏 id（5.121）。
+- **修改**：`app/chat/tools/__init__.py`（解除提案工具门禁）、`app/skills/script-generation/SKILL.md`（先提案-确认-再生成）、`app/pipeline/story_plan.py`（JSON 示例 + `generate_from_plan` + 合并）、`app/pipeline/generation.py`（`extra_scope`/`skip_adaptation`）、`app/chat/tools/screenplay.py` + `N2D/novel2video.py`（确认后走按集扩写，N2D 自动确认）、`app/llm/client.py`（json_mode 失败转容错解析 + 尾逗号修复）、前端分集大纲空状态 CTA。
+- **效果**：全流程第一次真正“先大纲、后按集写剧本”；4 集大纲与 14 场剧本落库，场头集号与事件集归属一致；`pytest tests -q` **921 passed**，`pytest evals -q` **24 passed / 23 skipped**。
+- **最终真实项目**：`proj_f29281c30889`《劳山道士_分集版》/ `ver_95259090a386`：4 集提案 26 事件；剧本 **17 场 / 7 角色 / 全部白话 / 审计 0**；场次分布 4/5/5/3，`chapter_refs` 覆盖 `ep_001..ep_004`；说话人全部在本场 characters 内。
+- **费用**：5 轮文本验证 + 2 次正片重生成（提案/按集剧本/白话收口），只调 deepseek-flash，未出图/片；粗估 <¥6，厂商账单未核对。
+- **遗留**：逐集仍各跑一次故事圣经，人物一致性靠 `bible_scope` + 别名归并（不是共享 Bible）；每集时长未按 55–95 秒逐集审计；钩子强弱未做确定性纠偏（用户明确没注意，先不动）；已有旧作品（如 v10）还没有 story_plan，需要重跑或补提案；长篇章节选段（span_label）仍走旧直跑路径；前端确认 CTA 只预填对话，没有服务端硬闸门。

@@ -95,6 +95,8 @@ class BatchCreateRequest(BaseModel):
     aspect_ratio: str | None = Field(default=None, max_length=10)  # 画幅：9:16 / 16:9 / 1:1 等
     version_id: str | None = None
     resolution: str | None = Field(default=None, max_length=20)
+    #: 只提交这一集的镜头（分集视频总览的「批量出片」）；不传 = 全片。
+    episode_id: str | None = Field(default=None, max_length=80)
 
 
 # ---------- Provider 解析与任务投递 ----------
@@ -1296,6 +1298,21 @@ def generate_batch(project_id: str, payload: BatchCreateRequest) -> dict[str, An
     #   · 手工提交/对账回写的无 version_id 任务：意图相同同样认。
     # 想对已成功镜头原词重出，走单镜重试入口，不靠重开批次。
     units_all = generation_units(version.shots)
+    if payload.episode_id:
+        # 分集批量：只保留成员属于该集的生成单元。一个组跨集时按「任一成员
+        # 属于本集」整组保留——拆组会让组提示词与机位不完整。
+        # 老作品没有 episode_id（全集一集到底）：忽略过滤，避免把整部作品挡掉。
+        episode_of = {
+            str(s.get("id")): str(s.get("episode_id") or "")
+            for s in version.shots if isinstance(s, dict) and s.get("id")
+        }
+        if any(episode_of.values()):
+            units_all = [
+                u for u in units_all
+                if any(episode_of.get(mid) == payload.episode_id for mid in u["member_ids"])
+            ]
+            if not units_all:
+                raise HTTPException(400, "这一集还没有镜头方案")
     unit_by_id = {u["shot_id"]: u for u in units_all}
     provider = payload.provider or pick_video_provider()[0]
     model = payload.model or "default"

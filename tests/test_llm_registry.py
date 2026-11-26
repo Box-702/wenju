@@ -10,7 +10,14 @@ from __future__ import annotations
 
 from app.config import Settings
 from app.llm import describe_providers, resolve_chat, resolve_image, resolve_vision
+from app.llm.client import _JsonPromptStructured
 from app.llm.providers import build_chat_model, get_provider_spec
+
+
+def test_json_parser_tolerates_trailing_comma() -> None:
+    """DeepSeek 偶发尾逗号；容错解析要能收拾，否则整条生成回退本地剧本。"""
+    assert _JsonPromptStructured._parse('{"a": 1,}') == {"a": 1}
+    assert _JsonPromptStructured._parse("```json\n{\"a\": [1, 2,]}\n```") == {"a": [1, 2]}
 
 
 def _settings(**overrides: str) -> Settings:

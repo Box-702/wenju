@@ -18,6 +18,7 @@ from app.crew.director import (
     MIN_SHOTS_PER_SCENE,
     dialogue_need_sec,
     enforce_duration_budget,
+    refine_shot_locations,
     repair_dialogue_claims,
     scene_content_weights,
     stretch_dialogue_after_gate,
@@ -409,3 +410,75 @@ def test_OS没有空闲镜头时补一个承载镜() -> None:
     assert new.dialogue_ref == "beat_002"
     assert "内心独白" in new.subject
     assert "沉默" in new.action and "开口" not in new.action
+    assert new.final_frame                      # 必填 str，不能是 None
+    assert new.lighting is None                 # 不复用模板主体的光线
+
+
+def test_闸门不删入月移席等整段奇观镜() -> None:
+    """入月是整段奇观，不是普通走位：删掉只剩观众反应，事件没发生。"""
+    shots = [
+        _shot("shot_scene_001_000", 0, 4.0, action="客乙放下酒碗，说酒力不行了"),
+        _shot("shot_scene_001_001", 1, 4.0,
+              action="三人起身抬起案桌，脚步朝墙上的月亮走去，身影渐渐没入月光"),
+        _shot("shot_scene_001_002", 2, 4.0, action="门人们挤在墙下仰头张望"),
+    ]
+    bd = SceneBreakdown(scene_id="scene_001", shots=shots)
+    out, _notes = enforce_duration_budget(
+        [bd], 6.0, max_sec=95.0, scene_weights={"scene_001": 1.0})
+    kept = {s.id for b in out for s in b.shots}
+    assert "shot_scene_001_001" in kept
+
+
+def test_地点细化_只在画面明确指向具体空间时改镜头() -> None:
+    """一场戏跨空间时，用未使用地点的名字/描述词给镜头补更具体的锚。
+
+    三条边界：① 画面明确写白墙/墙面 → 改；② 只有 cut_reason 提穿墙术、
+    画面在大殿 → 不改；③ 已经在家里（具体地点）→ 不往庙里院墙改。
+    """
+    script = _script(
+        ("scene_001", [_beat("beat_001", text="王生面对白墙。")]),
+        ("scene_002", [_beat("beat_002", text="王生在家中院墙前。")]),
+    )
+    script.locations = [
+        Location(id="loc_a", name="观宇", description="山顶道观，殿内蒲团、案几、香炉"),
+        Location(id="loc_wall", name="道士传术的庭院墙前",
+                 description="观中一面白墙，墙前空地数步；道士在此传授口诀，令王生面墙而入"),
+        Location(id="loc_home", name="王生家", description="王生家中庭院，有坚硬墙壁，妻在旁观看"),
+    ]
+    script.scenes[0].location_id = "loc_a"
+    script.scenes[0].purpose = "王生学穿墙术"
+    script.scenes[1].location_id = "loc_home"
+    bds = [
+        SceneBreakdown(scene_id="scene_001", shots=[
+            _shot("shot_scene_001_000", 0, 4.0, action="王生面对白墙，脚往前挪半步"),
+            _shot("shot_scene_001_001", 1, 4.0, action="王生站在殿内说话",
+                  ),
+            _shot("shot_scene_001_002", 2, 4.0, action="王生拱手道谢"),
+        ]),
+        SceneBreakdown(scene_id="scene_002", shots=[
+            _shot("shot_scene_002_000", 0, 4.0, action="王生走到院墙前，伸手拍了拍墙面"),
+        ]),
+    ]
+    bds[0].shots[1].cut_reason = "王生点名穿墙术"
+    changed = refine_shot_locations(script, bds)
+    assert changed == 1
+    assert bds[0].shots[0].location_id == "loc_wall"
+    assert bds[0].shots[1].location_id is None      # 只有剪辑理由提穿墙，不改
+    assert bds[1].shots[0].location_id is None      # 在家，不往庙里院墙改
+
+
+def test_闸门不删时间跳变蒙太奇镜() -> None:
+    """「一个多月后」的柴堆/厚茧镜动作不炸裂，但它是时间跳变的唯一画面。"""
+    shots = [
+        _shot("shot_scene_001_000", 0, 4.0, action="道士把斧头扔到王生面前",
+              ref="beat_001"),
+        _shot("shot_scene_001_001", 1, 4.0,
+              action="王生瘫坐在柴堆边，把双手摊在膝上，掌心朝上"),
+        _shot("shot_scene_001_002", 2, 4.0, action="门人们抱着柴捆走过廊下"),
+    ]
+    shots[1].cut_reason = "时间跳变，一个多月后，独立单镜"
+    bd = SceneBreakdown(scene_id="scene_001", shots=shots)
+    out, _notes = enforce_duration_budget(
+        [bd], 6.0, max_sec=95.0, scene_weights={"scene_001": 1.0})
+    kept = {s.id for b in out for s in b.shots}
+    assert "shot_scene_001_001" in kept

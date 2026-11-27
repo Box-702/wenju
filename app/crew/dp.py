@@ -700,6 +700,8 @@ class DPAgent(CrewAgent):
                 )
                 parts.append(f"      主体：{s.subject}")
                 parts.append(f"      动作：{s.action}")
+                if getattr(s, "location_id", None):
+                    parts.append(f"      本镜地点：{loc_map.get(s.location_id, s.location_id)}")
                 if s.final_frame:
                     parts.append(f"      最终画面：{s.final_frame}")
                 # 摄影机轨迹是视频模型能否「跟着走」的关键，缺了就显式点出来。
@@ -814,7 +816,14 @@ class DPAgent(CrewAgent):
         canon_chars = as_name_map(style_guide.character_appearances if style_guide else {}, _idx)
         canon_envs = as_name_map(style_guide.environment_descriptions if style_guide else {}, _idx)
         loc_map = {loc.id: loc.name for loc in script.locations}
-        scene_loc = {sc.id: loc_map.get(sc.location_id, "") for sc in script.scenes}
+        scene_loc_id = {sc.id: sc.location_id for sc in script.scenes}
+
+        def _shot_loc_id(shot: Shot) -> str:
+            """本镜实际地点：镜头级覆盖优先，没有就沿用场景默认。"""
+            return str(getattr(shot, "location_id", "") or scene_loc_id.get(shot.scene_id, ""))
+
+        def _shot_loc_name(shot: Shot) -> str:
+            return loc_map.get(_shot_loc_id(shot), "")
         char_map = {c.id: c.name for c in script.characters}
         # 名字 -> 资产编号（提示词里的映射标记用；重名时第一个命中，重名本身
         # 由 assets.resolve 拒绝猜测，不在这里补救）。
@@ -835,7 +844,7 @@ class DPAgent(CrewAgent):
 
             # 环境锚：风格指南（按地点名）优先，其次本步骤 LLM 产出；
             # 短片常全片同一场景，若只有一个环境锚就直接用它兜底。
-            env = canon_envs.get(scene_loc.get(shot.scene_id, ""), "") or env_by_scene.get(shot.scene_id, "")
+            env = canon_envs.get(_shot_loc_name(shot), "") or env_by_scene.get(shot.scene_id, "")
             if not env and len(canon_envs) == 1:
                 env = next(iter(canon_envs.values()))
 
@@ -944,13 +953,11 @@ class DPAgent(CrewAgent):
             if env:
                 # 环境锚的资产编号：只有当环境锚确实来自该场景地点（风格指南）
                 # 时才标注；单环境兜底拿到的锚归属不明，宁可不标。
-                sc_obj = scene_map.get(shot.scene_id)
-                env_from_loc = (
-                    canon_envs.get(loc_map.get(sc_obj.location_id, ""), "") if sc_obj else ""
-                )
+                loc_id_now = _shot_loc_id(shot)
+                env_from_loc = canon_envs.get(loc_map.get(loc_id_now, ""), "") if loc_id_now else ""
                 env_tag = _asset_tag(
-                    sc_obj.location_id if sc_obj and env_from_loc == env else "", language,
-                    loc_map.get(sc_obj.location_id, "") if sc_obj else "",
+                    loc_id_now if loc_id_now and env_from_loc == env else "", language,
+                    loc_map.get(loc_id_now, "") if loc_id_now else "",
                 )
                 # 环境锚写成「@场景名(编号)：描述」，编号让人能定位资产，
                 # 名字让下游模型看得懂（跟对话里 @ 场景名 是同一套写法）。

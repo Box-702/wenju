@@ -180,8 +180,16 @@ MIN_SHOTS_PER_SCENE = 2
 # 动作的镜头；提示词侧同样要求单独成镜（director-breakdown SKILL.md）。
 _KEY_ACTION_RE = re.compile(
     r"撞(?:上|在|到|墙|击)?|穿墙|穿了过去|穿过墙|化作|化成|变回|"
-    r"掷|剪纸|跃上|跃起|砸|摔|刺|砍|杀|死|流血|夺下|撕|烧"
+    r"掷|剪纸|跃上|跃起|砸|摔|刺|砍|杀|死|流血|夺下|撕|烧|"
+    # 入月/移席这类「整段奇观」不是普通走位：删掉就只剩观众反应，
+    # 事件本身没发生（2026-11-27 v2 实测：三人抬案入月的三镜全被删）。
+    r"入月|没入|移席|抬案|走向[^。；]{0,8}月|走进[^。；]{0,8}月"
 )
+
+# 时间跳变/蒙太奇镜：动作本身不炸裂（坐着摊手），但它是「一个多月后」这类
+# 剧情节点的唯一画面。闸门按动作重要性删镜时不能只看动词（2026-11-27 v2
+# 实测：柴堆厚茧镜被删，山林地点因此没有任何镜头）。
+_TIME_JUMP_RE = re.compile(r"一个多月|时间跳[变迁]|数月|半年|一年|多年|次日|几天后|数日后|光阴|此后")
 
 # 静态机位占比上限：超过即「躺平」，与 DIR-11 的批评阈值同源。
 MAX_STATIC_RATIO = 0.75
@@ -352,45 +360,42 @@ def repair_dialogue_claims(script: Any, breakdowns: list[SceneBreakdown]) -> int
         claimed_now = {s.dialogue_ref for s in bd.shots if s.dialogue_ref}
         for beat in [b for b in lines if b.id not in claimed_now]:
             name = char_name.get(beat.speaker or "", "")
-            ordered = sorted(bd.shots, key=lambda s: s.order)
-            template = next(
-                (s for s in ordered
-                 if name and name in f"{s.subject or ''}{s.action or ''}"),
-                ordered[-1],
-            )
-            new = template.model_copy(deep=True)
-            new.id = f"shot_{bd.scene_id}_{next_order:03d}"
-            new.order = next_order
-            new.group_id = ""
-            new.group_index = 0
-            new.chain_from = None
-            new.dialogue_ref = beat.id
-            new.dialogue_at = 0.5
             if beat.type == "os":
                 # 本场每个镜头都有对白、没有空闲镜头时，OS 只能补一个承载镜：
                 # 不新增这张镜，内心独白就会整句消失（2026-11-27 v2 实测：
                 # scene_009 三镜全是对白，第 7 条 OS 无处安放）。画面写人物
                 # 沉默，声音走画外——不写成「开口」，避免模型配口型。
-                new.subject = f"{name or '角色'}内心独白"
-                new.action = f"{name or '角色'}沉默着，目光落在远处，嘴唇闭合"
-                new.duration_sec = max(3.0, min(MAX_GENERATABLE_SEC, dialogue_need_sec([beat])))
-                new.cut_reason = "补录内心独白：原分镜没有空闲镜头"
-                new.function = "emotion"
-                new.shot_type = "close_up"
+                subject = f"{name or '角色'}内心独白"
+                action = f"{name or '角色'}沉默着，目光落在远处，嘴唇闭合"
+                duration = max(3.0, min(MAX_GENERATABLE_SEC, dialogue_need_sec([beat])))
+                cut_reason = "补录内心独白：原分镜没有空闲镜头"
+                function, shot_type = "emotion", "close_up"
             else:
-                new.subject = f"{name or '角色'}说话"
-                new.action = f"{name or '角色'}抬头开口，说完停住"
-                new.duration_sec = max(4.0, min(MAX_GENERATABLE_SEC, dialogue_need_sec([beat])))
-                new.cut_reason = "补录台词：原分镜未认领"
-                new.function = "action"
-                new.shot_type = "medium"
-            new.camera.type = "static"
-            new.camera.direction = None
-            new.camera.path = ""
-            new.final_frame = None
-            new.video_prompt = ""
-            new.group_prompt = None
-            new.prompt_audit = []
+                subject = f"{name or '角色'}说话"
+                action = f"{name or '角色'}抬头开口，说完停住"
+                duration = max(4.0, min(MAX_GENERATABLE_SEC, dialogue_need_sec([beat])))
+                cut_reason = "补录台词：原分镜未认领"
+                function, shot_type = "action", "medium"
+            # 用全新 Shot，不 copy 模板镜头：模板的光线/空间/情绪是**另一个主体**的，
+            # 复制过来会出现「王生的脸配道士的烛光」（2026-11-27 v2 实测）；而且
+            # model_copy 不跑校验，final_frame=None 会让落库后的 breakdown 再也
+            # validate 不回来。补录镜只保留中性空间关系，光线/情绪交给摄影。
+            new = Shot(
+                id=f"shot_{bd.scene_id}_{next_order:03d}",
+                scene_id=bd.scene_id,
+                order=next_order,
+                shot_type=shot_type,
+                camera=CameraMovement(type="static"),
+                subject=subject,
+                action=action,
+                dialogue_ref=beat.id,
+                dialogue_at=0.5,
+                duration_sec=duration,
+                cut_reason=cut_reason,
+                function=function,
+                spatial=f"{name or '角色'}位于画面中央，距镜头约1.5米",
+                final_frame=action,
+            )
             bd.shots.append(new)
             next_order += 1
             added += 1
@@ -587,7 +592,9 @@ def enforce_duration_budget(
         for s in ordered:
             # 台词镜 + 不可逆动作镜都不能被当「可删动作」清掉：前者是台词的
             # 唯一载体，后者是剧情事件本身（撞墙/穿墙/变形/掷物化人）。
-            if s.dialogue_ref or _KEY_ACTION_RE.search(f"{s.subject or ''} {s.action or ''}"):
+            if (s.dialogue_ref
+                    or _KEY_ACTION_RE.search(f"{s.subject or ''} {s.action or ''}")
+                    or _TIME_JUMP_RE.search(s.cut_reason or "")):
                 protected.add(s.id)
 
     # 2a) 按场分配预算：场权重 = 台本里该场的节拍数（内容多的场多给时长）。
@@ -1270,6 +1277,9 @@ class DirectorAgent(CrewAgent):
                 )
                 if notes:
                     summary += "；" + "；".join(notes)
+                loc_fixed = refine_shot_locations(script, gated)
+                if loc_fixed:
+                    summary += f"；地点细化 {loc_fixed} 镜"
                 assign_episodes(gated, script)
                 return CrewTaskResult(data=gated, summary=summary)
 
@@ -1295,6 +1305,9 @@ class DirectorAgent(CrewAgent):
             summary += "；" + "；".join(notes)
         if critique:
             summary += f"，但连续性校验仍待完善：{critique[0]}"
+        loc_fixed = refine_shot_locations(script, gated)
+        if loc_fixed:
+            summary += f"；地点细化 {loc_fixed} 镜"
         assign_episodes(gated, script)
         return CrewTaskResult(data=gated, summary=summary, errors=critique)
 
@@ -1815,6 +1828,196 @@ class DirectorAgent(CrewAgent):
             data=breakdowns,
             summary=f"（无模型）为 {len(breakdowns)} 个场景生成默认镜头方案",
         )
+
+
+# ---- 镜头级地点细化（2026-11-27）----
+#
+# 为什么需要：剧本按「场」只挂一个地点，但一场戏经常跨空间——山道攀登
+# 走到殿前、大殿里说着说着移到院墙、庭院夜宴移席进月宫。逐集生成又会
+# 产出「月中 / 王生砍柴的山林 / 传术的庭院墙前」这类具体地点，却没有任何
+# 场使用：白出定妆图，且这些镜头的环境锚与画面内容对不上。
+#
+# 做法只做**高置信度**的镜头级改写：只对「没有任何场使用的具体地点」，
+# 用地点名/描述里的词去命中本镜动作；命中弱、或本镜明显在现地点（案桌/
+# 酒烛/廊下/殿内），一律不动。宁可漏挂，不把大殿戏挂到山里去。
+_LOC_TERM_STOP = set("的了在是有和与及或之其这那一个我你他她它们为以到从对把就都也还很更最又再才只不没")
+_LOC_GENERIC_TERMS = {
+    "月光", "月亮", "月色", "柴捆", "斧头", "案桌", "案几", "酒杯", "酒壶",
+    "烛火", "灯笼", "蒲团", "香炉", "门人", "道士", "妻子", "庭院", "观宇",
+    "道观", "山中", "山上", "院子", "院中", "院墙",
+}
+_LOC_TEMPLE_WORDS = ("观", "殿", "院", "庭")
+_LOC_SPACE_CHARS = set("月墙柴山林宫家船桥街店铺")
+# 同一空间的口语别称（镜头动作里常写成墙面/柴堆，地点名里不一定有）。
+_LOC_SYNONYMS = {
+    "墙": ("墙面", "墙体", "墙壁"),
+    "柴": ("柴堆", "柴捆"),
+    "林": ("树林", "林子"),
+}
+
+
+def _loc_norm(text: Any) -> str:
+    return re.sub(r"[，。！？!?…；;：:、（）()\s\"'“”「」『』]+", "", str(text or ""))
+
+
+def _loc_terms(loc: Any, char_names: set[str]) -> dict[str, int]:
+    """地点名/描述 → 可匹配词表（词 → 权重）。名字里的词权重最高。"""
+    name = str(getattr(loc, "name", "") or "")
+    desc = str(getattr(loc, "description", "") or "")
+    terms: dict[str, int] = {}
+
+    def add(term: str, weight: int) -> None:
+        if (len(term) < 2 or term in _LOC_GENERIC_TERMS or term in char_names
+                or any(ch in _LOC_TERM_STOP for ch in term)):
+            return
+        terms[term] = max(terms.get(term, 0), weight)
+
+    for seg in re.split(r"[的之、，,（）()\s]+", name):
+        if len(seg) >= 2:
+            add(seg, 4)
+    name_norm = _loc_norm(name)
+    for src, weight in ((name, 3), (desc, 2)):
+        src_norm = _loc_norm(src)
+        for i in range(len(src_norm) - 1):
+            gram = src_norm[i:i + 2]
+            if src is desc and not any(ch in name_norm for ch in gram):
+                continue
+            add(gram, weight)
+    for ch in set(name_norm):
+        if ch in _LOC_SPACE_CHARS:
+            terms[ch] = max(terms.get(ch, 0), 1)
+        for syn in _LOC_SYNONYMS.get(ch, ()):
+            terms[syn] = max(terms.get(syn, 0), 2)
+    return terms
+
+
+def _loc_score(text: str, terms: dict[str, int]) -> tuple[int, list[str]]:
+    hits = [term for term in terms if term in text]
+    return sum(terms[t] for t in hits), hits
+
+
+def refine_shot_locations(script: Script, breakdowns: list[SceneBreakdown]) -> int:
+    """给跨空间的镜头补一个更具体的地点（就地写 ``Shot.location_id``）。
+
+    只考虑「没有任何场使用」的地点，且只从庙宇通用空间（含 观/殿/院/庭）
+    往具体子空间改；命中词必须来自地点名/描述，命中太弱、或本镜明显在
+    现地点（案桌/酒烛/廊下/殿内）就保持原样。返回改了几镜。
+    """
+    used_by_scenes = {sc.location_id for sc in script.scenes}
+    loc_by_id = {loc.id: loc for loc in script.locations}
+    char_names = {c.name for c in script.characters}
+    targets = [
+        (loc, _loc_terms(loc, char_names))
+        for loc in script.locations
+        if loc.id not in used_by_scenes
+    ]
+    if not targets:
+        return 0
+    scene_by_id = {sc.id: sc for sc in script.scenes}
+    changed = 0
+    for bd in breakdowns:
+        scene = scene_by_id.get(bd.scene_id)
+        if scene is None:
+            continue
+        current = loc_by_id.get(scene.location_id)
+        if current is None or not any(w in current.name for w in _LOC_TEMPLE_WORDS):
+            continue
+        cur_terms = _loc_terms(current, char_names)
+        purpose = f"{scene.title or ''}{scene.purpose or ''}{scene.conflict or ''}"
+        for shot in bd.shots:
+            if shot.location_id:
+                continue
+            # 只看画面字段：cut_reason 是剪辑理由（「王生点名穿墙术」），
+            # 把它算进去会把大殿里的对话镜误挂到院墙。
+            text = " ".join(str(x or "") for x in
+                            (shot.subject, shot.action, shot.final_frame))
+            if not text.strip():
+                continue
+            cur_score, _ = _loc_score(text, cur_terms)
+            best: tuple[int, Any] | None = None
+            for loc, terms in targets:
+                name = loc.name or ""
+                # 场景目的必须真的在讲这个空间：庭院里看纸月的光，不算「传术墙前」；
+                # 大殿里说穿墙术，也不算已经站在院墙下。
+                if "墙" in name and not any(w in purpose for w in ("墙", "穿墙", "撞墙", "面墙")):
+                    continue
+                if "月" in name and not any(w in purpose for w in ("月", "入月", "月宫")):
+                    continue
+                if any(c in name for c in "山柴林") and not any(
+                        w in purpose for w in ("砍柴", "樵", "山林", "山")):
+                    continue
+                # 月光墙上的「墙面」不能当成传术的院墙；家里的院墙也不能。
+                if "墙" in name and any(w in text for w in
+                                        ("纸月", "月光", "月亮", "灯笼", "家", "妻", "堂屋", "屋内")):
+                    continue
+                if "月" in name and any(w in text for w in ("白墙", "墙前", "家", "妻", "堂屋", "屋内")):
+                    continue
+                if any(c in name for c in "山柴林") and any(w in text for w in
+                        ("案桌", "案几", "酒", "烛", "灯", "廊下", "院门", "殿内", "香炉")):
+                    continue
+                score, hits = _loc_score(text, terms)
+                if not any(len(h) >= 2 for h in hits):
+                    # 单字「柴」只有在场景目的明确讲砍柴/樵采时才敢用。
+                    if not ("柴" in hits and any(w in purpose for w in ("砍柴", "樵", "山林"))):
+                        continue
+                    score = max(score, 3)
+                if score < 2:
+                    continue
+                # 具体地点 +1 优先；必须压过现地点，避免大殿戏被挂走。
+                score += 1
+                if score <= cur_score:
+                    continue
+                if best is None or score > best[0]:
+                    best = (score, loc)
+            if best is not None:
+                shot.location_id = best[1].id
+                changed += 1
+
+    # 同场多数镜已落到同一具体空间时，其余镜头跟随：院墙戏不会一半锚大殿、
+    # 一半锚院墙。只在同场已有 ≥2 镜、且场景目的讲了该空间时生效。
+    from collections import Counter
+    for bd in breakdowns:
+        scene = scene_by_id.get(bd.scene_id)
+        if scene is None:
+            continue
+        current = loc_by_id.get(scene.location_id)
+        purpose = f"{scene.title or ''}{scene.purpose or ''}{scene.conflict or ''}"
+        counts = Counter(str(s.location_id) for s in bd.shots if s.location_id)
+        for loc_id, n in counts.items():
+            if n < 2:
+                continue
+            loc = loc_by_id.get(loc_id)
+            if loc is None:
+                continue
+            name = loc.name or ""
+            if "墙" in name and not any(w in purpose for w in ("墙", "穿墙", "撞墙", "面墙")):
+                continue
+            if "月" in name and not any(w in purpose for w in ("月", "入月", "月宫")):
+                continue
+            if any(c in name for c in "山柴林") and not any(
+                    w in purpose for w in ("砍柴", "樵", "山林", "山")):
+                continue
+            # 现地点明确在场的道具/空间词：石阶、大殿、案桌……有这些就别
+            # 跟着同场多数镜改（斧头落地那两镜仍在殿前石阶，不在山里）。
+            cur_name = current.name if current is not None else ""
+            if "观" in cur_name or "殿" in cur_name:
+                cur_words = ("石阶", "殿", "廊", "门", "蒲团", "案", "香炉")
+            elif "院" in cur_name or "庭" in cur_name:
+                cur_words = ("案桌", "酒", "烛", "灯", "院门", "廊", "阶")
+            elif "家" in cur_name or "屋" in cur_name:
+                cur_words = ("床", "屋", "桌", "妻", "门")
+            else:
+                cur_words = ()
+            for shot in bd.shots:
+                if shot.location_id:
+                    continue
+                text = " ".join(str(x or "") for x in
+                                (shot.subject, shot.action, shot.final_frame))
+                if any(w in text for w in cur_words):
+                    continue
+                shot.location_id = loc_id
+                changed += 1
+    return changed
 
 
 def assign_episodes(breakdowns: list[SceneBreakdown], script: Script) -> None:

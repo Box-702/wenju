@@ -611,6 +611,9 @@ class Shot(BaseModel):
 
     id: str = Field(pattern=r"^shot_[a-z0-9_]+_\d{3,}$")
     scene_id: str = Field(pattern=r"^scene_[0-9]{3,}$")
+    #: 本镜实际所在地点。None = 沿用场景默认地点；一场戏跨空间（山道/殿内/
+    #: 院墙/月宫）时由地点解析器给出更具体的锚。
+    location_id: str | None = Field(default=None, pattern=r"^loc_[a-z0-9_]+$")
     character_look_ids: dict[str, str] = Field(default_factory=dict)  # 覆盖场景默认造型
     order: int = Field(ge=0)
     shot_type: ShotType = "medium"

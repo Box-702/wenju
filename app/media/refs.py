@@ -408,7 +408,9 @@ def apply_reference_images(
         if sc is None:
             continue
         urls: list[str] = []
-        state = selected_state(location_id=sc.location_id, scene_id=sc.id,
+        # 镜头级地点优先：一场戏跨空间时（山道/院墙/月宫），环境图要跟镜头走。
+        loc_id = str(getattr(shot, "location_id", "") or sc.location_id)
+        state = selected_state(location_id=loc_id, scene_id=sc.id,
                                shot_id=shot.id, states=states, style=style or {})
         env_url = str(state.get("image") or "")
         if env_url:

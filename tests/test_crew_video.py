@@ -1488,3 +1488,52 @@ def test_出片前体检拦超上限生成单元():
     ]
     issues = plan_issues(None, [s.model_dump() for s in shots], max_duration=15.0)
     assert any(i.level == "blocker" and i.code == "unit_over_max" for i in issues)
+
+
+def test_dp_环境锚跟随镜头级地点():
+    """一场戏跨空间时，shot.location_id 优先于场景默认地点。"""
+    script = _script()
+    script.locations.append(Location(id="loc_wall", name="院墙",
+                                     description="观中一面白墙，墙前空地数步"))
+    shot = Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
+                camera=CameraMovement(), duration_sec=4,
+                location_id="loc_wall", action="王生面对白墙站定")
+    guide = StyleGuide(
+        environment_descriptions={"密室": "密闭的方形房间，钨丝灯昏黄。",
+                                  "院墙": "一面刷白的院墙，墙前空地数步。"},
+    )
+    llm_out = {"scenes": [{"scene_id": "scene_001", "shots": [
+        {"shot_id": "shot_scene_001_000", "characters": ["齐夏"],
+         "prompt_body": "王生面对白墙站定，抬手扶了一下额角。"},
+    ]}]}
+    out = _dp()._apply([shot], llm_out, script, "", guide)[0].video_prompt
+    assert "一面刷白的院墙" in out
+    assert "密闭的方形房间" not in out
+
+
+def test_参考图跟随镜头级地点():
+    from app.media.refs import apply_reference_images
+
+    script = _script()
+    script.locations.append(Location(id="loc_wall", name="院墙",
+                                     description="观中一面白墙，墙前空地数步"))
+    shot = Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
+                camera=CameraMovement(), duration_sec=4,
+                location_id="loc_wall", action="王生面对白墙站定")
+    filled = apply_reference_images(
+        [shot], {"loc_wall": "https://example.test/wall.jpg"}, script)
+    assert filled == 1
+    assert "https://example.test/wall.jpg" in shot.reference_images
+
+
+def test_体检把镜头级地点算作已使用():
+    from app.video.preflight import plan_issues
+
+    script = _script()
+    script.locations.append(Location(id="loc_wall", name="院墙",
+                                     description="观中一面白墙，墙前空地数步"))
+    shot = Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
+                camera=CameraMovement(), duration_sec=4,
+                location_id="loc_wall", video_prompt="王生面对白墙。")
+    issues = plan_issues(script, [shot.model_dump()], units=[])
+    assert not any(i.code == "unused_location" for i in issues)

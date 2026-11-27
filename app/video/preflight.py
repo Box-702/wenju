@@ -90,6 +90,8 @@ def plan_issues(
         ))
 
     used_locs = {str(getattr(sc, "location_id", "")) for sc in (getattr(script, "scenes", []) or [])}
+    # 镜头级地点也算「用了」：一场戏跨空间时，具体地点可能只挂在镜头上。
+    used_locs |= {str(s.get("location_id") or "") for s in rows}
     unused = [str(getattr(loc, "name", "")) for loc in (getattr(script, "locations", []) or [])
               if str(getattr(loc, "id", "")) not in used_locs]
     if unused:

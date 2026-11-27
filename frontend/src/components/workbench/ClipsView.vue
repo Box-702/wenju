@@ -215,8 +215,14 @@ function groupTotal(c) {
   return c.members.reduce((a, m) => a + Math.max(0, Number(m.duration_sec) || 0), 0)
 }
 function latestJob(id) {
+  // 取**最新**一条：接口按 created_at 倒序返回时，旧写法循环到最后一
+  // 条会拿到最旧的失败任务——重试成功后退回的镜头仍显示「失败」，
+  // 分集卡片的已出片数也跟着少算（2026-11-27 实测 6/13 vs 闸门 9/13）。
   let found
-  for (const j of store.videoJobs || []) if (j.shot_id === id) found = j
+  for (const j of store.videoJobs || []) {
+    if (j.shot_id !== id) continue
+    if (!found || String(j.created_at || '') > String(found.created_at || '')) found = j
+  }
   return found
 }
 function playableUrl(c) {

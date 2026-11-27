@@ -6,8 +6,8 @@
 // 主输入卡片见 HomeComposer.vue。
 // 点作品卡 = 进入工作区（store.mode 切到 workspace，三栏布局接管渲染）。
 // =====================================================================
-import { computed, ref } from 'vue'
-import { store, selectProject, deleteProject, notify, openWorkspaceFolder } from '../stores/app.js'
+import { computed, onMounted, ref } from 'vue'
+import { store, selectProject, deleteProject, notify, openWorkspaceFolder, loadTree } from '../stores/app.js'
 import AppIcon from './AppIcon.vue'
 import HomeComposer from './HomeComposer.vue'
 
@@ -29,6 +29,15 @@ function enter(pid) {
 }
 
 const composer = ref(null)
+const loadingWorks = ref(false)
+
+// 冷启动兜底：App 的 loadTree 若撞上后端未就绪，首页会先落到「还没有作品」。
+// 这里在项目列表仍为空时补一次加载，加载中不要显示空态文案。
+onMounted(async () => {
+  if ((store.projects || []).length) return
+  loadingWorks.value = true
+  try { await loadTree() } finally { loadingWorks.value = false }
+})
 
 function chip(kind) {
   if (kind === 'novel') {
@@ -146,7 +155,10 @@ function formatDate(iso) {
         </article>
       </div>
 
-      <p v-if="!works.length" class="works-empty">
+      <p v-if="loadingWorks && !works.length" class="works-empty">
+        正在加载作品…
+      </p>
+      <p v-else-if="!works.length" class="works-empty">
         还没有作品。新建一部，导入小说原文，一分钟内看到第一版剧本。
       </p>
     </section>

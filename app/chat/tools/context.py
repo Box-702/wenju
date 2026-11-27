@@ -94,6 +94,13 @@ class ToolContext:
         versions = sorted(self.store.list_video_versions(project.id), key=lambda v: v.created_at)
         return versions[-1] if versions else None
 
+    def active_episode(self, project: Project) -> int:
+        return self.store.get_active_episode(project.id)
+
+    def active_video_version(self, project: Project):
+        """当前集的镜头方案；没有该集版本时退回旧版整片版本。"""
+        return self.store.latest_video_version(project, episode=self.active_episode(project))
+
     def latest_job_by_shot(self, project_id: str) -> dict[str, Any]:
         """每个镜头最新一次视频任务（后写的覆盖先写的）。"""
         latest: dict[str, Any] = {}

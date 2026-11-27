@@ -139,6 +139,8 @@ class Project(Base):
     # ---- 故事规划（D-71 扩写流）----
     # 理解卡 + 分集提案：{"understanding":{...},"episodes":[...],"status":"proposed|confirmed"}
     story_plan_json: Mapped[str] = mapped_column(default="{}")
+    # 当前推进到第几集（1 起）：Agent/批次/合成只处理这一集，用户确认后才前进。
+    active_episode: Mapped[int] = mapped_column(default=1)
     created_at: Mapped[datetime] = mapped_column(default=_now)
     updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
 
@@ -616,6 +618,8 @@ class VideoVersion(Base):
     label: Mapped[str | None] = mapped_column(default=None)
     notes: Mapped[str | None] = mapped_column(default=None)
     milestone: Mapped[str | None] = mapped_column(default=None)  # draft | candidate | final
+    # 这一版属于第几集；None = 旧版整片版本（多集混在一个 version 里）。
+    episode: Mapped[int | None] = mapped_column(default=None)
     shots_json: Mapped[str] = mapped_column(default="[]")
     style_guide_json: Mapped[str] = mapped_column(default="{}")
     created_at: Mapped[datetime] = mapped_column(default=_now)
@@ -713,6 +717,8 @@ class Store:
                     conn.execute(text("ALTER TABLE projects ADD COLUMN adapted_until INTEGER DEFAULT 0"))
                 if "story_plan_json" not in cols_proj:
                     conn.execute(text("ALTER TABLE projects ADD COLUMN story_plan_json VARCHAR DEFAULT '{}'"))
+                if "active_episode" not in cols_proj:
+                    conn.execute(text("ALTER TABLE projects ADD COLUMN active_episode INTEGER DEFAULT 1"))
 
             # ---- script_versions 表 ----
             cols_ver = {c["name"] for c in insp.get_columns("script_versions")} if "script_versions" in tables else set()
@@ -721,6 +727,13 @@ class Store:
                     conn.execute(text("ALTER TABLE script_versions ADD COLUMN milestone VARCHAR"))
                 if "breakdown_json" not in cols_ver:
                     conn.execute(text("ALTER TABLE script_versions ADD COLUMN breakdown_json VARCHAR DEFAULT '{}'"))
+
+            # ---- video_versions 表：按集版本 ----
+            if "video_versions" in tables:
+                cols_vv = {c["name"] for c in insp.get_columns("video_versions")}
+                if "episode" not in cols_vv:
+                    with self.engine.begin() as conn:
+                        conn.execute(text("ALTER TABLE video_versions ADD COLUMN episode INTEGER"))
 
             # ---- media_assets 表：content bytea（文件本体入库）+ 媒体属性 ----
             if "media_assets" in tables:
@@ -795,6 +808,22 @@ class Store:
     def get_project(self, project_id: str) -> Project | None:
         with self.session() as s:
             return s.get(Project, project_id)
+
+    def get_active_episode(self, project_id: str) -> int:
+        """当前推进到第几集（1 起）；老库/未设置时默认 1。"""
+        with self.session() as s:
+            p = s.get(Project, project_id)
+            return max(1, int(getattr(p, "active_episode", 1) or 1)) if p else 1
+
+    def set_active_episode(self, project_id: str, episode: int) -> int:
+        with self.session() as s:
+            p = s.get(Project, project_id)
+            if p is None:
+                raise ValueError(f"项目不存在：{project_id}")
+            p.active_episode = max(1, int(episode))
+            p.updated_at = _now()
+            s.commit()
+            return p.active_episode
 
     def delete_project(self, project_id: str) -> None:
         """删除项目及其所有关联数据（对话、消息、版本、运行记录、媒体素材、视频任务）。"""
@@ -2188,6 +2217,7 @@ class Store:
         notes: str | None = None,
         parent_version_id: str | None = None,
         set_current: bool = True,
+        episode: int | None = None,
     ) -> VideoVersion:
         with self.session() as s:
             v = VideoVersion(
@@ -2197,6 +2227,7 @@ class Store:
                 source_type=source_type,
                 label=label,
                 notes=notes,
+                episode=episode,
                 shots_json=json.dumps(shots, ensure_ascii=False),
                 style_guide_json=json.dumps(style_guide or {}, ensure_ascii=False),
             )
@@ -2214,14 +2245,23 @@ class Store:
         with self.session() as s:
             return s.get(VideoVersion, version_id)
 
-    def list_video_versions(self, project_id: str) -> list[VideoVersion]:
+    def list_video_versions(self, project_id: str, episode: int | None = None) -> list[VideoVersion]:
         with self.session() as s:
-            return (
-                s.query(VideoVersion)
-                .filter_by(project_id=project_id)
-                .order_by(VideoVersion.created_at.desc())
-                .all()
-            )
+            q = s.query(VideoVersion).filter_by(project_id=project_id)
+            if episode is not None:
+                q = q.filter(VideoVersion.episode == episode)
+            return q.order_by(VideoVersion.created_at.desc()).all()
+
+    def latest_video_version(self, project: Project, episode: int | None = None) -> VideoVersion | None:
+        """取最新镜头方案：指定集时只认该集版本；没有该集版本才退回旧的整片版本。"""
+        versions = sorted(self.list_video_versions(project.id), key=lambda v: v.created_at)
+        if episode is not None:
+            exact = [v for v in versions if getattr(v, "episode", None) == episode]
+            if exact:
+                return exact[-1]
+            if any(getattr(v, "episode", None) is not None for v in versions):
+                return None
+        return versions[-1] if versions else None
 
     def set_video_version_milestone(self, version_id: str, milestone: str | None) -> VideoVersion | None:
         with self.session() as s:

@@ -52,49 +52,74 @@ def build(ctx: ToolContext) -> list:
         if version is None:
             return "还没有剧本版本，请先生成初稿。"
         script = version.script
-        # 分集作品：提案的集数与每集目标折进导演预算（D-90），
-        # 否则导演按内容量估，超提案预算还会多拆集。
         from ...pipeline.story_plan import ensure_plan_budget
 
         ensure_plan_budget(p, script)
-        sids = [s.strip() for s in scene_ids.split(",") if s.strip()] or None
+        from ...video.episode_gate import episode_scene_ids
+
+        active = ctx.active_episode(p)
+        ep_ids = episode_scene_ids(script, active)
+        explicit = [s.strip() for s in scene_ids.split(",") if s.strip()]
+        outside = [sid for sid in explicit if sid not in ep_ids]
+        if outside:
+            return (f"当前只推进第 {active} 集，镜头拆解不能跨集。"
+                    f"第 {active} 集可用场景：{'、'.join(ep_ids)}；要换集请先进入那一集。")
+        sids = explicit or ep_ids
+
+        # 按集拆镜：用「本集场景 + 本集预算」的子剧本跑导演，
+        # 避免把全片 315 秒预算摊到一集、拆出成倍的镜头。
+        from ...domain import AdaptationPlan
+
+        sub = script.model_copy(deep=True)
+        sub.scenes = [sc for sc in script.scenes if sc.id in sids]
+        plan = getattr(script, "adaptation_plan", None)
+        if plan is not None:
+            target = sum(float(plan.scene_targets.get(sid, 0) or 0) for sid in sids) or 75.0
+            sub.adaptation_plan = AdaptationPlan(
+                segments=[], target_sec=max(55.0, min(95.0, target)),
+                episode_count=1,
+                scene_targets={sid: float(plan.scene_targets.get(sid, 0) or 0) for sid in sids},
+                hook=plan.hook, rationale=plan.rationale,
+            )
 
         def _run(task):
-            from ...crew.director import run_director
+            from ...crew.director import (
+                assign_episodes,
+                refine_shot_locations,
+                run_director,
+            )
 
             style = store.get_video_style(p.id) or {}
             result = run_director(
-                llm, script, scene_ids=sids,
+                llm, sub,
                 adaptation_type=p.adaptation_type,
                 visual_style=style.get("visual_style"),
             )
             if result.success:
-                # 保存到 video_versions
-                shots_data = []
-                for bd in result.data:
-                    for shot in bd.shots:
-                        shots_data.append(shot.model_dump())
+                # 用**全剧本**重排集号与镜头级地点（子剧本只带本集场景）
+                refine_shot_locations(script, result.data)
+                assign_episodes(result.data, script)
+                shots_data = [shot.model_dump() for bd in result.data for shot in bd.shots]
                 store.create_video_version(
                     project_id=p.id,
                     shots=shots_data,
                     source_type="agent",
-                    label="导演拆解",
+                    label=f"导演拆解·第{active}集",
                     notes=result.summary,
+                    episode=active,
                 )
-                # 同时保存 breakdown 到 script_version
-                breakdown_data = [bd.model_dump() for bd in result.data]
-                store.set_version_breakdown(version.id, breakdown_data)
+                store.set_version_breakdown(version.id, [bd.model_dump() for bd in result.data])
             return result.summary
 
-        task_id = runner.start("导演场景拆解", _run, project_id=p.id) if runner else "local"
+        task_id = runner.start(f"导演拆解·第{active}集", _run, project_id=p.id) if runner else "local"
         ctx.collector["payloads"].append({
             "type": "sub_agent_started",
             "task_id": task_id,
-            "name": "导演场景拆解",
+            "name": f"导演拆解·第{active}集",
             "project_id": p.id,
         })
-        scope = f"{len(sids)} 个指定场景" if sids else "全部场景"
-        return f"正在把{scope}拆解成镜头方案，完成后会出现在右侧「视频工作台」。"
+        return (f"正在把第 {active} 集的 {len(sids)} 个场景拆解成镜头方案；"
+                "本集完成并批准出片后，才能进入下一集。")
 
     @tool
     def generate_style_guide(project_id: str, director_notes: str = "") -> str:
@@ -154,10 +179,29 @@ def build(ctx: ToolContext) -> list:
             return "还没有剧本版本，请先生成初稿。"
         script = version.script
 
-        # 读取已有的 breakdown 与风格指南（两者都随项目/版本持久化）
-        breakdowns_data = store.get_version_breakdown(version.id)
+        # 只给**当前集**写提示词；本集 breakdown 不在（切回旧集/旧库）时
+        # 从该集最新的镜头方案重建，不要求用户重新拆镜。
+        from ...video.episode_gate import episode_scene_ids
+
+        active = ctx.active_episode(p)
+        ep_ids = set(episode_scene_ids(script, active))
+        breakdowns_data = [
+            b for b in (store.get_version_breakdown(version.id) or [])
+            if b.get("scene_id") in ep_ids
+        ]
         if not breakdowns_data:
-            return "还没有完成导演场景拆解，请先运行「导演拆解」（breakdown_scenes）。"
+            vv = ctx.active_video_version(p)
+            if vv is not None:
+                by_scene: dict[str, list] = {}
+                for shot in vv.shots:
+                    if isinstance(shot, dict) and shot.get("scene_id") in ep_ids:
+                        by_scene.setdefault(str(shot["scene_id"]), []).append(shot)
+                breakdowns_data = [
+                    {"scene_id": sid, "shots": shots} for sid, shots in by_scene.items()
+                ]
+        if not breakdowns_data:
+            return (f"第 {active} 集还没有完成导演拆解，请先运行「导演拆解」"
+                    "（breakdown_scenes）。")
         style_data = store.get_video_style(p.id)
 
         # 目标视频 provider：决定提示词方言（中文/英文）与单镜时长约束
@@ -198,16 +242,15 @@ def build(ctx: ToolContext) -> list:
                     }
                     for s in result.data
                 ]
-                previous = p.current_video_version_id and store.get_video_version(
-                    p.current_video_version_id
-                )
+                previous = ctx.active_video_version(p)
                 store.create_video_version(
                     project_id=p.id,
                     shots=shots_data,
                     source_type="agent",
-                    label="视频提示词待审阅",
+                    label=f"视频提示词待审阅·第{active}集",
                     notes=f"{result.summary}；生成后需逐镜人工批准，才能提交视频任务。",
                     parent_version_id=previous.id if previous else None,
+                    episode=active,
                 )
             return result.summary
 

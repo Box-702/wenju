@@ -1,0 +1,83 @@
+# =====================================================================
+# test_episode_gate.py —— 按集推进的硬闸门（D-99）
+# =====================================================================
+from __future__ import annotations
+
+from app.domain import (
+    Character, Location, Scene, Script, ScriptBeat, Shot, Source,
+)
+from app.video.episode_gate import (
+    active_episode_status, advance_episode, switch_episode,
+)
+
+
+def _script() -> Script:
+    return Script(
+        title="t", version="1.0", language="zh-CN", logline="l",
+        source=Source(chapter_count=2, chapter_ids=["ep_001", "ep_002"]),
+        characters=[Character(id="char_001", name="甲")],
+        locations=[Location(id="loc_001", name="屋")],
+        scenes=[
+            Scene(id="scene_001", title="第1集·第1场", chapter_refs=["ep_001"],
+                  location_id="loc_001", characters=["char_001"], purpose="p",
+                  conflict="c", episode=1,
+                  beats=[ScriptBeat(id="beat_001", type="action", text="甲起身。")]),
+            Scene(id="scene_002", title="第2集·第1场", chapter_refs=["ep_002"],
+                  location_id="loc_001", characters=["char_001"], purpose="p",
+                  conflict="c", episode=2,
+                  beats=[ScriptBeat(id="beat_002", type="action", text="甲出门。")]),
+        ],
+    )
+
+
+def _shot(i: int) -> Shot:
+    return Shot(
+        id=f"shot_scene_001_{i:03d}", scene_id="scene_001", order=i,
+        duration_sec=4.0, subject="甲", action="甲起身。",
+        video_prompt="甲起身。",
+    )
+
+
+def test_按集闸门_当前集完成才能进下一集(store):
+    p = store.create_project(title="t", adaptation_type="short_drama",
+                             language="zh-CN", raw_text="原文")
+    store.create_version(p, _script(), source_type="generation", label="t", set_current=True)
+    store.set_active_episode(p.id, 1)
+
+    status = active_episode_status(store, p)
+    assert status["active"] == 1 and status["episodes"] == [1, 2]
+    assert not status["complete"]
+    ok, msg, _ = advance_episode(store, p)
+    assert not ok and "还没有分镜" in msg
+
+    shots = [{**_shot(0).model_dump(), "prompt_status": "approved"}]
+    v = store.create_video_version(project_id=p.id, shots=shots,
+                                   episode=1, label="第1集")
+    status = active_episode_status(store, p)
+    assert status["shots"] == 1 and status["approved"]
+    assert not status["complete"]  # 还没出片
+
+    j = store.create_video_job(project_id=p.id, shot_id=_shot(0).id,
+                               provider="minimax", model="m", prompt="p",
+                               version_id=v.id)
+    store.update_video_job(j.id, status="succeeded", video_url="https://x/a.mp4")
+    status = active_episode_status(store, p)
+    assert status["complete"], status
+
+    ok, msg, status = advance_episode(store, p)
+    assert ok and status["active"] == 2
+
+    ok, _, _ = switch_episode(store, p, 3)
+    assert not ok  # 不能跳集
+    ok, _, status = switch_episode(store, p, 1)
+    assert ok and status["active"] == 1
+
+
+def test_按集版本_不串集(store):
+    p = store.create_project(title="t", adaptation_type="short_drama",
+                             language="zh-CN", raw_text="原文")
+    v1 = store.create_video_version(project_id=p.id, shots=[], episode=1, label="1")
+    v2 = store.create_video_version(project_id=p.id, shots=[], episode=2, label="2")
+    assert [v.id for v in store.list_video_versions(p.id, episode=1)] == [v1.id]
+    assert store.latest_video_version(p, episode=2).id == v2.id
+    assert store.latest_video_version(p, episode=3) is None

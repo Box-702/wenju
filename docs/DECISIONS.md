@@ -3046,6 +3046,15 @@ D-74（分镜页出片流程闸门）· `app/chat/tools/confirm.py` ·
 **什么时候该推翻**：解析器在真实剧本上误挂率超过可接受范围（比如把大殿对话挂到院墙）；或镜头级地点需要模型自己判断才能覆盖（对白里只说“那边”），那就把 `location_id` 加进导演 JSON 字段，让模型写、代码只做校验。
 **相关**：D-63/D-95 · `app/domain.py`（`Shot.location_id`）· `app/crew/director.py`（`refine_shot_locations`）· `app/crew/dp.py` · `app/media/refs.py` · `app/video/preflight.py` · DEVELOPMENT 5.131/T-46。
 
+## D-99 每集独立视频版本 + active_episode 硬闸门（2026-11-27）
+
+**背景**：用户要求 Agent 严格一集一集往下跑（剧本→分镜→提示词→出片→成片），但 `video_versions` 是「一个版本装全片」，所有工具取 latest，无法判断「当前集」；单版本合并又会丢提示词/接力链/批准状态。
+**选项**：① 每集独立视频版本（`video_versions.episode` + `projects.active_episode`）；② 一个版本装全片，每集重跑时合并；③ 只在 Agent 提示层拦截，不改数据模型。
+**决定**：选 ①。`active_episode` 持久化；每集建自己的 VideoVersion；`episode_gate` 判定本集是否完成（分镜/提示词/批准/出片），`next_episode` 只在完成时 +1，后退可回看；工具、批次、合成全部取当前集版本；API 默认只返回当前集版本，`all=true` 才看全历史。
+**理由**：① 集是业务的一等对象，版本按集隔离后，回看/逐集合成/闸门都是自然结果；② 合并方案会把「哪条提示词属于哪集」变成手工对齐，容易丢批准与接力；③ 只做提示层挡不住 UI/API 绕过。
+**什么时候该推翻**：单集作品占绝大多数、集版本管理成为无意义开销 → 可退回单版本；或用户要求「跨集连续长片」作为主形态 → 需要跨集合成/接力，版本模型要重设计。
+**相关**：D-63 · D-95 · `app/store.py` · `app/video/episode_gate.py` · `app/chat/tools/episode.py` · DEVELOPMENT 5.132。
+
 ## 记录新决策的模板
 
 ```markdown

@@ -55,7 +55,7 @@
 
 ### 工具集
 
-**对话 Conductor 工具（50 个）**：剧本侧 `create_project`（超长原文主动提示）/ `map_novel` / `propose_arcs` / `generate_script` / `run_adaptation` / `read_script`（读作品的台本 / 目录 / 镜头 / 视觉资产）/ `ask`；作品侧 `list_projects` / `switch_project`（对话里换作品，D-77）；原文侧 `read_source` / `search_source`；剧组 `breakdown_scenes` / `generate_style_guide` / `generate_video_prompts` / `generate_reference_assets` / `clone_voice`；出片 `approve_video_prompts` / `submit_videos` / `generate_video`（单镜出片，缺风格/比例先问用户）/ `rerun_video` / `cancel_video_job` / `finalize_film`；生产 `start_production`（先报预算、用户确认才跑，D-62）/ `import_storyboard`（成品分镜直出，D-47）；查询只有一个 `get_status`（五合一，别再拆）；记忆 `remember` / `recall` / `read_memory` / `search_memory` / `forget` / `search_history`（带 id 的历史条目，可引用）；资产 `list_assets` / `create_location_state` / `select_location_state` / `list_generation_models` / `search_assets` / `save_asset`（存成定妆照）/ `attach_asset`（挂到镜头上）；技能 `load_skill`（能读技能的附属文件）；白模 `blockout_sheet_save` / `blockout_build` / `blockout_check`（施工单对话调整，D-54）。从导入小说到出片的全流程都能在对话里完成；每轮的工具轨迹压缩后进入历史上下文，多轮不丢事实。
+**对话 Conductor 工具（53 个）**：剧本侧 `create_project`（超长原文主动提示）/ `map_novel` / `propose_arcs` / `generate_script` / `run_adaptation` / `read_script`（读作品的台本 / 目录 / 镜头 / 视觉资产）/ `ask`；作品侧 `list_projects` / `switch_project`（对话里换作品，D-77）；原文侧 `read_source` / `search_source`；剧组 `breakdown_scenes` / `generate_style_guide` / `generate_video_prompts` / `generate_reference_assets` / `clone_voice`；按集 `get_episode_status` / `next_episode` / `switch_episode`（D-99）；出片 `approve_video_prompts` / `submit_videos` / `generate_video`（单镜出片，缺风格/比例先问用户）/ `rerun_video` / `cancel_video_job` / `finalize_film`；生产 `start_production`（先报预算、用户确认才跑，D-62）/ `import_storyboard`（成品分镜直出，D-47）；查询只有一个 `get_status`（五合一，别再拆）；记忆 `remember` / `recall` / `read_memory` / `search_memory` / `forget` / `search_history`（带 id 的历史条目，可引用）；资产 `list_assets` / `create_location_state` / `select_location_state` / `list_generation_models` / `search_assets` / `save_asset`（存成定妆照）/ `attach_asset`（挂到镜头上）；技能 `load_skill`（能读技能的附属文件）；白模 `blockout_sheet_save` / `blockout_build` / `blockout_check`（施工单对话调整，D-54）。从导入小说到出片的全流程都能在对话里完成；每轮的工具轨迹压缩后进入历史上下文，多轮不丢事实。
 
 **主 Agent 按需加载技能**：系统提示只放「触发 → 动作」的路由表 + 七个主技能的目录（另有四个剧组技能由代码 `render_skill` 加载），真正怎么做（步骤顺序、硬门槛、失败处理）在 `app/skills/{novel-serial,crew-pipeline,production-delivery,script-review,asset-generation,blockout,project-switch}/SKILL.md` 里，进入该领域时由 `load_skill` 按需拉取。实测（每例连跑 3 次）：长篇直接要初稿 3/3 会先加载细则并拒绝整本生成，改编 3/3、出片 3/3 在动手前加载，「拆好了吗」3/3 不多花一次往返。改流程只动 `.md`，不碰代码。
 
@@ -305,7 +305,7 @@ Wenju/
 │   ├── runner.py             #   引擎
 │   └── fixtures/             #   录制的真实产出（离线回归用）
 │
-└── tests/                    # 测试套件（938 tests，78 个测试文件）
+└── tests/                    # 测试套件（940 tests，78 个测试文件）
 ```
 
 ## 环境变量
@@ -343,7 +343,7 @@ Wenju/
 
 ```bash
 python -m pytest tests -q
-# 938 passed（2026-11-27 实测）
+# 940 passed（2026-11-27 实测）
 ```
 
 ## 提示词质量 eval

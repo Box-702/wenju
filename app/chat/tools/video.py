@@ -68,7 +68,7 @@ def build(ctx: ToolContext) -> list:
     def approve_video_prompts(project_id: str, shot_ids: str = "") -> str:
         """发起「批准镜头提示词」的请求——批准正式生效需要用户确认（点对话里的确认卡片，或回复「批准」）。注意：出片花钱，最终决定权在服务端硬闸门手里，你只能发起，不能代替用户批准。参数：project_id=项目 id；shot_ids=镜头 id 列表（逗号分隔），留空=请求批准全部有待审提示词的镜头。"""
         p = ctx.project(project_id)
-        current = ctx.latest_video_version(p)
+        current = ctx.active_video_version(p)
         if current is None or not current.shots:
             return "还没有镜头方案——需要先「拆解镜头」再「撰写镜头提示词」。"
 
@@ -116,7 +116,7 @@ def build(ctx: ToolContext) -> list:
         批量接口没有画幅参数，结果按默认横屏出片，问了等于没问。
         provider_id/model_name 是用户在确认卡上选中的本次模型；两者同时提供。"""
         p = ctx.project(project_id)
-        v = ctx.latest_video_version(p)
+        v = ctx.active_video_version(p)
         if v is None or not v.shots:
             return "还没有镜头方案：请先「拆解镜头」「撰写镜头提示词」并批准。"
         wanted = {s.strip() for s in shot_ids.split(",") if s.strip()}
@@ -235,7 +235,7 @@ def build(ctx: ToolContext) -> list:
         """
         p = ctx.project(project_id)
         sid = (shot_id or "").strip()
-        v = ctx.latest_video_version(p)
+        v = ctx.active_video_version(p)
         if v is None or not v.shots:
             return "还没有镜头方案：请先「拆解镜头」「撰写镜头提示词」。"
         shot = next(
@@ -308,7 +308,7 @@ def build(ctx: ToolContext) -> list:
         """重新生成某个镜头的视频：任务失败时重试；对成片不满意时重新出一版。参数：project_id=项目 id；shot_id=镜头 id（形如 shot_scene001_001）；provider_id/model_name=用户选定的本次模型。"""
         p = ctx.project(project_id)
         shot_id = shot_id.strip()
-        v = ctx.latest_video_version(p)
+        v = ctx.active_video_version(p)
         shot = next(
             (s for s in (v.shots if v else []) if isinstance(s, dict) and s.get("id") == shot_id),
             None,
@@ -357,7 +357,7 @@ def build(ctx: ToolContext) -> list:
     def edit_shot_prompt(project_id: str, shot_id: str, prompt: str) -> str:
         """修改某个镜头的视频提示词（生成新的镜头版本）。编辑会使批准失效：该镜头回到待审状态，需用户重新批准后才能提交出片。参数：project_id=项目 id；shot_id=镜头 id（形如 shot_scene001_001）；prompt=新提示词全文（按用户的意思写，不要自行压缩成另一段）。"""
         p = ctx.project(project_id)
-        v = ctx.latest_video_version(p)
+        v = ctx.active_video_version(p)
         if v is None or not v.shots:
             return "还没有镜头方案：请先「拆解镜头」「撰写镜头提示词」。"
         new_prompt = (prompt or "").strip()
@@ -391,7 +391,7 @@ def build(ctx: ToolContext) -> list:
         from ...pipeline.repair import find_divergences
 
         p = ctx.project(project_id)
-        v = ctx.latest_video_version(p)
+        v = ctx.active_video_version(p)
         sv = store.latest_version(p)
         if v is None or not v.shots:
             return "还没有镜头提示词，先拆解镜头并生成提示词。"
@@ -417,7 +417,7 @@ def build(ctx: ToolContext) -> list:
         from ...pipeline.repair import repair_dialogue
 
         p = ctx.project(project_id)
-        v = ctx.latest_video_version(p)
+        v = ctx.active_video_version(p)
         sv = store.latest_version(p)
         if v is None or not v.shots or sv is None:
             return "缺少镜头方案或剧本版本，无法修复。"
@@ -446,7 +446,7 @@ def build(ctx: ToolContext) -> list:
         from ...pipeline.repair import replace_text
 
         p = ctx.project(project_id)
-        v = ctx.latest_video_version(p)
+        v = ctx.active_video_version(p)
         if v is None or not v.shots:
             return "还没有镜头提示词，先拆解镜头并生成提示词。"
         shots = [dict(s) for s in v.shots if isinstance(s, dict)]
@@ -507,7 +507,12 @@ def build(ctx: ToolContext) -> list:
         mode = (audio_mode or "native").strip().lower()
         if mode not in ("native", "dub", "silent"):
             mode = "native"
-        _manager().start(p.id, subtitles=subtitles, audio_mode=mode)
+        v = ctx.active_video_version(p)
+        active = ctx.active_episode(p)
+        _manager().start(
+            p.id, version_id=v.id if v is not None else None,
+            subtitles=subtitles, audio_mode=mode, episode=active,
+        )
         voice = {"native": "原生音画同生", "dub": "TTS 配音", "silent": "静片"}[mode]
         suffix = f"（声音：{voice}{'，含字幕' if subtitles else ''}）"
         return (
@@ -555,7 +560,7 @@ def build(ctx: ToolContext) -> list:
                 blocks.append(f"【对白】{chars} 字（约 {chars / 4:.0f} 秒念白）")
 
         # 镜头与出片
-        vv = ctx.latest_video_version(p)
+        vv = ctx.active_video_version(p)
         shots = [s for s in (vv.shots if vv else []) if isinstance(s, dict) and s.get("id")]
         if not shots:
             blocks.append("【镜头】还没有镜头方案，需要先拆解。")

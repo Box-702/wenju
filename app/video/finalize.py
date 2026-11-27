@@ -163,6 +163,7 @@ def finalize_film(
     version_id: str | None = None,
     subtitles: bool = False,
     audio_mode: str = "native",
+    episode: int | None = None,
     on_progress: Any = None,
     store: Any = None,
 ) -> dict[str, Any]:
@@ -198,8 +199,14 @@ def finalize_film(
     if version is None:
         raise ValueError("没有可合成的视频版本（先生成分镜并出片）")
     shot_dicts = [s for s in version.shots if isinstance(s, dict)]
+    if episode is not None:
+        script_for_ep = _resolve_script(store, project)
+        scene_ep = {sc.id: int(getattr(sc, "episode", 1) or 1)
+                    for sc in (script_for_ep.scenes if script_for_ep else [])}
+        shot_dicts = [s for s in shot_dicts
+                      if scene_ep.get(str(s.get("scene_id") or "")) == int(episode)]
     if not shot_dicts:
-        raise ValueError("该版本没有镜头")
+        raise ValueError("该版本没有可合成的镜头")
     jobs = store.list_video_jobs(project_id)
 
     # 每个场景在版本里原本有几镜：配音/字幕据此判断「是否只渲染了一部分」。
@@ -418,8 +425,9 @@ def finalize_film(
         duration = _media_duration_sec(current)
         if duration <= 0:
             duration = sum(max(1.0, s.duration_sec) for s in shots)  # 兜底：校准后的计划时长
+        suffix = f"·第{episode}集" if episode is not None else ""
         video_info = _register_asset(store, project_id, current, kind="video",
-                                     name=f"成片·{project.title}.mp4")
+                                     name=f"成片·{project.title}{suffix}.mp4")
         emit("成片已交付")
         return {
             "video_asset_id": video_info["asset_id"],
@@ -429,6 +437,7 @@ def finalize_film(
             "duration_sec": round(duration, 2),
             "shots_used": len(shots),   # 成员镜头数（组展开后），不是生成单元数
             "shots_total": len(shot_dicts),
+            "episode": episode,
             "dubbed": dubbed,
             "subtitled": subtitled,
             "cast": cast_rows,
@@ -488,7 +497,7 @@ class FinalizeManager:
 
     def start(self, project_id: str, *, version_id: str | None = None,
               subtitles: bool = True, audio_mode: str = "native",
-              dubbing: bool | None = None) -> dict[str, Any]:
+              dubbing: bool | None = None, episode: int | None = None) -> dict[str, Any]:
         # 兼容旧调用：dubbing=True/False（未给 audio_mode 时）映射 dub/native。
         if audio_mode == "native" and dubbing is True:
             audio_mode = "dub"
@@ -500,17 +509,18 @@ class FinalizeManager:
         }
         with self._lock:
             self._jobs[fid] = rec
-        t = threading.Thread(target=self._run, args=(rec, version_id, subtitles, audio_mode),
+        t = threading.Thread(target=self._run, args=(rec, version_id, subtitles, audio_mode, episode),
                              daemon=True, name=f"finalize-{fid}")
         t.start()
         return dict(rec)
 
     def _run(self, rec: dict[str, Any], version_id: str | None,
-             subtitles: bool, audio_mode: str) -> None:
+             subtitles: bool, audio_mode: str, episode: int | None = None) -> None:
         try:
             result = finalize_film(
                 rec["project_id"], version_id=version_id, subtitles=subtitles,
-                audio_mode=audio_mode, on_progress=lambda m: _emit(rec, m),
+                audio_mode=audio_mode, episode=episode,
+                on_progress=lambda m: _emit(rec, m),
             )
             rec["result"] = result
             rec["status"] = "succeeded"

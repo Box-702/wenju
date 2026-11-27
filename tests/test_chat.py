@@ -32,7 +32,7 @@ def test_side_effect_tool_capabilities_are_skill_gated(store, llm):
         "blockout_build": "blockout",
         "switch_project": "project-switch",
     }
-    assert len(tools) == 50
+    assert len(tools) == 53
     for name, skill in required.items():
         assert (tools[name].metadata or {}).get("required_skill") == skill
     assert (tools["generate_script"].metadata or {}).get("conditional_skill") == "novel-serial"

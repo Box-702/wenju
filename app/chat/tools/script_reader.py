@@ -176,7 +176,7 @@ def build(ctx: ToolContext) -> list:
             return text
 
         if part == "shots":
-            vv = ctx.latest_video_version(p)
+            vv = ctx.active_video_version(p)
             jobs = ctx.latest_job_by_shot(p.id) if vv is not None else {}
             text = _shots_text(vv, jobs)
         elif part == "style":

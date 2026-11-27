@@ -420,9 +420,15 @@ def create_video_version(project_id: str, payload: VideoVersionCreate) -> dict[s
 
 
 @router.get("/projects/{project_id}/video-versions")
-def list_video_versions(project_id: str) -> list[dict[str, Any]]:
-    """列出项目的所有视频版本。"""
+def list_video_versions(project_id: str, all: bool = False) -> list[dict[str, Any]]:
+    """列出镜头方案版本：默认只给**当前集**（按集闸门）；all=true 看全历史。"""
     project = common.get_project(project_id)
+    store = deps.store()
+    active = store.get_active_episode(project_id)
+    versions = [] if all else store.list_video_versions(project_id, episode=active)
+    if not versions and not all:
+        vv = store.latest_video_version(project, episode=active)
+        versions = [vv] if vv is not None else []
     return [
         {
             "id": v.id,
@@ -431,6 +437,7 @@ def list_video_versions(project_id: str) -> list[dict[str, Any]]:
             "label": v.label,
             "notes": v.notes,
             "milestone": v.milestone,
+            "episode": getattr(v, "episode", None),
             "shot_count": len(v.shots),
             "current": v.id == project.current_video_version_id,
             "prompt_summary": _prompt_summary(v.shots),
@@ -1026,3 +1033,39 @@ def get_latest_finalize(project_id: str) -> dict[str, Any]:
     if rec is None:
         return {"id": None, "status": "none"}
     return rec
+
+
+# ---------- 按集推进（D-99） ----------
+
+
+@router.get("/projects/{project_id}/episode")
+def get_active_episode(project_id: str) -> dict[str, Any]:
+    """当前推进到第几集、这一集卡在哪一步。"""
+    project = common.get_project(project_id)
+    from ..video.episode_gate import active_episode_status
+
+    return active_episode_status(deps.store(), project)
+
+
+@router.post("/projects/{project_id}/episode/next")
+def go_next_episode(project_id: str) -> dict[str, Any]:
+    """进入下一集（当前集提示词全部批准且全部出片成功才放行）。"""
+    project = common.get_project(project_id)
+    from ..video.episode_gate import advance_episode
+
+    ok, msg, status = advance_episode(deps.store(), project)
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"message": msg, **status}
+
+
+@router.post("/projects/{project_id}/episode/switch")
+def go_episode(project_id: str, episode: int) -> dict[str, Any]:
+    """回看已完成的集；前进只允许 +1 且当前集完成。"""
+    project = common.get_project(project_id)
+    from ..video.episode_gate import switch_episode
+
+    ok, msg, status = switch_episode(deps.store(), project, int(episode))
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"message": msg, **status}

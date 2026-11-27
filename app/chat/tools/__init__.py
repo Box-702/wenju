@@ -24,6 +24,7 @@ from . import (
     blockout,
     confirm,
     crew,
+    episode,
     memory_tools,
     production,
     project,
@@ -66,6 +67,7 @@ def build_chat_tools(
         *blockout.build_blockout_tools(ctx),
         *production.build(ctx),
         *crew.build(ctx),
+        *episode.build(ctx),
         *video.build(ctx),
         *confirm.build(ctx),
     ]
@@ -88,7 +90,9 @@ def build_chat_tools(
         "generate_video": "production-delivery", "rerun_video": "production-delivery",
         "edit_shot_prompt": "production-delivery", "repair_prompt_dialogue": "production-delivery",
         "replace_in_prompts": "production-delivery", "cancel_video_job": "production-delivery",
-        "finalize_film": "production-delivery", "blockout_sheet_save": "blockout",
+        "finalize_film": "production-delivery",
+        "next_episode": "production-delivery", "switch_episode": "production-delivery",
+        "blockout_sheet_save": "blockout",
         "blockout_build": "blockout", "blockout_check": "blockout",
         "switch_project": "project-switch",
     }

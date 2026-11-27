@@ -4329,6 +4329,14 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **效果**：局部重跑 29 镜里地点细化 8 镜；`shot_scene_004_003`（柴堆）→ 山林、`shot_scene_008_017`（月轮围坐）→ 月中、scene_012 墙前戏的多数镜 → 墙前；庭院看纸月、家里拍院墙的误挂被场景目的/现地点道具挡住。`Shot` 新字段有单测（环境锚/参考图/体检三处跟随）。
 - **涉及文件**：`app/domain.py` · `app/crew/director.py` · `app/crew/dp.py` · `app/media/refs.py` · `app/video/preflight.py` · `tests/test_director_budget.py` · `tests/test_crew_video.py`。
 
+### 5.132 一个版本装全片，按集闸门无从谈起：每集独立视频版本（2026-11-27）
+
+- **症状**：用户要求 Agent 严格一集一集往下跑（含分镜），但 `video_versions` 是「一个版本装全片」，所有工具取 latest；分镜/摄影/批准/批次/合成都没有「当前集」概念，`project.current_video_version_id` 也只能指向其中一版。
+- **根因**：集只存在于场头 `Scene.episode` 和镜头 `episode_id` 字段，不是版本的一等维度；`active_episode` 不存在，Agent 无法判断「现在做第几集」。
+- **解法**：① `projects.active_episode` + 迁移；② `video_versions.episode`（None=旧版整片，int=每集独立）+ `create_video_version(episode=)` + `list/latest_video_version(project, episode=)` 的集过滤与旧版回退；③ `app/video/episode_gate.py` 用当前集版本判定「分镜/提示词/批准/出片」并给 `next_episode`/`switch_episode` 硬闸门；④ 对话工具加 `get_episode_status`/`next_episode`/`switch_episode`，拆镜/摄影/批准/提交/合成全部改取当前集版本；`breakdown_scenes` 用「本集场景 + 本集预算」子剧本跑导演，`generate_video_prompts` 缺本集 breakdown 时从当前集镜头方案重建；`finalize_film` 支持按集过滤与「第N集」命名；⑤ `/projects/{id}/video-versions` 默认只返回当前集，新增 episode 状态/切换/下一集接口。
+- **效果**：按集版本、闸门、工具、API 全部落地；`pytest tests -q` **940 passed**（新增按集闸门/版本隔离测试）。当前前端 ClipsView 读当前集版本（API 已过滤），但「下一集/切集」按钮还没接；Agent 是主要入口。
+- **涉及文件**：`app/store.py` · `app/video/episode_gate.py` · `app/video/finalize.py` · `app/api/video.py` · `app/api/common.py` · `app/chat/tools/episode.py` · `app/chat/tools/crew.py` · `app/chat/tools/video.py` · `app/chat/tools/script_reader.py` · `app/chat/tools/context.py` · `tests/test_episode_gate.py` · `tests/test_chat.py`。
+
 ### T-38 《劳山道士》音色与节奏试验版（2026-11-25，付费）
 
 - **假设**：先按角色台词生成音色样音、选角按年龄修正、提示词去掉拖长标点并加语速提示后，重出组 2（025-027）的声音与节奏会明显好于原版。

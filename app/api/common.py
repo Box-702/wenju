@@ -74,6 +74,7 @@ def project_dict(project: Any) -> dict[str, Any]:
         "adaptation_type": project.adaptation_type,
         "language": project.language,
         "status": project.status,
+        "active_episode": int(getattr(project, "active_episode", 1) or 1),
         "current_version_id": project.current_version_id,
         "created_at": project.created_at.isoformat(),
         "version_count": len(st.list_versions(project.id)),

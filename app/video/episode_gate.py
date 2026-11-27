@@ -127,3 +127,57 @@ def switch_episode(store: Any, project: Any, episode: int) -> tuple[bool, str, d
         return False, msg, status2
     store.set_active_episode(project.id, target)
     return True, f"已进入第 {target} 集", active_episode_status(store, project)
+
+
+def episode_statuses(store: Any, project: Any) -> dict[str, Any]:
+    """分集视频父页用：每集的状态卡（场/镜/单元/批准/出片/完成）。"""
+    from .service import generation_units, unit_approved
+
+    active = store.get_active_episode(project.id)
+    version = store.latest_version(project)
+    script = version.script if version is not None else None
+    eps = episode_numbers(script)
+    jobs = store.list_video_jobs(project.id)
+    rows: list[dict[str, Any]] = []
+    for ep in eps:
+        scene_ids = set(episode_scene_ids(script, ep)) if script is not None else set()
+        vv = store.latest_video_version(project, episode=ep)
+        shots = [
+            s for s in (getattr(vv, "shots", []) or [])
+            if isinstance(s, dict) and s.get("scene_id") in scene_ids
+        ]
+        units = generation_units(shots) if shots else []
+        heads = {u["shot_id"] for u in units}
+        approved_n = sum(1 for u in units if unit_approved(shots, u))
+        succeeded_urls: dict[str, str] = {}
+        for j in jobs:
+            if j.status == "succeeded" and j.video_url and j.shot_id in heads:
+                succeeded_urls.setdefault(j.shot_id, j.video_url)
+        succeeded = set(succeeded_urls)
+        prompt_n = sum(1 for s in shots if str(s.get("video_prompt") or "").strip())
+        complete = bool(
+            scene_ids and shots and units
+            and prompt_n == len(shots)
+            and approved_n == len(units)
+            and heads <= succeeded
+        )
+        preview_url = next(
+            (succeeded_urls[str(s.get("id"))] for s in shots
+             if str(s.get("id") or "") in succeeded_urls),
+            "",
+        )
+        rows.append({
+            "episode": ep,
+            "active": ep == active,
+            "scenes": len(scene_ids),
+            "shots": len(shots),
+            "units": len(units),
+            "duration_sec": round(sum(float(s.get("duration_sec") or 0) for s in shots), 1),
+            "prompts": prompt_n,
+            "approved": approved_n,
+            "generated": len(succeeded & heads),
+            "preview_url": preview_url,
+            "complete": complete,
+            "started": bool(shots),
+        })
+    return {"active": active, "episodes": rows}

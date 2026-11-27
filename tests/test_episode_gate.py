@@ -7,7 +7,7 @@ from app.domain import (
     Character, Location, Scene, Script, ScriptBeat, Shot, Source,
 )
 from app.video.episode_gate import (
-    active_episode_status, advance_episode, switch_episode,
+    active_episode_status, advance_episode, episode_statuses, switch_episode,
 )
 
 
@@ -81,3 +81,25 @@ def test_按集版本_不串集(store):
     assert [v.id for v in store.list_video_versions(p.id, episode=1)] == [v1.id]
     assert store.latest_video_version(p, episode=2).id == v2.id
     assert store.latest_video_version(p, episode=3) is None
+
+
+def test_分集状态列表_每集独立(store):
+    p = store.create_project(title="t", adaptation_type="short_drama",
+                             language="zh-CN", raw_text="原文")
+    store.create_version(p, _script(), source_type="generation", label="t", set_current=True)
+    v = store.create_video_version(
+        project_id=p.id,
+        shots=[{**_shot(0).model_dump(), "prompt_status": "approved"}],
+        episode=1, label="第1集",
+    )
+    j = store.create_video_job(project_id=p.id, shot_id=_shot(0).id,
+                               provider="minimax", model="m", prompt="p", version_id=v.id)
+    store.update_video_job(j.id, status="succeeded", video_url="https://x/a.mp4")
+    data = episode_statuses(store, p)
+    assert data["active"] == 1
+    ep1, ep2 = data["episodes"]
+    assert ep1["shots"] == 1 and ep1["approved"] == 1 and ep1["generated"] == 1
+    assert ep1["preview_url"] == "https://x/a.mp4"
+    assert ep1["complete"] is True
+    assert ep2["shots"] == 0 and ep2["started"] is False and ep2["complete"] is False
+    assert ep2["preview_url"] == ""

@@ -4345,6 +4345,14 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **效果**：前端构建通过；分镜页总览 9/13、失败徽标只剩真正失败的片段 10；首页冷启动不再误报空作品。
 - **涉及文件**：`frontend/src/components/workbench/ClipsView.vue` · `frontend/src/components/HomePage.vue`。
 
+### 5.134 集选择塞进了分镜页：父级没有「分集视频」页，`/episodes` 还 500（2026-11-27）
+
+- **症状**：用户看到分镜页顶部的「第 1 集 · 部分出片 9/13 · 进入本集/播放/下载/批量出片」卡片后指出：「这上面没有这个框吧，这是在上一级页面选择的吧」。同时分镜页面包屑出现两次「分镜视频 / 分集视频」。
+- **根因**：D-99 落地时把「集总览 + 集 tab」直接塞进了 `ClipsView`，但分镜页的语义是「当前集的工作台」，集选择应属于父级；而父级页面当时并不存在。另 `episode_statuses()` 调 `store.get_active_episode(project)` 传了 Project 对象（函数要 `project.id`），`/projects/{id}/episodes` 直接 500，前端主区空白。
+- **解法**：① 新增 `EpisodesView.vue` 作为「分集视频」父页（`wbView='episodes'`，左栏加「分集」入口）：每集一张卡，显示状态、场/分镜/单元/秒、批准/出片计数与进度，当前集按钮为「回到本集」，未开始集按钮禁用；`episode_statuses()` 同时返回 `preview_url`（本集第一条成功成片），卡上可「播放」；进入走 `POST /episode/switch`，后端闸门仍负责「只能 +1 且当前集完成」。② `ClipsView` 删除 `ep-overview` 与集 tab，面包屑改为「分集视频 > 第 N 集」，进页后拉 `/episode` 取当前集号。③ 新增 `episode_statuses()` 与 `/projects/{id}/episodes`，修 `get_active_episode(project.id)`。
+- **效果**：第 1 集卡显示「部分出片 9/13 · 4 场 / 14 分镜 / 13 单元 / 78.6 秒 · 批准 13/13 · 出片 9/13」，第 2–4 集「未开始」且按钮禁用；「播放」可拉起 player 浮层并播放已出片段；分镜页只剩「分集视频 / 第 1 集 / 共 13 个片段」，`.ep-overview` 数量 0；DOM 点击「回到本集」成功跳到分镜页。`pytest tests -q` **941 passed**，前端 `npm run build` 通过。
+- **涉及文件**：`app/api/video.py` · `app/video/episode_gate.py` · `frontend/src/components/workbench/EpisodesView.vue` · `ClipsView.vue` · `WorkbenchView.vue` · `IconRail.vue` · `frontend/src/nav.js` · `tests/test_episode_gate.py`。
+
 ### T-38 《劳山道士》音色与节奏试验版（2026-11-25，付费）
 
 - **假设**：先按角色台词生成音色样音、选角按年龄修正、提示词去掉拖长标点并加语速提示后，重出组 2（025-027）的声音与节奏会明显好于原版。
@@ -4565,3 +4573,19 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **效果**：第 1 集 9/13 出片、闸门与 UI 一致；前端构建通过；后端 `pytest tests -q` 940 passed（本轮前端改动未影响后端测试）。
 - **费用**：成功 60s 输出 + 25s 参考视频 ≈ **¥34**（¥0.40/秒）；4 条失败 ¥0；对话模型调用另计 <¥1。
 - **遗留**：余额再次耗尽，第 1 集还剩 4/13 个单元；`next_episode`、按集合成/命名、第 2 集切集都还没验证；分镜页无集切换按钮；第一次自动化点提示词编辑器超时（可能是覆盖/自动化问题，未确认真实用户是否可点）。
+
+### T-53 分集页架构纠偏与真实点击复验（2026-11-27，¥0）
+
+- **假设**：用户指出「集选择属于上一级页面」后，把集总览从分镜页拆到新的「分集视频」父页，分镜页只保留当前集；两页的计数应与闸门完全一致，且「回到本集」能真正导航。
+- **过程**：
+  1. 打开 `proj_f05b18294f74` 的 `/wb/episodes`：4 张集卡（第 1 集部分出片 9/13；第 2–4 集未开始、按钮禁用）。
+  2. 检查 `/wb/clips`：面包屑「分集视频 / 第 1 集 / 共 13 个片段」，`.ep-overview` 数量 0。
+  3. 点第 1 集卡「播放」：`preview_url` 拉起 `video-player` 浮层并播放已出片段；点「回到本集」：Playwright locator click 超时（元素 `isSelf=true`、`disabled=false`、`pointerEvents=auto`、可见），改用 DOM `.click()` 后 hash 变为 `#/works/.../wb/clips`，分镜页 13 个片段渲染。
+- **发现的问题 / 修改**：
+  - `/projects/{id}/episodes` 首次访问 500：`episode_statuses()` 把 Project 对象传给 `store.get_active_episode()`（应为 `project.id`），已修（5.134）。
+  - 分镜页出现重复面包屑（旧「分镜视频」span + 新「分集视频」），已删旧 span。
+  - 分镜页顶部残留集总览卡，已整体迁到 `EpisodesView`（5.134）。
+  - IAB 仿真视口下 Playwright locator click 对可见按钮仍超时，与真实用户可点性无关；DOM click 可正常触发 Vue 处理器。
+- **效果**：父页/子页分层正确，计数与闸门一致（9/13），分镜页无集选择框；「回到本集」导航成功；全量 `pytest tests -q` **941 passed**、`npm run build` 通过。
+- **费用**：**¥0**（纯 UI/接口检查，未调模型/视频）。
+- **遗留**：第 1 集剩余 4/13 个单元因余额未跑，`next_episode`/按集合成/第 2 集仍待充值验证；即梦式参考图优先提示词、分段独立提示词、分镜页左侧资产库拖动引用三项产品改造尚未开工（T-49/T-50 已证明参考图优先可行）。

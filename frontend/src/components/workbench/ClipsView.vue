@@ -27,7 +27,7 @@ import {
   openPromptEditor, saveShotParams,
   rerollShot, submitVideoJob, submitSampleVideo,
   startFinalize, ensureFinalizePolling,
-  setVideoSubtitle, setVideoAudioMode, startVideoBatch,
+  setVideoSubtitle, setVideoAudioMode,
 } from '../../stores/app'
 
 // ---------------------------------------------------------------------
@@ -35,6 +35,7 @@ import {
 // ---------------------------------------------------------------------
 const loading = ref(true)
 const loadError = ref('')
+const activeNo = ref(1)
 const lookLibrary = ref([])
 const lookSelections = ref({ scenes: {}, shots: {} })
 const sceneCharacters = ref({})
@@ -72,6 +73,10 @@ async function refreshAll() {
   try {
     // assetRefs 是 @引用 chip 的数据源：本页自己兜底拉一次，别依赖别的视图先加载
     await Promise.all([loadShots(), loadVideoJobs(), loadAssetRefs(), loadLooks()])
+    try {
+      const eps = await api(`/projects/${store.pid}/episode`)
+      activeNo.value = eps?.active || 1
+    } catch { /* 闸门状态拿不到不挡页面 */ }
   } catch (e) {
     loadError.value = e?.message || '分镜数据加载失败'
   } finally {
@@ -115,6 +120,9 @@ const episodes = computed(() => {
   return [...seen.entries()].map(([id, cs], i) => ({ id, no: i + 1, cards: cs }))
 })
 
+// ---------------------------------------------------------------------
+// 当前集（父页 EpisodesView 负责选集；这里只按 API 返回的当前集工作）
+// ---------------------------------------------------------------------
 const epId = ref('')
 const ep = computed(() => {
   const eps = episodes.value
@@ -122,83 +130,6 @@ const ep = computed(() => {
   return eps.find(e => e.id === epId.value) || eps[0]
 })
 watch(ep, e => { if (e && e.id !== epId.value) epId.value = e.id })
-
-// ---------------------------------------------------------------------
-// 分集总览（参照短剧工作台）：每集一张卡，状态 / 场数 / 分镜数 / 角色数 /
-// 时长 / 出片进度 + 进入本集 / 播放 / 下载 / 批量出片。
-// ---------------------------------------------------------------------
-const overviewOpen = ref(true)
-const batchArmed = ref('')
-const canDownloadEpisode = computed(() =>
-  episodes.value.length === 1 && !!store.videoFinalize?.result?.video_url)
-const episodeCards = computed(() => episodes.value.map((e) => {
-  const cs = e.cards
-  const members = cs.flatMap(c => c.members)
-  const done = cs.filter(c => !!playableUrl(c)).length
-  const pending = cs.filter(c => isApprovedOf(c) && !playableUrl(c))
-  const chars = new Set()
-  for (const c of cs) {
-    for (const a of assetChipsOf(c)) if (a.kind && a.kind !== 'location') chars.add(a.id)
-  }
-  const generating = cs.some(c => videoBadge(c).cls === 'warn')
-  let statusLabel = '未出片'
-  let statusCls = 'dim'
-  if (generating) { statusLabel = '生成中'; statusCls = 'warn' }
-  else if (cs.length && done === cs.length) { statusLabel = '已出片'; statusCls = 'ok' }
-  else if (done) { statusLabel = `部分出片 ${done}/${cs.length}`; statusCls = 'warn' }
-  return {
-    ...e,
-    shotCount: members.length,
-    sceneCount: new Set(cs.map(c => c.head.scene_id)).size,
-    charCount: chars.size,
-    duration: cs.reduce((n, c) => n + groupTotal(c), 0),
-    done,
-    total: cs.length,
-    pendingSec: pending.reduce((n, c) => n + groupTotal(c), 0),
-    progress: cs.length ? Math.round((done / cs.length) * 100) : 0,
-    statusLabel,
-    statusCls,
-    playable: done > 0,
-    batchable: pending.length > 0,
-  }
-}))
-function enterEpisode(e) {
-  epId.value = e.id
-  cardKey.value = e.cards[0]?.key || ''
-  overviewOpen.value = false
-}
-function playEpisode(e) {
-  const c = e.cards.find(x => !!playableUrl(x))
-  const url = c ? playableUrl(c) : ''
-  if (url) store.playingVideo = { url, title: `第 ${e.no} 集`, meta: {} }
-}
-function downloadEpisode(e) {
-  const url = store.videoFinalize?.result?.video_url
-  if (!url) {
-    notify('先在右上角「合成全片」，再下载成片', 'info')
-    return
-  }
-  if (episodes.value.length > 1) {
-    notify('多集作品请到成片页下载整片；分集下载还没接入', 'info')
-    return
-  }
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `第${e.no}集.mp4`
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-}
-async function batchEpisode(e) {
-  if (batchArmed.value !== e.id) {
-    batchArmed.value = e.id
-    notify(`第 ${e.no} 集将生成约 ${e.pendingSec.toFixed(1)} 秒已批准镜头；再点一次确认`, 'info')
-    setTimeout(() => { if (batchArmed.value === e.id) batchArmed.value = '' }, 5000)
-    return
-  }
-  batchArmed.value = ''
-  await startVideoBatch(e.id)
-}
 
 const cardKey = ref('')
 const card = computed(() => {
@@ -502,15 +433,9 @@ const hasChatModel = computed(() => store.modelInfo?.available === true)
   <div class="clips">
     <header class="cl-head">
       <div class="crumb">
-        <span class="crumb-root" @click="store.wbView = null">分镜视频</span>
+        <button class="crumb-root" type="button" @click="store.wbView = 'episodes'">分集视频</button>
         <AppIcon name="chevron-right" />
-        <div class="ep-tabs">
-          <button
-            v-for="e in episodes" :key="e.id"
-            class="ep-tab" :class="{ on: ep && e.id === ep.id }"
-            @click="epId = e.id"
-          >第 {{ e.no }} 集</button>
-        </div>
+        <span class="ep-tab on">第 {{ activeNo }} 集</span>
         <template v-if="ep">
           <span class="crumb-cur">共 {{ ep.cards.length }} 个片段</span>
         </template>
@@ -519,44 +444,6 @@ const hasChatModel = computed(() => store.modelInfo?.available === true)
         <AppIcon name="refresh" /> {{ loading ? '刷新中' : '刷新' }}
       </button>
     </header>
-
-    <!-- 分集总览：每集一张卡，先看全局再进单集 -->
-    <section v-if="episodes.length" class="ep-overview">
-      <div class="eo-head">
-        <span class="eo-title">分集视频</span>
-        <span class="eo-sub">{{ episodes.length }} 集 · {{ cards.length }} 个片段</span>
-        <button class="ghost small" type="button" @click="overviewOpen = !overviewOpen">
-          {{ overviewOpen ? '收起总览' : '展开总览' }}
-        </button>
-      </div>
-      <div v-if="overviewOpen" class="eo-grid">
-        <article
-          v-for="e in episodeCards" :key="e.id"
-          class="eo-card" :class="{ on: ep && e.id === ep.id }"
-        >
-          <div class="eo-card-head">
-            <strong>第 {{ e.no }} 集</strong>
-            <span class="eo-status" :class="e.statusCls">{{ e.statusLabel }}</span>
-          </div>
-          <div class="eo-stats">
-            <span>{{ e.sceneCount }} 场</span>
-            <span>{{ e.shotCount }} 分镜</span>
-            <span>{{ e.charCount }} 角色</span>
-            <span>{{ e.duration.toFixed(1) }} 秒</span>
-          </div>
-          <div class="eo-bar"><i :style="{ width: e.progress + '%' }"></i></div>
-          <div class="eo-actions">
-            <button class="ghost small" type="button" @click="enterEpisode(e)">进入本集</button>
-            <button class="ghost small" type="button" :disabled="!e.playable" @click="playEpisode(e)">播放</button>
-            <button class="ghost small" type="button"
-                    :disabled="!canDownloadEpisode" @click="downloadEpisode(e)">下载</button>
-            <button class="ghost small" type="button" :disabled="!e.batchable" @click="batchEpisode(e)">
-              {{ batchArmed === e.id ? `确认 ${e.pendingSec.toFixed(1)} 秒？` : '批量出片' }}
-            </button>
-          </div>
-        </article>
-      </div>
-    </section>
 
     <!-- 出片流程闸门（即梦式：完成每一步才放行下一步） -->
     <nav v-if="showGate" class="gate" aria-label="出片流程">

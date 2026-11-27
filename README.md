@@ -305,7 +305,7 @@ Wenju/
 │   ├── runner.py             #   引擎
 │   └── fixtures/             #   录制的真实产出（离线回归用）
 │
-└── tests/                    # 测试套件（940 tests，78 个测试文件）
+└── tests/                    # 测试套件（941 tests，78 个测试文件）
 ```
 
 ## 环境变量
@@ -343,7 +343,7 @@ Wenju/
 
 ```bash
 python -m pytest tests -q
-# 940 passed（2026-11-27 实测）
+# 941 passed（2026-11-27 实测）
 ```
 
 ## 提示词质量 eval

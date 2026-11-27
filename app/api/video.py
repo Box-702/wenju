@@ -1038,6 +1038,15 @@ def get_latest_finalize(project_id: str) -> dict[str, Any]:
 # ---------- 按集推进（D-99） ----------
 
 
+@router.get("/projects/{project_id}/episodes")
+def list_episodes(project_id: str) -> dict[str, Any]:
+    """分集视频父页：每集的场/镜/单元/批准/出片状态。"""
+    project = common.get_project(project_id)
+    from ..video.episode_gate import episode_statuses
+
+    return episode_statuses(deps.store(), project)
+
+
 @router.get("/projects/{project_id}/episode")
 def get_active_episode(project_id: str) -> dict[str, Any]:
     """当前推进到第几集、这一集卡在哪一步。"""

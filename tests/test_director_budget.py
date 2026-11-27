@@ -394,8 +394,8 @@ def test_OS内心独白挂到空闲镜头() -> None:
     assert len(bd.shots) == 1
 
 
-def test_OS没有空闲镜头时不补录新镜() -> None:
-    """OS 是画外音，不该为了它多切一个镜头；缺口留给提示词体检查。"""
+def test_OS没有空闲镜头时补一个承载镜() -> None:
+    """本场每个镜头都有对白时，OS 补一个沉默镜承载画外音，不能整句消失。"""
     script = _script(("scene_001", [
         _beat("beat_001", line="甲说一句。"),
         ScriptBeat(id="beat_002", type="os", speaker="char_a", line="他心里发怵。"),
@@ -404,4 +404,8 @@ def test_OS没有空闲镜头时不补录新镜() -> None:
         _shot("shot_scene_001_000", 0, 4.0, ref="beat_001"),
     ])
     repair_dialogue_claims(script, [bd])
-    assert len(bd.shots) == 1
+    assert len(bd.shots) == 2
+    new = sorted(bd.shots, key=lambda s: s.order)[-1]
+    assert new.dialogue_ref == "beat_002"
+    assert "内心独白" in new.subject
+    assert "沉默" in new.action and "开口" not in new.action

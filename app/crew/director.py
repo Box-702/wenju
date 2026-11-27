@@ -351,10 +351,6 @@ def repair_dialogue_claims(script: Any, breakdowns: list[SceneBreakdown]) -> int
                  if b.type in ("dialogue", "os") and (b.line or "").strip()]
         claimed_now = {s.dialogue_ref for s in bd.shots if s.dialogue_ref}
         for beat in [b for b in lines if b.id not in claimed_now]:
-            # OS 是画外音，不单独补录镜头（否则每句内心独白都多一拍硬切）；
-            # 优先挂在没台词的现有镜头上，挂不上就留给提示词体检报缺口。
-            if beat.type == "os":
-                continue
             name = char_name.get(beat.speaker or "", "")
             ordered = sorted(bd.shots, key=lambda s: s.order)
             template = next(
@@ -370,12 +366,24 @@ def repair_dialogue_claims(script: Any, breakdowns: list[SceneBreakdown]) -> int
             new.chain_from = None
             new.dialogue_ref = beat.id
             new.dialogue_at = 0.5
-            new.subject = f"{name or '角色'}说话"
-            new.action = f"{name or '角色'}抬头开口，说完停住"
-            new.duration_sec = max(4.0, min(MAX_GENERATABLE_SEC, dialogue_need_sec([beat])))
-            new.cut_reason = "补录台词：原分镜未认领"
-            new.function = "action"
-            new.shot_type = "medium"
+            if beat.type == "os":
+                # 本场每个镜头都有对白、没有空闲镜头时，OS 只能补一个承载镜：
+                # 不新增这张镜，内心独白就会整句消失（2026-11-27 v2 实测：
+                # scene_009 三镜全是对白，第 7 条 OS 无处安放）。画面写人物
+                # 沉默，声音走画外——不写成「开口」，避免模型配口型。
+                new.subject = f"{name or '角色'}内心独白"
+                new.action = f"{name or '角色'}沉默着，目光落在远处，嘴唇闭合"
+                new.duration_sec = max(3.0, min(MAX_GENERATABLE_SEC, dialogue_need_sec([beat])))
+                new.cut_reason = "补录内心独白：原分镜没有空闲镜头"
+                new.function = "emotion"
+                new.shot_type = "close_up"
+            else:
+                new.subject = f"{name or '角色'}说话"
+                new.action = f"{name or '角色'}抬头开口，说完停住"
+                new.duration_sec = max(4.0, min(MAX_GENERATABLE_SEC, dialogue_need_sec([beat])))
+                new.cut_reason = "补录台词：原分镜未认领"
+                new.function = "action"
+                new.shot_type = "medium"
             new.camera.type = "static"
             new.camera.direction = None
             new.camera.path = ""

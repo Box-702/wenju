@@ -118,3 +118,16 @@ def test_regenerate_then_accept(store, llm, settings, sample_text):
     )
     assert final["status"] == "applied", final
     assert final.get("new_version_id")
+
+
+def test_旧改编提议不能覆盖更新的剧本(store, llm, settings, sample_text):
+    p, base, run = _start(store, llm, settings, sample_text)
+    newer = store.create_version(p, base.script, source_type="manual_edit",
+                                 label="用户的新版本", parent_version_id=base.id,
+                                 set_current=True)
+    result = agent_svc.resume_agent_run(
+        store, llm, settings, run_id=run["run_id"], action="accept",
+    )
+    assert result["status"] == "stale"
+    assert store.latest_version(store.get_project(p.id)).id == newer.id
+    assert store.get_agent_run(run["run_id"]).status == "stale"

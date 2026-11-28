@@ -2,7 +2,7 @@
 // =====================================================================
 // ScriptHistoryPanel.vue —— 剧本页左侧「脚本修改历史」
 //
-// 每条 = 人话描述 + 版本号 + 时间，点开看说明；当前版本高亮（金色竖条）。
+// 每条 = 人话描述 + 版本号 + 时间，点开看说明；当前版本用细标记强调。
 // 标题栏右侧面板图标可收起（2026-11-26 用户要求），收起后由 App.vue 在
 // 主区左缘显示竖排「修改历史」标签恢复；开合状态记在 localStorage。
 // =====================================================================
@@ -89,20 +89,23 @@ const versions = computed(() => store.versions || [])
 .hp-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px; }
 .hp-empty { padding: 16px 8px; font-size: 12px; color: var(--dim); text-align: center; line-height: 1.7; }
 .hp-row {
-  border: 1px solid var(--line); border-radius: var(--radius-sm);
-  background: var(--surface); margin-bottom: 6px; overflow: hidden;
+  position: relative;
+  border: 0; border-bottom: 1px solid var(--line); border-radius: 0;
+  background: transparent; margin: 0; overflow: hidden;
 }
 .hp-row.on {
-  border-color: var(--sel-line);
-  background: var(--sel-bg);
-  box-shadow: inset 2px 0 0 0 var(--sel-bar);
+  background: rgba(255, 255, 255, .035);
+}
+.hp-row.on::before {
+  content: ''; position: absolute; top: 10px; bottom: 10px; left: 0;
+  width: 2px; border-radius: 2px; background: var(--sel-bar);
 }
 .hp-sum {
   display: flex; flex-direction: column; gap: 3px;
   padding: 8px 10px; cursor: pointer; list-style: none;
 }
 .hp-sum::-webkit-details-marker { display: none; }
-.hp-sum:hover { background: var(--surface-2); }
+.hp-sum:hover { background: rgba(255, 255, 255, .045); }
 .hp-desc { font-size: 12px; color: var(--ink); line-height: 1.5; }
 .hp-meta { font-size: 10.5px; color: var(--dim); display: flex; align-items: center; gap: 6px; }
 .hp-badge {

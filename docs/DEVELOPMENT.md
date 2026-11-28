@@ -4353,6 +4353,20 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **效果**：第 1 集卡显示「部分出片 9/13 · 4 场 / 14 分镜 / 13 单元 / 78.6 秒 · 批准 13/13 · 出片 9/13」，第 2–4 集「未开始」且按钮禁用；「播放」可拉起 player 浮层并播放已出片段；分镜页只剩「分集视频 / 第 1 集 / 共 13 个片段」，`.ep-overview` 数量 0；DOM 点击「回到本集」成功跳到分镜页。`pytest tests -q` **941 passed**，前端 `npm run build` 通过。
 - **涉及文件**：`app/api/video.py` · `app/video/episode_gate.py` · `frontend/src/components/workbench/EpisodesView.vue` · `ClipsView.vue` · `WorkbenchView.vue` · `IconRail.vue` · `frontend/src/nav.js` · `tests/test_episode_gate.py`。
 
+### 5.135 首页与左栏出现叠卡感、色调脱节（2026-11-27）
+
+- **症状**：首页彩色光斑过亮，与工作台深色面板不搭；左侧导航的选中底与历史版本的逐项边框叠起来，像一列浮起的卡片。
+- **根因**：`style.css` 对 `.aurora` 写了两套重复规则，`HomePage.vue` 又写了第三套高饱和背景；历史列表每行都带面板背景、完整边框和圆角，选中项再加底色与内阴影。
+- **解法**：背景只留全局一套低饱和边缘漫射；首页作品卡使用工作台表面色；导航选中态只用字色和细标记；历史版本改成分隔列表，当前项只保留轻底与细标记。
+- **涉及文件**：`frontend/src/style.css` · `frontend/src/components/HomePage.vue` · `frontend/src/components/workbench/IconRail.vue` · `frontend/src/components/workbench/ScriptHistoryPanel.vue`。
+
+### 5.136 Agent 审阅与按集生产可越过当前版本（2026-11-28）
+
+- **症状**：旧改编提议能覆盖后来更新的剧本；失败视频任务重试能提交旧提示词，旧成片仍计入当前集完成数；一键生产会把全剧拆镜并创建无集归属的视频版本，切集后可能复用上一集提示词；同会话的审阅动作可与普通对话并发写入。
+- **根因**：改编应用、视频重试和分集完成闸门没有对照当前版本与提示词；生产图在分集功能加入后仍沿用整剧范围和全局视频版本；`resume` 被排除在会话互斥之外。另在限场续跑时，只要已有任意一场拆镜就直接跳过剩余场景。
+- **解法**：应用改编前比对基础剧本版本，过期提议标记 `stale`；重试/重出只接受当前集已批准且提示词一致的任务，并校验任务的视频版本归属；分集完成数只认当前单元提示词一致的成功成片；一键生产按当前集拆镜、补齐缺失场景、生成本集资产和提示词并写入集版本；所有对话动作统一占会话锁。
+- **涉及文件**：`app/agent/runner.py` · `app/chat/conductor.py` · `app/api/chat.py` · `app/agent/production.py` · `app/video/service.py` · `app/video/episode_gate.py` · `tests/test_agent.py` · `tests/test_production.py` · `tests/test_episode_gate.py`。
+
 ### T-38 《劳山道士》音色与节奏试验版（2026-11-25，付费）
 
 - **假设**：先按角色台词生成音色样音、选角按年龄修正、提示词去掉拖长标点并加语速提示后，重出组 2（025-027）的声音与节奏会明显好于原版。
@@ -4589,3 +4603,23 @@ ruff 绿了之后，「跑测试」又红：`ModuleNotFoundError: No module name
 - **效果**：父页/子页分层正确，计数与闸门一致（9/13），分镜页无集选择框；「回到本集」导航成功；全量 `pytest tests -q` **941 passed**、`npm run build` 通过。
 - **费用**：**¥0**（纯 UI/接口检查，未调模型/视频）。
 - **遗留**：第 1 集剩余 4/13 个单元因余额未跑，`next_episode`/按集合成/第 2 集仍待充值验证；即梦式参考图优先提示词、分段独立提示词、分镜页左侧资产库拖动引用三项产品改造尚未开工（T-49/T-50 已证明参考图优先可行）。
+
+### T-54 首页与左栏视觉收口（2026-11-27，¥0）
+
+- **假设**：统一背景色源、减弱光斑，并把左栏的逐项卡片改为平面列表，可以消除首页与工作台割裂和左栏重影感。
+- **过程**：检查首页、全局样式、图标导航与历史列表；移除重复背景规则，统一低饱和背景与面板色；导航和历史列表改为细标记；运行 `npm run build` 与 `git diff --check`。
+- **发现的问题**：背景规则在全局重复，首页又有独立的高亮版本；历史版本每行有完整边框、圆角和选中阴影。
+- **修改**：见 5.135。
+- **效果**：前端构建通过、diff 无空白错误；尚未进行浏览器截图验收。
+- **费用**：¥0，未调用模型或视频服务。
+- **遗留**：在有作品和版本历史的真实页面做一次人工视觉确认。
+
+### T-55 Agent 运行流程版本与分集回归（2026-11-28，¥0）
+
+- **假设**：对改编应用、任务重试、完成闸门与一键生产统一校验当前剧本/当前集/当前提示词后，旧产物不会覆盖或解锁新版本，且限场续跑能补齐剩余场景。
+- **过程**：审查五条运行路径，补充旧提议、旧任务、旧成片、多集切换及部分场景续跑回归；运行 `pytest tests/test_production.py tests/test_episode_gate.py tests/test_agent.py -q`、ruff 致命错误检查及 `git diff --check`。尝试全量 `pytest tests -q`，在第 26 个用例 `test_api.py::test_import_project_and_list` 停滞；用 `faulthandler_timeout=15` 定位到 Starlette TestClient 启动 Windows asyncio 事件循环时卡在 `socket._fallback_socketpair`，中止该轮。
+- **发现的问题**：旧提议/任务/成片缺少当前版本约束；生产图用全局范围和版本；部分拆镜被误判为完成。全量测试受本机 TestClient 事件循环阻塞，未得到完整通过数。
+- **修改**：见 5.136。
+- **效果**：最终定向回归 **16 passed（11.89s）**；ruff 致命错误检查通过；`git diff --check` 无空白错误。全量测试未完成，README 中的 941 tests 保留上次实测值，不冒称本轮结果。
+- **费用**：¥0，未调用在线模型、图片或视频服务。
+- **遗留**：在 TestClient 可正常创建事件循环的环境重跑全量 `pytest tests -q`；真实视频出片与跨集推进仍受余额条件限制，未在本轮付费验证。

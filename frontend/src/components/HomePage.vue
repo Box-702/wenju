@@ -2,7 +2,7 @@
 // =====================================================================
 // HomePage.vue —— 首页
 //
-// 结构：极光背景（多层模糊色斑）+ 居中 hero（标语 + 主输入卡片）+ 我的作品。
+// 结构：低饱和背景 + 居中 hero（标语 + 主输入卡片）+ 我的作品。
 // 主输入卡片见 HomeComposer.vue。
 // 点作品卡 = 进入工作区（store.mode 切到 workspace，三栏布局接管渲染）。
 // =====================================================================
@@ -75,7 +75,7 @@ function formatDate(iso) {
 
 <template>
   <div class="home">
-    <!-- 极光背景：四团大面积模糊色斑，溢出到视口外 -->
+    <!-- 与工作台共用低饱和背景 -->
     <div class="aurora" aria-hidden="true">
       <span class="blob blob-blue"></span>
       <span class="blob blob-violet"></span>
@@ -138,16 +138,18 @@ function formatDate(iso) {
           <span class="new-sub">导入小说原文</span>
         </button>
 
-        <article v-for="p in works" :key="p.id" class="work-card" @click="enter(p.id)">
-          <div class="work-cover" aria-hidden="true">
-            <span class="work-glyph">{{ (p.title || '问')[0] }}</span>
-          </div>
-          <div class="work-body">
-            <h3 class="work-title">{{ p.title }}</h3>
-            <p class="work-meta">
-              {{ formatDate(p.created_at) }} · 剧本 {{ p.version_count || 0 }} 版 · 改编 {{ p.run_count || 0 }} 次
-            </p>
-          </div>
+        <article v-for="p in works" :key="p.id" class="work-card">
+          <button class="work-open" type="button" :aria-label="`打开作品《${p.title}》`" @click="enter(p.id)">
+            <span class="work-cover" aria-hidden="true">
+              <span class="work-glyph">{{ (p.title || '问')[0] }}</span>
+            </span>
+            <span class="work-body">
+              <span class="work-title">{{ p.title }}</span>
+              <span class="work-meta">
+                {{ formatDate(p.created_at) }} · 剧本 {{ p.version_count || 0 }} 版 · 改编 {{ p.run_count || 0 }} 次
+              </span>
+            </span>
+          </button>
           <button
             class="work-del" title="删除作品" aria-label="删除作品"
             @click.stop="remove(p)"
@@ -176,65 +178,6 @@ function formatDate(iso) {
   color: #fff;
 }
 
-/* ---------- 极光背景 ---------- */
-.aurora {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  overflow: hidden;
-}
-
-.blob {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(110px);
-  opacity: 0.92;
-}
-
-/* 四团光斑铺满视口边缘：左上冷蓝、右上紫品红、右下赤红、左下暗青 */
-.blob-blue {
-  width: 900px;
-  height: 700px;
-  top: -320px;
-  left: -220px;
-  background: radial-gradient(circle at 50% 50%, rgba(37, 99, 235, 0.95), rgba(23, 44, 122, 0) 68%);
-}
-
-.blob-violet {
-  width: 820px;
-  height: 620px;
-  top: -300px;
-  right: -60px;
-  background: radial-gradient(circle at 50% 50%, rgba(168, 85, 247, 0.9), rgba(76, 29, 149, 0) 68%);
-}
-
-.blob-red {
-  width: 900px;
-  height: 640px;
-  right: -220px;
-  bottom: -360px;
-  background: radial-gradient(circle at 50% 50%, rgba(239, 68, 68, 0.85), rgba(127, 29, 29, 0) 68%);
-}
-
-.blob-teal {
-  width: 700px;
-  height: 540px;
-  left: 2%;
-  bottom: -360px;
-  background: radial-gradient(circle at 50% 50%, rgba(13, 148, 136, 0.6), rgba(12, 74, 110, 0) 68%);
-}
-
-/* 细颗粒：压住大面积渐变的塑料感（太重会把颜色吃掉） */
-.grain {
-  position: absolute;
-  inset: 0;
-  opacity: 0.07;
-  background-image: radial-gradient(rgba(255, 255, 255, 0.2) 1px, transparent 1px);
-  background-size: 3px 3px;
-  mix-blend-mode: overlay;
-}
-
 /* ---------- 顶栏 ---------- */
 .home-top {
   position: relative;
@@ -243,7 +186,8 @@ function formatDate(iso) {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 18px 26px;
+  min-height: var(--header-h);
+  padding: 8px 20px;
 }
 
 .home-brand {
@@ -283,12 +227,12 @@ function formatDate(iso) {
   z-index: 2;
   flex: 1;
   /* 主输入卡片限宽居中：通栏的卡片会把视线拉散，也不像「一个对话框」 */
-  --home-card-w: min(1040px, 92vw);
+  --home-card-w: min(var(--thread-w), 92vw);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  padding: clamp(48px, 9vh, 108px) 24px 8px;
+  padding: clamp(42px, 8vh, 92px) 24px 8px;
   text-align: center;
 }
 
@@ -296,6 +240,9 @@ function formatDate(iso) {
 .home-stage > :deep(.cc) {
   max-width: var(--home-card-w);
   margin: 0 auto;
+}
+.home-stage :deep(.cc-card) {
+  box-shadow: 0 14px 38px rgba(0, 0, 0, .28);
 }
 
 .hero-title {
@@ -305,7 +252,7 @@ function formatDate(iso) {
   line-height: 1.18;
   letter-spacing: 0.01em;
   color: #fff;
-  text-shadow: 0 2px 30px rgba(0, 0, 0, 0.35);
+  text-shadow: none;
 }
 
 .hero-title em {
@@ -357,7 +304,7 @@ function formatDate(iso) {
 .home-works {
   position: relative;
   z-index: 2;
-  max-width: 1040px;
+  max-width: 948px;
   width: 100%;
   margin: 0 auto;
   padding: 28px 24px 56px;
@@ -387,6 +334,8 @@ function formatDate(iso) {
 .works-more .app-ic { width: 13px; height: 13px; }
 .works-more:hover { color: var(--ink); }
 .works-open {
+  padding: 0;
+  background: transparent;
   font-size: 12px;
   color: var(--dim);
   text-decoration: underline dotted;
@@ -395,7 +344,7 @@ function formatDate(iso) {
   transition: color 130ms var(--ease);
 }
 .works-open:hover,
-.works-open:focus-visible { color: var(--ink); }
+.works-open:focus-visible { color: var(--ink); background: transparent; }
 
 .works-title {
   font-size: 13px;
@@ -432,17 +381,27 @@ function formatDate(iso) {
   gap: 12px;
   padding: 14px;
   border-radius: var(--radius-lg);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--line);
+  background: var(--surface);
   color: inherit;
   text-align: left;
   cursor: pointer;
   transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
 }
+.work-card:not(.new-card) { padding: 0; cursor: default; }
+.work-open {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; min-width: 0; padding: 14px;
+  border: 0; border-radius: inherit;
+  background: transparent; color: inherit; text-align: left;
+  font: inherit; cursor: pointer;
+}
+.work-open:hover:not(:disabled),
+.work-open:active:not(:disabled) { background: transparent; }
 
 .work-card:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.17);
+  background: var(--surface-2);
+  border-color: var(--line-strong);
   transform: translateY(-1px);
 }
 
@@ -480,16 +439,18 @@ function formatDate(iso) {
   border-radius: var(--radius-md);
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.35), rgba(147, 51, 234, 0.35));
+  background: #27272f;
   color: rgba(255, 255, 255, 0.9);
   font-size: 17px;
 }
 
 .work-body {
+  display: block;
   min-width: 0;
 }
 
 .work-title {
+  display: block;
   margin: 0 0 3px;
   font-size: 13.5px;
   font-weight: 500;
@@ -500,6 +461,7 @@ function formatDate(iso) {
 }
 
 .work-meta {
+  display: block;
   margin: 0;
   font-size: 11.5px;
   color: rgba(255, 255, 255, 0.42);
@@ -522,7 +484,8 @@ function formatDate(iso) {
   transition: opacity 0.15s ease, background 0.15s ease;
 }
 
-.work-card:hover .work-del {
+.work-card:hover .work-del,
+.work-del:focus-visible {
   opacity: 1;
 }
 

@@ -54,16 +54,20 @@ const VIEWS = [
       <AppIcon name="send" />
       <span class="rail-label">对话</span>
     </button>
-    <button class="rail-item" title="我的作品" @click="store.overlay = 'tasks'">
+    <button class="rail-item" :class="{ active: store.overlay === 'tasks' }"
+      title="我的作品" @click="store.overlay = 'tasks'">
       <AppIcon name="folder" />
+      <span class="rail-label">作品</span>
     </button>
     <button class="rail-item" :class="{ active: store.overlay === 'skills' }"
       title="技能" @click="store.overlay = 'skills'">
       <AppIcon name="sparkle" />
       <span class="rail-label">技能</span>
     </button>
-    <button class="rail-item" title="设置" @click="store.showSettings = true">
+    <button class="rail-item" :class="{ active: store.showSettings }"
+      title="设置" @click="store.showSettings = true">
       <AppIcon name="gear" />
+      <span class="rail-label">设置</span>
     </button>
   </nav>
 </template>
@@ -77,7 +81,7 @@ const VIEWS = [
   width: 56px; flex: none;
   padding: 8px 4px 10px;
   border-right: 1px solid var(--line);
-  background: var(--surface);
+  background: #111117;
   height: 100%;
 }
 .rail-sep { width: 32px; height: 1px; background: var(--line-strong); margin: 7px 0 9px; }
@@ -90,17 +94,15 @@ const VIEWS = [
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .rail-item :deep(svg) { width: 1.5em; height: 1.5em; }
-.rail-item:hover { color: var(--ink); background: var(--surface-2); }
-/* 选中态统一语言（2026-11-21 重做「白条亮字」，金底金条光晕全废）：
-   白 8% 底 + 左侧 2px 白条（不发光）+ 图标文字转纯白。
-   令牌在 style.css（--sel-bg / --sel-bar），全站选中都按这套走。 */
+.rail-item:hover { color: var(--ink); background: rgba(255, 255, 255, .045); }
+/* 导航只用文字与左侧标记表明当前页，避免一列小卡片叠在侧栏上。 */
 .rail-item.active {
   color: var(--ink);
-  background: var(--sel-bg);
+  background: transparent;
 }
 .rail-item.active :deep(svg) { color: var(--ink); }
 .rail-item.active::before {
-  content: ''; position: absolute; left: 2px; top: 7px; bottom: 7px;
+  content: ''; position: absolute; left: 0; top: 9px; bottom: 9px;
   width: 2px; border-radius: 2px; background: var(--sel-bar);
 }
 .rail-spacer { flex: 1; }

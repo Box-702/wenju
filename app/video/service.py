@@ -997,16 +997,30 @@ def cancel_video_job(job_id: str) -> dict[str, Any]:
 
 
 def retry_video_job(job_id: str) -> dict[str, Any]:
-    """重试失败的视频生成任务：重置状态并重新投递到异步队列。"""
-    j = deps.store().get_video_job(job_id)
+    """只重试仍对应当前集已批准提示词的失败任务。"""
+    store = deps.store()
+    j = store.get_video_job(job_id)
     if not j:
         raise HTTPException(404, "任务不存在")
     if j.status not in ("failed", "cancelled"):
         raise HTTPException(400, f"任务状态为 {j.status}，只能重试失败或已取消的任务")
-    deps.store().update_video_job(
+    project = store.get_project(j.project_id)
+    active_episode = store.get_active_episode(project.id) if project else 1
+    version = (store.latest_video_version(project, episode=active_episode)
+               if project else None)
+    shots = [s for s in (version.shots if version else []) if isinstance(s, dict)]
+    unit = next((u for u in generation_units(shots) if u["shot_id"] == j.shot_id), None)
+    valid_versions = {v.id for v in store.list_video_versions(j.project_id, episode=active_episode)}
+    if not valid_versions and version is not None:
+        valid_versions = {version.id}
+    if (not unit or not unit_approved(shots, unit)
+            or j.prompt.strip() != unit["prompt"].strip()
+            or (j.version_id and j.version_id not in valid_versions)):
+        raise HTTPException(409, "旧任务的提示词已不是当前集已批准的内容，请重新审核后再提交")
+    store.update_video_job(
         job_id, status="pending", error_message=None, video_url=None, finished_at=None
     )
-    _submit_video_job(deps.store().get_video_job(job_id))
+    _submit_video_job(store.get_video_job(job_id))
     return {"id": job_id, "status": "pending"}
 
 
@@ -1031,8 +1045,13 @@ def reroll_shot(project_id: str, shot_id: str, *, version_id: str | None = None)
         raise HTTPException(404, "项目不存在")
     shot_id = (shot_id or "").strip()
 
-    # 版本：显式指定 > 当前最新带提示词的版本
-    versions = sorted(store.list_video_versions(project_id), key=lambda v: v.created_at)
+    # 只在当前集选版本；全局最新可能属于另一集。
+    active_episode = store.get_active_episode(project_id)
+    versions = sorted(store.list_video_versions(project_id, episode=active_episode),
+                      key=lambda v: v.created_at)
+    if not versions:
+        legacy = store.latest_video_version(project, episode=active_episode)
+        versions = [legacy] if legacy is not None else []
     version = None
     if version_id:
         version = next((v for v in versions if v.id == version_id), None)
@@ -1060,10 +1079,13 @@ def reroll_shot(project_id: str, shot_id: str, *, version_id: str | None = None)
 
     # 最新任务：失败/取消 → 重试原任务（不新建）
     latest = None
+    episode_version_ids = {v.id for v in versions}
     for j in sorted(store.list_video_jobs(project_id), key=lambda x: x.created_at):
-        if j.shot_id == head_id:
+        if j.shot_id == head_id and (not j.version_id or j.version_id in episode_version_ids):
             latest = j
-    if latest is not None and latest.status in ("failed", "cancelled"):
+    if (latest is not None and latest.status in ("failed", "cancelled")
+            and latest.prompt.strip() == unit["prompt"].strip()
+            and unit_approved(plan, unit)):
         retry_video_job(latest.id)
         return {"job_id": latest.id, "status": "pending", "reused": True,
                 "shot_id": shot_id, "unit_shot_id": head_id,

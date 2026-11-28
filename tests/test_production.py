@@ -56,12 +56,12 @@ def patched_llm(monkeypatch):
         calls["director"] += 1
         from app.domain import CameraMovement, SceneBreakdown, Shot
 
-        bd = SceneBreakdown(
-            scene_id="scene_001", title="第一场", purpose="建立冲突",
-            shots=[Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
+        bds = [SceneBreakdown(
+            scene_id=sc.id, title=sc.title, purpose="建立冲突",
+            shots=[Shot(id=f"shot_{sc.id}_000", scene_id=sc.id, order=0,
                         camera=CameraMovement(type="static"))],
-        )
-        return _Result([bd], "1 场 1 镜")
+        ) for sc in script.scenes]
+        return _Result(bds, f"{len(bds)} 场 {len(bds)} 镜")
 
     def fake_art(llm, script, **kw):
         calls["art"] += 1
@@ -75,18 +75,22 @@ def patched_llm(monkeypatch):
             "风格指南",
         )
 
-    def fake_refs(script, guide, on_progress=None):
+    def fake_refs(script, guide, on_progress=None, entities=None):
         calls["refs"] += 1
-        return {"char_a": "http://img/char_a", "loc_room": "http://img/loc_room"}
+        refs = {"char_a": "http://img/char_a", "loc_room": "http://img/loc_room"}
+        return {k: v for k, v in refs.items() if entities is None or k in entities}
 
     def fake_dp(llm, script, **kw):
         calls["dp"] += 1
         from app.domain import CameraMovement, Shot
 
-        shot = Shot(id="shot_scene_001_000", scene_id="scene_001", order=0,
-                    camera=CameraMovement(type="static"))
-        shot.video_prompt = "昏暗密室@密室(loc_room)。人物：齐夏@齐夏(char_a)。齐夏推门。"
-        return _Result([shot], "1 镜提示词")
+        shots = []
+        for bd in kw["breakdowns"]:
+            shot = Shot(id=f"shot_{bd.scene_id}_000", scene_id=bd.scene_id, order=0,
+                        camera=CameraMovement(type="static"))
+            shot.video_prompt = "昏暗密室@密室(loc_room)。人物：齐夏@齐夏(char_a)。齐夏推门。"
+            shots.append(shot)
+        return _Result(shots, f"{len(shots)} 镜提示词")
 
     monkeypatch.setattr(prod_mod, "run_generation", fake_generate, raising=False)
     # production.py 内部是函数内 import，patch 源头模块
@@ -147,3 +151,60 @@ def test_进度回调按阶段触发(store, project, patched_llm):
 def test_项目不存在直接报错(store, patched_llm):
     with pytest.raises(ValueError, match="项目不存在"):
         run_production(store, None, None, "proj_nope")
+
+
+def test_生产流水线只处理当前集(store, project, patched_llm):
+    from app.domain import Character, Location, Scene, Script, Source
+
+    script = Script(
+        title="分集测试", logline="梗概", source=Source(chapter_count=2, chapter_ids=["ch_001", "ch_002"]),
+        characters=[Character(id="char_a", name="齐夏")],
+        locations=[Location(id="loc_room", name="密室")],
+        scenes=[
+            Scene(id="scene_001", title="第一集", chapter_refs=["ch_001"], episode=1,
+                  location_id="loc_room", characters=["char_a"], purpose="冲突", conflict="对峙"),
+            Scene(id="scene_002", title="第二集", chapter_refs=["ch_002"], episode=2,
+                  location_id="loc_room", characters=["char_a"], purpose="升级", conflict="逃离"),
+        ],
+    )
+    store.create_version(project, script, source_type="generation", label="初稿", set_current=True)
+    first = run_production(store, None, None, project.id)
+    first_version = store.get_video_version(first["prompt_version_id"])
+    assert first_version.episode == 1
+    assert {s["scene_id"] for s in first_version.shots} == {"scene_001"}
+    assert patched_llm["director"] == patched_llm["dp"] == 1
+
+    store.set_active_episode(project.id, 2)  # 跳过付费出片，只检验流水线的集范围
+    second = run_production(store, None, None, project.id)
+    second_version = store.get_video_version(second["prompt_version_id"])
+    assert second_version.episode == 2
+    assert {s["scene_id"] for s in second_version.shots} == {"scene_002"}
+    assert patched_llm["director"] == patched_llm["dp"] == 2
+    assert patched_llm["refs"] == 1  # 同一角色和地点复用，不再次生图
+
+
+def test_部分场景已有拆镜时续跑剩余场景(store, project, patched_llm):
+    from app.domain import Character, Location, Scene, Script, Source
+
+    script = Script(
+        title="续跑测试", logline="梗概", source=Source(chapter_count=1, chapter_ids=["ch_001"]),
+        characters=[Character(id="char_a", name="齐夏")],
+        locations=[Location(id="loc_room", name="密室")],
+        scenes=[
+            Scene(id=f"scene_{i:03d}", title=f"第{i}场", chapter_refs=["ch_001"],
+                  location_id="loc_room", characters=["char_a"], purpose="冲突", conflict="对峙")
+            for i in (1, 2)
+        ],
+    )
+    version = store.create_version(project, script, source_type="generation", label="初稿", set_current=True)
+    run_production(store, None, None, project.id, limit=1)
+    assert {b["scene_id"] for b in store.get_version_breakdown(version.id)} == {"scene_001"}
+
+    result = run_production(store, None, None, project.id)
+    assert {b["scene_id"] for b in store.get_version_breakdown(version.id)} == {
+        "scene_001", "scene_002",
+    }
+    assert {s["scene_id"] for s in store.get_video_version(result["prompt_version_id"]).shots} == {
+        "scene_001", "scene_002",
+    }
+    assert patched_llm["director"] == patched_llm["dp"] == 2

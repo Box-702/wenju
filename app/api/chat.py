@@ -229,13 +229,10 @@ def _resolve_conversation(project_id: str | None, conversation_id: str | None) -
 def _acquire_turn_thread(payload: ChatRequest, conversation_id: str | None) -> str | None:
     """会话互斥占位。返回占住的线程 id（释放时要用）；没占返回 None。
 
-    两条放行规则：
-    - 审阅动作（resume）走确定性路径、不碰 LLM 与消息历史，秒回——不占位。
-    - 其余一律占位：同一会话并发两轮会消息交错、滚动摘要互相覆盖、
+    所有动作都占位：审阅虽不碰 LLM，仍会落消息并改变剧本版本。
+    同一会话并发两轮会消息交错、滚动摘要互相覆盖、
       工具轨迹搅在一起（参照 mediago StartRun → 409 的做法）。
     """
-    if payload.meta and payload.meta.get("intent") == "resume":
-        return None
     thread = conversation_id or chat_svc.GLOBAL_THREAD
     if not chat_svc.acquire_thread(thread):
         raise HTTPException(409, "这个对话正有一轮在运行中，等它结束后再发下一条。")

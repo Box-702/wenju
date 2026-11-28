@@ -31,6 +31,25 @@ def episode_scene_ids(script: Any, episode: int) -> list[str]:
     ]
 
 
+def _successful_units(store: Any, project_id: str, episode: int, version: Any,
+                      units: list[dict[str, Any]], jobs: list[Any]) -> dict[str, str]:
+    """只认本集版本中、与当前生成单元提示词一致的成功成片。"""
+    if version is None:
+        return {}
+    version_ids = {v.id for v in store.list_video_versions(project_id, episode=episode)}
+    if not version_ids:
+        version_ids = {version.id}  # 旧整片版本的兼容路径
+    prompts = {u["shot_id"]: str(u.get("prompt") or "").strip() for u in units}
+    out: dict[str, str] = {}
+    for job in jobs:
+        if (job.status == "succeeded" and job.video_url
+                and job.shot_id in prompts and prompts[job.shot_id]
+                and str(job.prompt or "").strip() == prompts[job.shot_id]
+                and (not job.version_id or job.version_id in version_ids)):
+            out.setdefault(job.shot_id, job.video_url)
+    return out
+
+
 def active_episode_status(store: Any, project: Any) -> dict[str, Any]:
     """当前集走到哪一步 + 能不能前进。返回可直接给 Agent/UI 的字典。"""
     from .service import generation_units, unit_approved
@@ -52,10 +71,9 @@ def active_episode_status(store: Any, project: Any) -> dict[str, Any]:
     prompt_ok = bool(shots) and all(str(s.get("video_prompt") or "").strip() for s in shots)
     approved_ok = bool(units) and all(unit_approved(shots, u) for u in units)
     heads = {u["shot_id"] for u in units}
-    succeeded = {
-        j.shot_id for j in store.list_video_jobs(project.id)
-        if j.status == "succeeded" and j.video_url and j.shot_id in heads
-    }
+    succeeded = set(_successful_units(
+        store, project.id, active, vv, units, store.list_video_jobs(project.id)
+    ))
     generated_ok = bool(heads) and heads <= succeeded
 
     blockers: list[str] = []
@@ -149,10 +167,7 @@ def episode_statuses(store: Any, project: Any) -> dict[str, Any]:
         units = generation_units(shots) if shots else []
         heads = {u["shot_id"] for u in units}
         approved_n = sum(1 for u in units if unit_approved(shots, u))
-        succeeded_urls: dict[str, str] = {}
-        for j in jobs:
-            if j.status == "succeeded" and j.video_url and j.shot_id in heads:
-                succeeded_urls.setdefault(j.shot_id, j.video_url)
+        succeeded_urls = _successful_units(store, project.id, ep, vv, units, jobs)
         succeeded = set(succeeded_urls)
         prompt_n = sum(1 for s in shots if str(s.get("video_prompt") or "").strip())
         complete = bool(

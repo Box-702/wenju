@@ -58,7 +58,7 @@ def test_按集闸门_当前集完成才能进下一集(store):
     assert not status["complete"]  # 还没出片
 
     j = store.create_video_job(project_id=p.id, shot_id=_shot(0).id,
-                               provider="minimax", model="m", prompt="p",
+                               provider="minimax", model="m", prompt="甲起身。",
                                version_id=v.id)
     store.update_video_job(j.id, status="succeeded", video_url="https://x/a.mp4")
     status = active_episode_status(store, p)
@@ -93,7 +93,7 @@ def test_分集状态列表_每集独立(store):
         episode=1, label="第1集",
     )
     j = store.create_video_job(project_id=p.id, shot_id=_shot(0).id,
-                               provider="minimax", model="m", prompt="p", version_id=v.id)
+                               provider="minimax", model="m", prompt="甲起身。", version_id=v.id)
     store.update_video_job(j.id, status="succeeded", video_url="https://x/a.mp4")
     data = episode_statuses(store, p)
     assert data["active"] == 1
@@ -103,3 +103,56 @@ def test_分集状态列表_每集独立(store):
     assert ep1["complete"] is True
     assert ep2["shots"] == 0 and ep2["started"] is False and ep2["complete"] is False
     assert ep2["preview_url"] == ""
+
+
+def test_旧提示词的成片不能解锁新版当前集(store):
+    p = store.create_project(title="t", adaptation_type="short_drama",
+                             language="zh-CN", raw_text="原文")
+    store.create_version(p, _script(), source_type="generation", label="t", set_current=True)
+    original = {**_shot(0).model_dump(), "prompt_status": "approved"}
+    old = store.create_video_version(project_id=p.id, shots=[original], episode=1)
+    job = store.create_video_job(project_id=p.id, shot_id=original["id"],
+                                 provider="minimax", model="m", prompt="甲起身。", version_id=old.id)
+    store.update_video_job(job.id, status="succeeded", video_url="https://x/old.mp4")
+    assert active_episode_status(store, p)["complete"]
+
+    changed = {**original, "video_prompt": "甲开门。"}
+    current = store.create_video_version(project_id=p.id, shots=[changed], episode=1,
+                                         parent_version_id=old.id)
+    assert not active_episode_status(store, p)["complete"]
+    assert episode_statuses(store, p)["episodes"][0]["generated"] == 0
+
+    new_job = store.create_video_job(project_id=p.id, shot_id=changed["id"],
+                                     provider="minimax", model="m", prompt="甲开门。",
+                                     version_id=current.id)
+    store.update_video_job(new_job.id, status="succeeded", video_url="https://x/new.mp4")
+    assert active_episode_status(store, p)["complete"]
+
+
+def test_失败旧任务不能绕过当前提示词审批(store, monkeypatch):
+    from fastapi import HTTPException
+    from app.video import service
+
+    p = store.create_project(title="t", adaptation_type="short_drama",
+                             language="zh-CN", raw_text="原文")
+    store.create_version(p, _script(), source_type="generation", label="t", set_current=True)
+    original = {**_shot(0).model_dump(), "prompt_status": "approved"}
+    old = store.create_video_version(project_id=p.id, shots=[original], episode=1)
+    job = store.create_video_job(project_id=p.id, shot_id=original["id"],
+                                 provider="minimax", model="m", prompt="甲起身。", version_id=old.id)
+    store.update_video_job(job.id, status="failed", error_message="余额不足")
+    store.create_video_version(project_id=p.id, episode=1, parent_version_id=old.id,
+                               shots=[{**original, "video_prompt": "甲开门。",
+                                       "prompt_status": "needs_review"}])
+    monkeypatch.setattr(service.deps, "store", lambda: store)
+    monkeypatch.setattr(service, "_submit_video_job", lambda _: (_ for _ in ()).throw(
+        AssertionError("不应提交旧任务")))
+
+    import pytest
+    with pytest.raises(HTTPException) as exc:
+        service.retry_video_job(job.id)
+    assert exc.value.status_code == 409
+    with pytest.raises(HTTPException) as exc:
+        service.reroll_shot(p.id, original["id"])
+    assert exc.value.status_code == 409
+    assert store.get_video_job(job.id).status == "failed"

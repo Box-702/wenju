@@ -116,13 +116,26 @@ def build_production_graph(
         if version is None:  # 状态图内不该发生（script 先行），防御一下
             raise ValueError("没有剧本版本，无法拆解")
         script = version.script
+        from ..video.episode_gate import episode_scene_ids
+
+        active = store.get_active_episode(p.id)
+        scene_ids_for_episode = set(episode_scene_ids(script, active))
+        if not scene_ids_for_episode:
+            raise ValueError(f"第 {active} 集没有剧本场次，不能拆镜")
         # 分集作品：把提案的集数/每集目标补进导演预算（D-90），
         # 否则导演按内容量估，超提案预算还会多拆集。
         from ..pipeline.story_plan import ensure_plan_budget
 
         ensure_plan_budget(p, script)
-        existing = store.get_version_breakdown(version.id)
-        if existing:
+        all_breakdowns = store.get_version_breakdown(version.id) or []
+        limit = int(state.get("limit") or 0)
+        scene_ids = [s.id for s in script.scenes if s.id in scene_ids_for_episode]
+        if limit > 0:
+            scene_ids = scene_ids[:limit]
+        completed = {b.get("scene_id") for b in all_breakdowns if b.get("shots")}
+        missing_scene_ids = [sid for sid in scene_ids if sid not in completed]
+        if not missing_scene_ids:
+            existing = [b for b in all_breakdowns if b.get("scene_id") in scene_ids]
             _report("director", f"已有镜头方案（{len(existing)} 场），直接复用")
             return {
                 "stage": "director", "breakdown_count": len(existing),
@@ -132,10 +145,20 @@ def build_production_graph(
 
         style = store.get_video_style(p.id) or {}
         # 限场续跑：只拆前 N 场（对齐 N2D --shot-limit）
-        limit = int(state.get("limit") or 0)
-        scene_ids = [s.id for s in script.scenes[:limit]] if limit > 0 else None
+        sub_script = script.model_copy(deep=True)
+        sub_script.scenes = [s for s in sub_script.scenes if s.id in missing_scene_ids]
+        if getattr(script, "adaptation_plan", None) is not None:
+            from ..domain import AdaptationPlan
+
+            plan = script.adaptation_plan
+            target = sum(float(plan.scene_targets.get(sid, 0) or 0) for sid in missing_scene_ids) or 75.0
+            sub_script.adaptation_plan = AdaptationPlan(
+                segments=[], target_sec=max(55.0, min(95.0, target)), episode_count=1,
+                scene_targets={sid: float(plan.scene_targets.get(sid, 0) or 0) for sid in missing_scene_ids},
+                hook=plan.hook, rationale=plan.rationale,
+            )
         result = run_director(
-            llm, script, scene_ids=scene_ids,
+            llm, sub_script, scene_ids=missing_scene_ids,
             adaptation_type=p.adaptation_type,
             visual_style=style.get("visual_style"),
         )
@@ -144,9 +167,11 @@ def build_production_graph(
         shots_data = [shot.model_dump() for bd in result.data for shot in bd.shots]
         store.create_video_version(
             project_id=p.id, shots=shots_data,
-            source_type="agent", label="导演拆解", notes=result.summary,
+            source_type="agent", label=f"导演拆解·第{active}集", notes=result.summary,
+            episode=active,
         )
-        store.set_version_breakdown(version.id, [bd.model_dump() for bd in result.data])
+        retained = [b for b in all_breakdowns if b.get("scene_id") not in missing_scene_ids]
+        store.set_version_breakdown(version.id, retained + [bd.model_dump() for bd in result.data])
         _report("director", f"拆解完成：{len(shots_data)} 个镜头")
         return {
             "stage": "director", "breakdown_count": len(shots_data),
@@ -214,7 +239,24 @@ def build_production_graph(
 
         guide = StyleGuide.model_validate(style_raw) if style_raw else None
         existing = (style_raw or {}).get("reference_images") or {}
-        if existing:
+        from ..video.episode_gate import episode_scene_ids
+
+        active = store.get_active_episode(p.id)
+        episode_ids = set(episode_scene_ids(script, active))
+        scenes = [s for s in script.scenes if s.id in episode_ids]
+        needed = {s.location_id for s in scenes if s.location_id}
+        needed.update(cid for s in scenes for cid in s.characters)
+        ready = set(existing)
+        ready.update(
+            look.get("character_id") for look in (style_raw or {}).get("character_looks", {}).values()
+            if isinstance(look, dict) and look.get("image")
+        )
+        ready.update(
+            loc.get("location_id") for loc in (style_raw or {}).get("location_states", {}).values()
+            if isinstance(loc, dict) and loc.get("image")
+        )
+        missing = sorted(needed - ready)
+        if not missing:
             _report("refs", f"资产库已有 {len(existing)} 张图，直接复用")
             return {
                 "stage": "refs", "refs_count": len(existing),
@@ -222,7 +264,9 @@ def build_production_graph(
             }
         from ..media.refs import build_reference_assets
 
-        refs = build_reference_assets(script, guide, on_progress=lambda m: _report("refs", m))
+        refs = build_reference_assets(
+            script, guide, entities=missing, on_progress=lambda m: _report("refs", m)
+        )
         from ..media.looks import register_generated_images
         store.merge_video_style(p.id, register_generated_images(store.get_video_style(p.id) or {}, script, refs))
         _report("refs", f"资产库就绪：{len(refs)} 张图")
@@ -238,7 +282,14 @@ def build_production_graph(
         p = _project(state)
         version = store.latest_version(p)
         script = version.script
-        breakdowns_data = store.get_version_breakdown(version.id)
+        from ..video.episode_gate import episode_scene_ids
+
+        active = store.get_active_episode(p.id)
+        episode_ids = set(episode_scene_ids(script, active))
+        breakdowns_data = [
+            b for b in (store.get_version_breakdown(version.id) or [])
+            if b.get("scene_id") in episode_ids
+        ]
         if not breakdowns_data:
             raise ValueError("没有镜头方案，无法撰写提示词（拆解阶段应已产出）")
         style_data = store.get_video_style(p.id)
@@ -251,9 +302,14 @@ def build_production_graph(
 
         # 幂等：最新镜头方案里已经有提示词就直接复用（重跑流水线不重复调模型）。
         # 要重新出一版提示词走 generate_video_prompts（剧组域），那里明确是「重写」。
-        previous = p.current_video_version_id and store.get_video_version(p.current_video_version_id)
+        previous = store.latest_video_version(p, episode=active)
         prev_shots = [s for s in (previous.shots if previous else []) if isinstance(s, dict)]
-        if prev_shots and any(s.get("video_prompt") for s in prev_shots):
+        required_shots = {
+            shot.get("id") for bd in breakdowns_data for shot in (bd.get("shots") or [])
+            if shot.get("id")
+        }
+        prompted_shots = {s.get("id") for s in prev_shots if s.get("video_prompt")}
+        if required_shots and required_shots <= prompted_shots:
             _report("prompts", f"提示词已存在（版本 {previous.id}），直接复用")
             return {
                 "stage": "prompts", "prompt_version_id": previous.id,
@@ -290,6 +346,7 @@ def build_production_graph(
             source_type="agent", label="生产工作流 · 提示词待审阅",
             notes=f"{result.summary}；逐镜人工批准后才能提交视频任务。",
             parent_version_id=previous.id if previous else None,
+            episode=active,
         )
         _report("prompts", f"提示词完成：{len(shots_data)} 镜待审（版本 {vv.id}）")
         return {
@@ -332,6 +389,10 @@ def estimate_production(store: Store, project_id: str) -> dict[str, Any]:
         return out
 
     version = store.latest_version(p)
+    from ..video.episode_gate import episode_scene_ids
+
+    active = store.get_active_episode(p.id)
+    episode_ids = set(episode_scene_ids(version.script, active)) if version is not None else set()
     if version is not None:
         out["stages"].append({
             "key": "script", "label": "剧本", "action": "reuse",
@@ -343,17 +404,22 @@ def estimate_production(store: Store, project_id: str) -> dict[str, Any]:
             "detail": "新生成初稿（一次模型调用）",
         })
 
-    breakdown = store.get_version_breakdown(version.id) if version is not None else []
-    if breakdown:
-        out["shots"] = sum(len(bd.get("shots") or []) for bd in breakdown)
+    breakdown = [
+        b for b in (store.get_version_breakdown(version.id) or [])
+        if b.get("scene_id") in episode_ids
+    ] if version is not None else []
+    out["shots"] = sum(len(bd.get("shots") or []) for bd in breakdown)
+    completed_scenes = {b.get("scene_id") for b in breakdown if b.get("shots")}
+    if breakdown and completed_scenes == episode_ids:
         out["stages"].append({
             "key": "director", "label": "导演拆解", "action": "reuse",
             "detail": f"复用现有方案（{len(breakdown)} 场 / {out['shots']} 个机位）",
         })
     else:
+        remaining = len(episode_ids - completed_scenes)
         out["stages"].append({
             "key": "director", "label": "导演拆解", "action": "run",
-            "detail": "新拆镜（一次模型调用）",
+            "detail": f"补拆 {remaining} 场（一次模型调用）" if completed_scenes else "新拆镜（一次模型调用）",
         })
 
     style = store.get_video_style(project_id) or {}
@@ -372,12 +438,23 @@ def estimate_production(store: Store, project_id: str) -> dict[str, Any]:
 
     existing_refs = style.get("reference_images") or {}
     if version is not None:
-        want = len(version.script.characters) + len(version.script.locations)
-        out["images_to_make"] = max(0, want - len(existing_refs))
-    if existing_refs:
+        scenes = [s for s in version.script.scenes if s.id in episode_ids]
+        needed = {s.location_id for s in scenes if s.location_id}
+        needed.update(cid for s in scenes for cid in s.characters)
+        ready = set(existing_refs)
+        ready.update(
+            look.get("character_id") for look in (style.get("character_looks") or {}).values()
+            if isinstance(look, dict) and look.get("image")
+        )
+        ready.update(
+            loc.get("location_id") for loc in (style.get("location_states") or {}).values()
+            if isinstance(loc, dict) and loc.get("image")
+        )
+        out["images_to_make"] = len(needed - ready)
+    if version is not None and out["images_to_make"] == 0:
         out["stages"].append({
             "key": "refs", "label": "参考图", "action": "reuse",
-            "detail": f"复用现有 {len(existing_refs)} 张",
+            "detail": "当前集所需参考图已齐",
         })
     elif version is not None:
         out["stages"].append({
@@ -391,23 +468,34 @@ def estimate_production(store: Store, project_id: str) -> dict[str, Any]:
             "detail": "生成每个角色 1 张定妆照 + 每个场景 1 张场景图（数量待初稿完成后才知道）",
         })
 
+    current_prompts = store.latest_video_version(p, episode=active)
+    required_shots = {
+        shot.get("id") for bd in breakdown for shot in (bd.get("shots") or [])
+        if shot.get("id")
+    }
+    prompted_shots = {
+        shot.get("id") for shot in (current_prompts.shots if current_prompts else [])
+        if isinstance(shot, dict) and shot.get("video_prompt")
+    }
+    prompts_ready = (bool(required_shots) and completed_scenes == episode_ids
+                     and required_shots <= prompted_shots)
     out["stages"].append({
-        "key": "prompts", "label": "视频提示词", "action": "run",
-        "detail": "逐镜写提示词（一次模型调用）",
+        "key": "prompts", "label": "视频提示词", "action": "reuse" if prompts_ready else "run",
+        "detail": "复用当前集提示词" if prompts_ready else "逐镜写提示词（一次模型调用）",
     })
 
     # 出片资源量：已知镜头方案时能报准（生成单元数 + 总秒数）
-    video_version = None
-    if p.current_video_version_id:
-        video_version = store.get_video_version(p.current_video_version_id)
+    video_version = store.latest_video_version(p, episode=active)
     if video_version is not None and video_version.shots:
         from ..video.service import generation_units
 
-        units = generation_units(video_version.shots)
+        episode_shots = [s for s in video_version.shots if isinstance(s, dict)
+                         and s.get("scene_id") in episode_ids]
+        units = generation_units(episode_shots)
         out["film_units"] = len(units)
         out["film_seconds"] = sum(
             max(0.0, float(s.get("duration_sec") or 0))
-            for s in video_version.shots if isinstance(s, dict)
+            for s in episode_shots
         )
     return out
 

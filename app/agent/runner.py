@@ -133,10 +133,17 @@ def resume_agent_run(
     run = store.get_agent_run(run_id)
     if run is None:
         return {"status": "not_found", "error": "运行记录不存在"}
+    if run.status in ("applied", "rejected", "stale"):
+        return {"status": run.status, "new_version_id": run.result_version_id,
+                "error": run.error_message}
     project = store.get_project(run.project_id)
     base_version = store.get_version(run.base_version_id)
     if project is None or base_version is None:
         return {"status": "failed", "error": "找不到项目或基础版本"}
+    if action in ("accept", "edit") and project.current_version_id != run.base_version_id:
+        message = "这条改编提议基于旧剧本，当前剧本已有新版；请基于最新版重新发起改编"
+        store.update_agent_run(run_id, status="stale", error_message=message)
+        return {"status": "stale", "error": message}
 
     decision = {
         "action": action,

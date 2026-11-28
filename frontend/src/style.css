@@ -1,11 +1,8 @@
 /* =====================================================================
-   style.css —— 问剧设计系统 v5
+   style.css —— 问剧设计系统
 
-   「你喊cut」：暗场 + 彩色光斑 + 玻璃卡片。
-   - 表面是**半透明玻璃层**，压在极光背景上（不是实心色块）
-   - 主操作 = 绿色渐变按钮，全站唯一的大面积亮色
-   - 圆角放大（卡片 20px / 控件 9px），描边用半透明白
-   - 全局系统无衬线字体
+   深色背景、低饱和边缘漫射与厚实面板；主操作使用白色。
+   圆角与描边保持统一，全局使用系统无衬线字体。
    ===================================================================== */
 
 /* ---------- 设计变量 ---------- */
@@ -382,90 +379,49 @@ select option, select optgroup { background: var(--panel-solid); color: var(--in
 .pane-left { font-size: 13px; }
 
 /* =====================================================================
-   v5 共享工具类：极光背景 / 玻璃卡片 / 参数胶囊 / 主行动
-   （首页与工作区共用同一套语言，新组件直接套这些类）
+   共享工具类：背景 / 面板 / 参数胶囊 / 主行动
    ===================================================================== */
 
-/* ---------- 极光背景 ---------- */
+/* ---------- 背景：低饱和的边缘漫射，与工作台的深色面板衔接 ---------- */
 .aurora {
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 0;
   overflow: hidden;
-  background: var(--bg);
+  background: radial-gradient(ellipse at 50% 0%, #111119 0%, var(--bg) 65%);
 }
 .aurora .blob {
   position: absolute;
   border-radius: 50%;
-  filter: blur(110px);
-  opacity: .92;
+  filter: blur(120px);
+  opacity: .34;
 }
 .aurora .blob-blue {
   width: 900px; height: 700px; top: -320px; left: -220px;
-  background: radial-gradient(circle at 50% 50%, rgba(37, 99, 235, .95), rgba(23, 44, 122, 0) 68%);
+  background: radial-gradient(circle at 50% 50%, #344055, transparent 68%);
 }
 .aurora .blob-violet {
   width: 820px; height: 620px; top: -300px; right: -60px;
-  background: radial-gradient(circle at 50% 50%, rgba(168, 85, 247, .9), rgba(76, 29, 149, 0) 68%);
+  background: radial-gradient(circle at 50% 50%, #514057, transparent 68%);
 }
 .aurora .blob-red {
   width: 900px; height: 640px; right: -220px; bottom: -360px;
-  background: radial-gradient(circle at 50% 50%, rgba(239, 68, 68, .85), rgba(127, 29, 29, 0) 68%);
+  background: radial-gradient(circle at 50% 50%, #594544, transparent 68%);
 }
 .aurora .blob-teal {
   width: 700px; height: 540px; left: 2%; bottom: -360px;
-  background: radial-gradient(circle at 50% 50%, rgba(13, 148, 136, .6), rgba(12, 74, 110, 0) 68%);
+  background: radial-gradient(circle at 50% 50%, #314b4b, transparent 68%);
 }
 .aurora .grain {
-  position: absolute; inset: 0; opacity: .07;
+  position: absolute; inset: 0; opacity: .035;
   background-image: radial-gradient(rgba(255, 255, 255, .2) 1px, transparent 1px);
   background-size: 3px 3px;
   mix-blend-mode: overlay;
 }
 /* 工作区用的弱化版：光斑更淡、更靠边，不抢内容 */
-.aurora.soft .blob { opacity: .55; filter: blur(130px); }
-.aurora.soft .grain { opacity: .05; }
-
-/* ---------- 极光背景（全局：首页 / 整页浮层 / 工作区共用一套） ---------- */
-.aurora {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  overflow: hidden;
-}
-.blob {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(110px);
-  opacity: 0.92;
-}
-.blob-blue {
-  width: 900px; height: 700px; top: -320px; left: -220px;
-  background: radial-gradient(circle at 50% 50%, rgba(37, 99, 235, 0.95), rgba(23, 44, 122, 0) 68%);
-}
-.blob-violet {
-  width: 820px; height: 620px; top: -300px; right: -60px;
-  background: radial-gradient(circle at 50% 50%, rgba(168, 85, 247, 0.9), rgba(76, 29, 149, 0) 68%);
-}
-.blob-red {
-  width: 900px; height: 640px; right: -220px; bottom: -360px;
-  background: radial-gradient(circle at 50% 50%, rgba(239, 68, 68, 0.85), rgba(127, 29, 29, 0) 68%);
-}
-.blob-teal {
-  width: 700px; height: 540px; left: 2%; bottom: -360px;
-  background: radial-gradient(circle at 50% 50%, rgba(13, 148, 136, 0.6), rgba(12, 74, 110, 0) 68%);
-}
-/* 细颗粒：压住大面积渐变的塑料感 */
-.grain {
-  position: absolute;
-  inset: 0;
-  opacity: 0.07;
-  background-image: radial-gradient(rgba(255, 255, 255, 0.2) 1px, transparent 1px);
-  background-size: 3px 3px;
-  mix-blend-mode: overlay;
-}
+.aurora.soft .blob { opacity: .18; filter: blur(140px); }
+.aurora.soft .grain { opacity: .025; }
 
 /* ---------- 厚面板（原玻璃面板：2026-11-13 去玻璃感，类名沿用兼容旧模板） ---------- */
 .glass {

@@ -615,6 +615,8 @@ def _resume_reply(store: Store, result: dict[str, Any]) -> tuple[str, list[dict[
         return "已拒绝这次改编提议，剧本保持不变。", []
     if status == "failed":
         return f"⚠️ 应用改动失败，未生成新版本：{result.get('error') or '校验未通过'}。", []
+    if status == "stale":
+        return f"这条提议基于旧剧本，未覆盖当前版本。{result.get('error') or '请基于最新版重新发起改编'}。", []
     if status == "not_found":
         return "运行记录不存在，可能已过期。", []
     return f"操作完成（状态：{status}）。", []
@@ -638,7 +640,7 @@ def _handle_resume(
     run = store.get_agent_run(run_id)
     if run is None:
         return {"reply": "运行记录不存在，可能已过期。", "payloads": [], "result": {"status": "not_found"}}
-    if run.status in ("applied", "rejected"):
+    if run.status in ("applied", "rejected", "stale"):
         return {
             "reply": f"这条提议已处理过（状态：{run.status}），无需重复操作。",
             "payloads": [],
@@ -655,15 +657,16 @@ def _handle_resume(
         feedback=feedback,
     )
     # 审阅动作沉淀为记忆：接受 → 项目决定；拒绝/重生成带反馈 → 对话反馈。
-    memory.learn_from_decision(
-        store,
-        project_id=run.project_id,
-        conversation_id=conversation_id,
-        action=action,
-        instruction=run.user_prompt,
-        feedback=feedback,
-        patch_count=len(run.patch) if action == "accept" else 0,
-    )
+    if result.get("status") != "stale":
+        memory.learn_from_decision(
+            store,
+            project_id=run.project_id,
+            conversation_id=conversation_id,
+            action=action,
+            instruction=run.user_prompt,
+            feedback=feedback,
+            patch_count=len(run.patch) if action == "accept" else 0,
+        )
     reply, payloads = _resume_reply(store, result)
     return {"reply": reply, "payloads": payloads, "result": result}
 
